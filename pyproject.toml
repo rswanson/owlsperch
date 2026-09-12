@@ -8,3 +8,13 @@
 # for the actual `owlsperch` package and its dependencies.
 [tool.uv.workspace]
 members = ["pipeline"]
+
+# Mirrors pipeline/pyproject.toml's pytest config so that `uv run pytest`
+# from the repo root (with no explicit path) finds the tests and registers
+# the same markers, instead of silently using this file as an unconfigured
+# pytest rootdir.
+[tool.pytest.ini_options]
+testpaths = ["pipeline/tests"]
+markers = [
+    "corpus: requires the real PDF corpus ($OWLSPERCH_PDFS or ~/D_D) to be present on disk; skipped otherwise",
+]

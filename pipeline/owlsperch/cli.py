@@ -14,7 +14,9 @@ from owlsperch.manifest import ManifestError, run_check
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="owlsperch", description="D&D 3.5e reference-data pipeline.")
+    parser = argparse.ArgumentParser(
+        prog="owlsperch", description="D&D 3.5e reference-data pipeline."
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     manifest_parser = subparsers.add_parser("manifest", help="Work with the curated book manifest.")
