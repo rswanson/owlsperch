@@ -1,0 +1,129 @@
+"""Unit tests for `owlsperch.segment.anchors` -- pattern detection for each
+anchor kind, isolated from the splitter and full runner."""
+
+from __future__ import annotations
+
+from owlsperch.segment.anchors import find_triggers
+from owlsperch.segment.headings import Paragraph
+
+
+def _para(
+    text: str, *, kind: str = "prose", height: float = 10.0, line_count: int = 1, page: int = 1
+) -> Paragraph:
+    return Paragraph(
+        page=page,
+        text=text,
+        kind=kind,  # type: ignore[arg-type]
+        median_word_height=height,
+        max_word_height=height,
+        line_count=line_count,
+    )
+
+
+def test_spell_anchor_name_then_school() -> None:
+    paragraphs = [
+        _para("Fireball"),
+        _para("Evocation [Fire]"),
+        _para("Body text of the spell.", line_count=3),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert len(triggers) == 1
+    assert triggers[0].kind == "spell"
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "Fireball"
+
+
+def test_spell_anchor_school_with_subschool_and_descriptor() -> None:
+    paragraphs = [_para("Acid Fog"), _para("Conjuration (Creation) [Acid]")]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["spell"]
+
+
+def test_non_school_line_does_not_trigger_spell() -> None:
+    paragraphs = [_para("Fireball"), _para("A regular sentence follows here.")]
+    assert find_triggers(paragraphs, body_median=10.0) == []
+
+
+def test_feat_anchor_name_then_prerequisite_within_lookahead() -> None:
+    paragraphs = [
+        _para("Power Attack [General]"),
+        _para("You hit harder with melee weapons.", line_count=3),
+        _para("Prerequisite: Str 13."),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert len(triggers) == 1
+    assert triggers[0].kind == "feat"
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "Power Attack [General]"
+
+
+def test_feat_anchor_benefit_directly_after_name() -> None:
+    paragraphs = [_para("Toughness"), _para("Benefit: You gain +3 hit points.")]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["feat"]
+
+
+def test_feat_lookahead_too_far_does_not_trigger() -> None:
+    paragraphs = [
+        _para("Toughness"),
+        _para("Flavor line one.", line_count=3),
+        _para("Flavor line two.", line_count=3),
+        _para("Benefit: You gain +3 hit points."),
+    ]
+    assert find_triggers(paragraphs, body_median=10.0) == []
+
+
+def test_stat_block_backdates_to_preceding_short_name_line() -> None:
+    paragraphs = [
+        _para("Owlbear"),
+        _para("A bearlike creature with the head of an owl.", line_count=3),
+        _para("Size/Type: Large Magical Beast"),
+        _para("Hit Dice: 5d10+20 (52 hp)"),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert len(triggers) == 1
+    assert triggers[0].kind == "stat_block"
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "Owlbear"
+
+
+def test_stat_block_backdates_to_preceding_heading() -> None:
+    paragraphs = [
+        _para("OWLBEAR", height=20.0),  # font-size heading
+        _para("Size/Type: Large Magical Beast"),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "OWLBEAR"
+
+
+def test_stat_block_falls_back_to_own_line_when_no_name_found() -> None:
+    paragraphs = [
+        _para("A long body paragraph with no obvious name line before it at all.", line_count=5),
+        _para("Size/Type: Large Magical Beast"),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert triggers[0].start == 1
+    assert triggers[0].heading == "Size/Type: Large Magical Beast"
+
+
+def test_table_anchor_extent_includes_rows_and_footnotes() -> None:
+    paragraphs = [
+        _para("Table 3-1: Simple Weapons"),
+        _para("Dagger\t2 gp\t1d4", kind="table", line_count=2),
+        _para("1 A footnote about the table.", line_count=1),
+        _para("COMBAT"),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert len(triggers) == 1
+    trigger = triggers[0]
+    assert trigger.kind == "table"
+    assert trigger.start == 0
+    assert trigger.heading == "Table 3-1: Simple Weapons"
+    assert trigger.table_end == 3  # stops before "COMBAT"
+
+
+def test_table_caption_en_dash_variant() -> None:
+    paragraphs = [_para("Table 3–1: Simple Weapons"), _para("row", kind="table")]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert triggers[0].kind == "table"
