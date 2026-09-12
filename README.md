@@ -27,9 +27,13 @@ uv sync
 
 This repo root is a uv *workspace*: the root `pyproject.toml` has no
 `[project]` table of its own (a "virtual" workspace root) and just declares
-`pipeline` as a member. uv shares one lockfile/virtual environment across the
-workspace, so the `owlsperch` console script that `pipeline/pyproject.toml`
-declares is available from the repo root without `cd`-ing into `pipeline/`.
+`pipeline` and `server` as members. uv shares one lockfile/virtual
+environment across the workspace, so the `owlsperch` console script that
+`pipeline/pyproject.toml` declares is available from the repo root without
+`cd`-ing into `pipeline/` -- and `server/`'s `owlsperch_server` package
+(FastAPI + uvicorn, depending on `owlsperch` for schema/registry loading
+and data-dir resolution) is installed into that same environment, so `uv
+run owlsperch serve` can import it.
 
 ## Usage
 
@@ -255,13 +259,82 @@ uv run owlsperch queue reset <seg_id>...
   not part of the normal loop -- a stuck segment being auto-reset after a
   timeout is a future batch (B8).
 
+```sh
+uv run owlsperch build-db
+```
+
+Builds `$OWLSPERCH_DATA/db/owlsperch.sqlite` from every record under
+`records/<book_id>/<type>/*.json` that passes the same checks `owlsperch
+validate` runs (an invalid record is skipped and counted, not loaded).
+Always a full rebuild: writes to a temp file next to the target and
+atomically renames it into place, so a running server never sees a
+half-built database, and rerunning is idempotent. Prints records loaded by
+type, how many were skipped as invalid, how many books, and the DB path.
+Every record is `canonical: true` and `macro_eligible: false` in this batch
+-- precedence (duplicate-copy resolution across books) and macro
+eligibility are future batches.
+
+Tables (spec 4.8): `books` (one row per manifest entry, regardless of
+whether it has records yet); `records` (id, type, name, slug, book_id,
+canonical, macro_eligible, the full record as `json`); `record_fields`
+(the record's `fields` flattened to one row per scalar value -- a list of
+scalars is one row per element, and a list of objects like spell `levels`
+is one row per sub-field, e.g. `levels.class`/`levels.level`, plus one
+combined `levels` row like `"Cleric 3"` so class+level pairs stay
+queryable together); `record_pages` (one row per cited page); `names_fts`
+(FTS5 over name + aliases, for `/search`).
+
+```sh
+uv run owlsperch serve [--host 127.0.0.1] [--port 8000]
+```
+
+Starts the `owlsperch_server` FastAPI app (`server/`, a second uv workspace
+member alongside `pipeline/`) under uvicorn, reading the database from
+`$OWLSPERCH_DATA`. `owlsperch_server` depends on the `owlsperch` pipeline
+package for schema/registry loading and data-dir resolution; `uvicorn` and
+`fastapi` are only in `server/`'s dependencies, imported lazily by `owlsperch
+serve` so a pipeline-only checkout never needs them installed just to import
+`owlsperch.cli`.
+
+```sh
+curl 'localhost:8000/health'
+# {"status":"ok","db":true}
+
+curl 'localhost:8000/search?q=fireb'
+# {"groups":[{"type":"spell","label":"Spells","hits":[{"id":"spell:phb1:fireball", ...}]}]}
+
+curl 'localhost:8000/records/spell/fireball'
+# {"id":"spell:phb1:fireball", ..., "variants":[], "links":[], "referenced_by":[], "tables":[]}
+
+curl 'localhost:8000/schemas'
+# {"types":{"spell":{"label":"Spell","plural_label":"Spells","version":1,"fields":[...]}}}
+```
+
+`GET /search?q=<str>&types=<comma list>&limit=<int, default 20, max 50>`
+runs an FTS5 prefix query (each word tokenized, `*`-suffixed) over
+`names_fts`, falling back to a case-insensitive substring scan over
+`records.name` when FTS returns fewer than `limit` hits (deduplicated);
+canonical only; grouped by type. `q` shorter than 2 characters is a 400.
+
+`GET /records/{type}/{slug}` returns the full record plus `variants`
+(other canonical records sharing type+slug across books, before batch
+B11's precedence resolution collapses them -- the one from the
+latest-published book wins the main response) and placeholder `links`,
+`referenced_by`, `tables` for later batches. Unknown type or slug is a 404
+with a JSON `{"detail": ...}` body.
+
+A missing (not yet built) database makes `/search` and
+`/records/{type}/{slug}` answer 503 with `{"detail": "database not built;
+run: uv run owlsperch build-db"}`; `/health` and `/schemas` don't touch the
+database and always answer normally (`/health`'s `db` field is `false`).
+
 ## Development
 
 ```sh
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy pipeline
-uv run pytest pipeline/tests
+uv run mypy pipeline server
+uv run pytest pipeline/tests server/tests
 ```
 
 Run a single test:
@@ -272,6 +345,8 @@ uv run pytest pipeline/tests/test_manifest.py::test_35_book_is_in_scope
 
 Some tests are marked `@pytest.mark.corpus` and run against the real
 `$OWLSPERCH_PDFS`/`~/D_D` directory (`manifest check`; `text phb1` over
-pages 118-122; and `segment phb1` over pages 195-230, which needs
-`pdftotext` on `PATH`); they are skipped automatically (not failed) when
-the corpus or `pdftotext` isn't present, e.g. in CI.
+pages 118-122; `segment phb1` over pages 195-230, which needs `pdftotext`
+on `PATH`; and a `server/tests/test_corpus.py` test that builds a database
+from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
+`/search` finds one); they are skipped automatically (not failed) when the
+corpus or `pdftotext` isn't present, e.g. in CI.

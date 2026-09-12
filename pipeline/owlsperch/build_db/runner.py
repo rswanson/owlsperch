@@ -63,10 +63,8 @@ from owlsperch.validate.loader import (
     LoadError,
     discover_books_with_records,
     discover_record_files,
+    load_json,
     load_segment,
-)
-from owlsperch.validate.loader import (
-    load_json as load_record_json,
 )
 from owlsperch.validate.runner import validate_record
 
@@ -299,7 +297,7 @@ def _load_records(
         for path in discover_record_files(data_dir, book_id):
             type_dir = path.parent.name
             try:
-                record = load_record_json(path)
+                record = load_json(path)
             except LoadError:
                 result.skipped_invalid += 1
                 continue

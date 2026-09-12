@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-`owlsperch` is a Python (uv-managed) pipeline. As of batch B5 it has: the
-`owlsperch` CLI and package (`pipeline/owlsperch/`), the curated PDF manifest
+`owlsperch` is a Python (uv-managed) pipeline plus, as of batch B6, a
+FastAPI server. It has: the `owlsperch` CLI and package
+(`pipeline/owlsperch/`), the curated PDF manifest
 (`pipeline/manifest.yaml`), `manifest check`, `text` (column-repaired
 per-page text extraction for text-layer books, plus a `.meta.json` sidecar
 of paragraph font-size stats), `segment` (splits a book's text into
@@ -13,16 +14,19 @@ candidate spell/stat_block/feat/table/rules_section segments), the
 `schemas/` type registry (envelope + spell schema, JSON Schema draft
 2020-12) with `validate` and `schema show`, the `queue` extraction-queue CLI
 plus the `/extract` Claude Code skill (haiku tier only; see "Extraction" and
-"Architecture" below), and CI. Everything else is a future-batch stub
-(`build-db`, `check-completeness`, `coverage`, `schema review`, `sample`).
+"Architecture" below), `build-db` (builds `db/owlsperch.sqlite` from
+validated records), `serve` (starts the `owlsperch_server` FastAPI app --
+`/search`, `/records/{type}/{slug}`, `/schemas`, `/health`), and CI.
+Everything else is a future-batch stub (`check-completeness`, `coverage`,
+`schema review`, `sample`).
 
 ### Commands
 
-Run from the repo root (a uv workspace with `pipeline` as its only member --
-see the comment in the root `pyproject.toml`):
+Run from the repo root (a uv workspace with `pipeline` and `server` as its
+members -- see the comment in the root `pyproject.toml`):
 
 ```sh
-uv sync                              # install deps
+uv sync                              # install deps (both workspace members)
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
@@ -33,17 +37,21 @@ uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
+uv run owlsperch build-db            # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
+uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy pipeline
-uv run pytest pipeline/tests         # run all tests
+uv run mypy pipeline server
+uv run pytest pipeline/tests server/tests   # run all tests
 uv run pytest pipeline/tests/test_manifest.py::test_35_book_is_in_scope  # single test
 ```
 
 Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
 `text`, and `segment` on page ranges of the real Player's Handbook (book_id
 `phb1`), against the real `$OWLSPERCH_PDFS`/`~/D_D` directory and
-`pdftotext` (poppler); they are skipped (not failed) when the corpus or
+`pdftotext` (poppler); and `server/tests/test_corpus.py` builds a database
+from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
+`/search` finds one. All are skipped (not failed) when the corpus or
 `pdftotext` isn't present.
 
 ### Architecture
@@ -146,6 +154,49 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   -- a short Claude-Code-facing loop over these commands plus Agent-tool
   subagent launches; all the logic that can be unit tested lives in
   `queue/` instead of the skill doc.
+
+- `pipeline/owlsperch/build_db/` -- the `build-db` subcommand (spec 4.8,
+  batch B6): `runner.py` re-validates every `records/<book_id>/<type>/
+  *.json` file with `owlsperch.validate.runner.validate_record` (a pure,
+  no-write-back variant of the check `owlsperch validate` runs, factored out
+  for this purpose -- build-db is read-only and must never mutate segment
+  files), skips FAILs (counted), and loads the rest into a fresh SQLite
+  database written to a temp file and atomically renamed into place:
+  `books` (one row per manifest entry), `records` (id, type, name, slug,
+  book_id, canonical, macro_eligible, the record as `json`, plus an
+  `aliases` and a `record_id` column needed only so the FTS5 external-content
+  link below has real columns to read), `record_fields` (the record's
+  `fields` flattened to one row per scalar -- `flatten_fields` handles
+  scalars, lists of scalars, and array-of-object fields like spell `levels`,
+  which get one row per `<key>.<subkey>` plus a combined `"Cleric 3"`-style
+  row), `record_pages`, and `names_fts` (FTS5 over name/aliases,
+  `content='records'`/`content_rowid='rowid'`). Every record is
+  `canonical = 1` and `macro_eligible = 0` in this batch -- precedence
+  (B11) and macro eligibility (B22) are future work.
+- `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
+  `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
+  `run_serve`) so importing `owlsperch.cli` never requires either to be
+  installed, then runs uvicorn on 127.0.0.1:8000 by default.
+- `server/` -- a second uv workspace member, the `owlsperch_server` package
+  (spec 4.9, batch B6): FastAPI + uvicorn, depending on the `owlsperch`
+  pipeline package (via `[tool.uv.sources]` workspace = true) for
+  schema/registry loading and data-dir resolution -- not the other way
+  around, so `pipeline` has no formal dependency on `server` even though
+  `owlsperch serve` imports it (both are installed into the one shared
+  workspace virtual environment by `uv sync`). `app.py`'s `create_app()`
+  serves `/search` (an FTS5 prefix query per word, falling back to a
+  case-insensitive substring scan over `records.name` when FTS returns
+  fewer than `limit` hits, deduplicated, grouped by type, canonical only),
+  `/records/{type}/{slug}` (the stored record JSON plus `variants` --
+  other canonical records sharing type+slug across books, picking the
+  latest-published book's as the main response -- and placeholder `links`/
+  `referenced_by`/`tables` for later batches), `/schemas` (reusing
+  `owlsperch.schemas`), and `/health`. The database is opened read-only
+  (`mode=ro` URI) once per request, not pooled (spec D1: single-user,
+  localhost only). A missing database makes `/search` and
+  `/records/{type}/{slug}` answer 503 naming `owlsperch build-db`;
+  `/health` and `/schemas` don't touch the database and always answer
+  normally.
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and
