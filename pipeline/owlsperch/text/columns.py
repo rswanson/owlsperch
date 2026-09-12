@@ -30,12 +30,22 @@ Algorithm (per page):
    step 3's column clustering, these narrow blocks would each become their
    own "column" and get emitted one after another -- i.e. column-major
    (every name, then every cost, then every damage) instead of row-major.
-   To detect this: among the remaining non-vertical, non-prose-like blocks,
-   find every pair whose vertical extents overlap by at least
-   `TABLE_OVERLAP_FRACTION` (70%) of the shorter block's height *and* whose
-   x-extents do not overlap at all. A **table group** is a *clique* of such
-   pairs -- every member overlaps every other member this way, not merely
-   chained transitively (A-B and B-C does not imply A-C) -- of at least
+   To detect this: among the remaining non-vertical, non-prose-like blocks
+   with at least `TABLE_CANDIDATE_MIN_LINES` (2) non-blank lines -- a
+   one-line block is a heading or caption, never a table column, however
+   its y-range happens to sit -- find every pair whose vertical extents
+   overlap by at least `TABLE_OVERLAP_FRACTION` (70%) of the *shorter*
+   block's height *and* at least `TABLE_OVERLAP_TALLER_FRACTION` (50%) of
+   the *taller* block's height, and whose x-extents do not overlap at all.
+   Requiring both fractions (not just the shorter-block one) matters
+   because true table columns span the same rows top to bottom, so the
+   overlap is large relative to both blocks, not just the smaller one --
+   otherwise a short block (e.g. a one-line heading) that merely happens to
+   sit fully nested inside a much taller neighbor's y-range would trivially
+   score 100% of its own (shorter) height while covering only a sliver of
+   the taller block's. A **table group** is a *clique* of such pairs --
+   every member overlaps every other member this way, not merely chained
+   transitively (A-B and B-C does not imply A-C) -- of at least
    `TABLE_MIN_BLOCKS` (3) blocks. Where a candidate's blocks admit more than
    one maximal clique of qualifying size (rare), the largest wins and its
    blocks are removed from consideration by smaller, overlapping candidate
@@ -156,6 +166,18 @@ COLUMN_GAP_HEIGHT_FACTOR = 1.5
 #: Two blocks are candidate table columns if their vertical extents overlap
 #: by at least this fraction of the shorter block's height (see step 2).
 TABLE_OVERLAP_FRACTION = 0.70
+
+#: ...and by at least this fraction of the TALLER block's height (see step
+#: 2) -- true table columns span the same rows, so the overlap must be
+#: large relative to both blocks, not just the shorter one; this is what
+#: rejects a short heading/caption block that happens to nest inside a much
+#: taller neighbor's y-range.
+TABLE_OVERLAP_TALLER_FRACTION = 0.50
+
+#: A block needs at least this many non-blank lines to be a candidate table
+#: column (see step 2) -- a single-line block is a heading or caption, and
+#: is never a table column regardless of its overlap with its neighbors.
+TABLE_CANDIDATE_MIN_LINES = 2
 
 #: A group of blocks connected by the table-column relationship is only
 #: treated as a table if it has at least this many members (see step 2) --
@@ -280,23 +302,40 @@ def _text_area_width(blocks: list[Block]) -> float:
     return width if width > 0 else 1.0
 
 
-def _vertical_overlap_fraction(a: Block, b: Block) -> float:
+def _vertical_overlap_fractions(a: Block, b: Block) -> tuple[float, float]:
+    """The vertical overlap between `a` and `b`, as a fraction of each of
+    (the shorter block's height, the taller block's height) -- see step 2's
+    two-sided overlap test."""
     overlap = min(a.y_max, b.y_max) - max(a.y_min, b.y_min)
     if overlap <= 0:
-        return 0.0
-    shorter = min(a.y_max - a.y_min, b.y_max - b.y_min)
-    if shorter <= 0:
-        return 0.0
-    return overlap / shorter
+        return 0.0, 0.0
+    height_a = a.y_max - a.y_min
+    height_b = b.y_max - b.y_min
+    shorter, taller = min(height_a, height_b), max(height_a, height_b)
+    if shorter <= 0 or taller <= 0:
+        return 0.0, 0.0
+    return overlap / shorter, overlap / taller
 
 
 def _x_extents_overlap(a: Block, b: Block) -> bool:
     return min(a.x_max, b.x_max) - max(a.x_min, b.x_min) > 0
 
 
+def _has_min_lines_for_table_candidacy(block: Block) -> bool:
+    """Whether `block` has enough non-blank lines to be a table-column
+    candidate at all (see `TABLE_CANDIDATE_MIN_LINES`, step 2) -- a
+    one-line block is a heading or caption, never a table column."""
+    non_blank = sum(1 for line in block.lines if line.text.strip())
+    return non_blank >= TABLE_CANDIDATE_MIN_LINES
+
+
 def _is_table_pair(a: Block, b: Block) -> bool:
-    return _vertical_overlap_fraction(a, b) >= TABLE_OVERLAP_FRACTION and not _x_extents_overlap(
-        a, b
+    if _x_extents_overlap(a, b):
+        return False
+    shorter_fraction, taller_fraction = _vertical_overlap_fractions(a, b)
+    return (
+        shorter_fraction >= TABLE_OVERLAP_FRACTION
+        and taller_fraction >= TABLE_OVERLAP_TALLER_FRACTION
     )
 
 
@@ -592,7 +631,11 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
     """Split `blocks` into (table groups, remaining non-table blocks) per
     steps 1a/2 of the module docstring."""
     n = len(blocks)
-    candidate_indices = [i for i in range(n) if not _is_prose_like_block(blocks[i])]
+    candidate_indices = [
+        i
+        for i in range(n)
+        if not _is_prose_like_block(blocks[i]) and _has_min_lines_for_table_candidacy(blocks[i])
+    ]
 
     adjacency: list[set[int]] = [set() for _ in range(n)]
     for idx, i in enumerate(candidate_indices):

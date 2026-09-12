@@ -59,16 +59,24 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   `wordlist.txt` is the bundled fallback word list used by dehyphenation.
   Table detection excludes prose-like blocks from grouping, requires
   mutual (not merely transitive) vertical overlap among a candidate
-  group's blocks, and -- for a single block whose gappy rows split into
-  long, sentence-like cells (median > 4 words/cell) rather than short
-  table cells -- splits that block into separate column blocks at the
-  gap instead of reading it row-wise. Known remaining real-corpus
-  limitation (see `pipeline/tests/test_segment_runner.py`'s corpus test
-  docstring): the mutual-overlap heuristic still false-positives on some
-  pages where a short, single-line block (e.g. a heading) sits fully
-  nested inside a taller neighboring block's y-range, satisfying the
-  overlap check by degenerate coincidence rather than real row alignment
-  (e.g. PHB pp. 197, 204) -- not fixed as part of this B3 follow-up.
+  group's blocks -- overlap of at least 70% of the shorter block's height
+  *and* at least 50% of the taller block's height, and at least 2
+  non-blank lines to even be a candidate -- and -- for a single block
+  whose gappy rows split into long, sentence-like cells (median > 4
+  words/cell) rather than short table cells -- splits that block into
+  separate column blocks at the gap instead of reading it row-wise. The
+  two-sided overlap test (not just the shorter block's) is what rejects a
+  short, single-line block (e.g. a heading) that happens to sit fully
+  nested inside a much taller neighboring block's y-range (e.g. PHB pp.
+  197, 204's "Acid Fog" heading between the "Acid Splash"/"Air Walk" stat
+  blocks) without a real row-aligned table underneath it. Known remaining
+  real-corpus limitation: this does *not* catch the case where several
+  real, unrelated blocks of *similar* height and short, label:value-style
+  lines (e.g. two or three side-by-side spell stat blocks, each a
+  Level:/Components:/Casting Time:/... list) sit in the same y-range --
+  they mutually satisfy both overlap fractions and still get merged into
+  one bogus tab-joined table row (e.g. PHB pp. 254, 272's "Mind Fog" and
+  "Repel Wood" spells) -- not fixed as part of this B3 follow-up.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size

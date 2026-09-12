@@ -456,6 +456,73 @@ def test_single_block_merged_prose_columns_are_split_not_tabular(tmp_path: Path)
     assert first_words == ["LEFT", "MID", "RIGHT"]
 
 
+def _stat_block_rows(
+    x_left: float, n_lines: int, words_per_line: int = 3
+) -> list[list[tuple[float, float, str]]]:
+    """`n_lines` rows of `words_per_line` short words each, starting at
+    `x_left` -- a stat-block-like block's shape (short, ragged cells, not
+    justified prose): used to reproduce the real-corpus false-positive
+    pattern below (a short heading block nested, in y-range, inside two
+    such stat blocks in adjacent columns)."""
+    word_width = 18.0
+    gap = 3.0
+    rows: list[list[tuple[float, float, str]]] = []
+    for line_idx in range(n_lines):
+        words: list[tuple[float, float, str]] = []
+        x = x_left
+        for word_idx in range(words_per_line):
+            words.append((x, x + word_width, f"w{line_idx}_{word_idx}"))
+            x += word_width + gap
+        rows.append(words)
+    return rows
+
+
+def test_short_heading_nested_between_two_tall_blocks_is_not_a_table(tmp_path: Path) -> None:
+    # Real-corpus false positive (B3 follow-up, PHB pp. 197, 204): a
+    # one-line heading ("Acid Fog") sits, in y-range, entirely inside the
+    # overlap of two unrelated tall stat-block-like blocks ("Acid Splash",
+    # "Air Walk") in adjacent columns. The heading's own (short) height is
+    # 100% covered by each neighbor -- satisfying the old, shorter-block-only
+    # overlap test -- but covers only a sliver of either neighbor's own
+    # height. With the two-sided test (>= 70% of the shorter block's height
+    # AND >= 50% of the taller block's height) the heading must not pair
+    # with either stat block; and even though the two stat blocks *do*
+    # mutually qualify as a pair (they share nearly the same y-range), a
+    # 2-block group is below `TABLE_MIN_BLOCKS`, so no `TableGroup` forms
+    # at all.
+    left = _wide_block_of_rows(_stat_block_rows(34.0, 8), y_start=406.0, row_height=11.0)
+    right = _wide_block_of_rows(_stat_block_rows(300.0, 8), y_start=406.0, row_height=11.0)
+    heading = _block(160.0, 457.0, 280.0, 469.0, "ACID FOG")
+    page = _parse_page(tmp_path, "nested_heading.html", left + right + heading)
+
+    ordered = order_blocks(page)
+
+    assert not any(isinstance(item, TableGroup) for item in ordered)
+    assert len(ordered) == 3
+
+
+def test_short_block_covering_only_20_percent_of_neighbors_height_is_not_a_table(
+    tmp_path: Path,
+) -> None:
+    # A variant of the above where the nested block has 2 lines (clearing
+    # `TABLE_CANDIDATE_MIN_LINES`) but still only covers ~20% of its tall
+    # neighbors' height -- well short of `TABLE_OVERLAP_TALLER_FRACTION`
+    # (50%), so this isolates the taller-block overlap fraction itself
+    # (independent of the line-count exclusion) as the reason no table
+    # group forms.
+    left = _wide_block_of_rows(_stat_block_rows(34.0, 8), y_start=406.0, row_height=11.0)
+    right = _wide_block_of_rows(_stat_block_rows(300.0, 8), y_start=406.0, row_height=11.0)
+    # left/right span y406-495 (89pt tall); this block spans y406-424 (18pt,
+    # ~20% of 89) -- fully nested at the top of their shared range.
+    short = _wide_block_of_rows(_stat_block_rows(160.0, 2), y_start=406.0, row_height=6.0)
+    page = _parse_page(tmp_path, "short_20_percent.html", left + right + short)
+
+    ordered = order_blocks(page)
+
+    assert not any(isinstance(item, TableGroup) for item in ordered)
+    assert len(ordered) == 3
+
+
 def test_transitive_but_not_mutual_overlap_is_not_one_table_group(tmp_path: Path) -> None:
     # A pairwise-overlaps-B and B pairwise-overlaps-C (each qualifying on
     # its own as a table-column pair: >= 70% vertical overlap, no
