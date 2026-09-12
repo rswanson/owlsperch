@@ -189,8 +189,9 @@ uv run owlsperch schema show <type>
 ```
 
 Prints the type's schema file path and a table of its fields' `x-ui`
-hints (label, filterable, sortable, group, order) -- useful for humans and
-for the extract skill's prompt (a future batch).
+hints (label, filterable, sortable, group, order) -- useful for humans, and
+the same schema files back the extract skill's prompt (see "Running
+extraction" below).
 
 The `schemas/` directory (repo root, alongside `pipeline/`) is the single
 source of truth for record types: `schemas/envelope.json` is the common
@@ -199,6 +200,60 @@ its schema file, UI labels, and schema version, and `schemas/<type>.json`
 (e.g. `schemas/spell.json`) defines that type's `fields`. Its location is
 found by walking up from the `owlsperch` package to a directory containing
 `schemas/registry.json`, overridable via `$OWLSPERCH_SCHEMAS`.
+
+## Running extraction
+
+```
+/extract <book_id|all> [--limit N] [--parallel N=8] [--kind K]
+```
+
+In Claude Code, `/extract phb1 --limit 20` runs the `.claude/skills/extract/`
+skill: it fans out haiku-tier Agent-tool subagents over `phb1`'s pending
+`spell` segments (this batch only has a schema for `spell`; other
+`kind_hint`s are skipped), validates what they write, and prints a summary.
+Records land under `records/phb1/spell/`. Default parallelism is 8; pass
+`all` to run every book with a `segments/` directory.
+
+Under the hood, the skill drives a small CLI of its own, which is also
+directly usable (e.g. to debug or resume a stuck run):
+
+```sh
+uv run owlsperch queue next <book_id> --tier haiku --limit N [--kind spell] --json
+uv run owlsperch queue prompt <seg_id>
+uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
+uv run owlsperch queue summary <book_id> [--json]
+uv run owlsperch queue reset <seg_id>...
+```
+
+- `queue next` selects up to N `pending` segments on the given tier and
+  kind_hint, marks them `in_progress` (with a timestamp), and prints
+  `{seg_id, segment_path, kind_hint, prompt_path}` for each -- rendering
+  every selected segment's subagent prompt as it goes.
+- `queue prompt <seg_id>` (re-)renders one segment's prompt on demand,
+  writing it to `prompts/<book_id>/<seg_id>.md` and printing that path. The
+  prompt is generated from the segment, the manifest, and `schemas/` --
+  book metadata, the segment text verbatim, the candidate schema(s)
+  rendered live from their JSON files, and the exact output contract (the
+  absolute output directory, `id`/`slug`/`citation` rules, the
+  `extraction` block, `schema_version`, and the required
+  `{"seg_id", "records", "no_content", "notes"}` response shape).
+- `queue complete <seg_id> --result <file|->` ingests a subagent's final
+  JSON reply (a file path, or `-` for stdin): claimed record paths go onto
+  the segment's `pending_records` and its `status` returns to `pending` so
+  `validate` can run; `no_content` marks the segment `done` with that
+  outcome and reason; anything malformed (bad JSON, wrong shape) appends a
+  `malformed_result` attempt and returns the segment to `pending` on the
+  same tier.
+- `owlsperch validate <book_id> --json` (see above) then promotes a path
+  from `pending_records` to `records` on PASS, or drops it (without ever
+  reaching `records`) on FAIL.
+- `queue summary <book_id> [--json]` prints segment counts by
+  status/tier/outcome/kind_hint plus how many record files exist.
+- `queue reset <seg_id>...` is a manual escape hatch: puts one or more
+  segments back to `pending` and clears `in_progress_since` (e.g. after
+  killing a run partway through, or undoing a manual `queue next`). It is
+  not part of the normal loop -- a stuck segment being auto-reset after a
+  timeout is a future batch (B8).
 
 ## Development
 
