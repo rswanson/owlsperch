@@ -5,6 +5,7 @@ B5 acceptance criterion 3: ingest the subagent's final JSON, covering the
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -556,3 +557,127 @@ def test_accepted_record_extraction_falls_back_to_default_model_when_segment_has
 
     record = json.loads((data_dir / "records" / "book" / "spell" / "fireball.json").read_text())
     assert record["extraction"]["model"] == "claude-haiku-4-5"
+
+
+# ---------------------------------------------------------------------------
+# Authoritative pages/book_id (B6 follow-up): a live trial found ~10% of
+# real haiku extractions put the printed page number in `pages` instead of
+# the PDF index -- `queue complete` must overwrite `pages`/`book_id` with
+# the segment's own values, exactly like it already does for `extraction`,
+# so a record like that stops failing validate's page-within-segment-span
+# check.
+# ---------------------------------------------------------------------------
+
+
+def _repo_schemas_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "schemas"
+
+
+def _full_spell_record(*, pages: list[int], book_id: str = "book") -> dict[str, Any]:
+    return {
+        "id": f"spell:{book_id}:fireball",
+        "type": "spell",
+        "name": "Fireball",
+        "slug": "fireball",
+        "aliases": [],
+        "book_id": book_id,
+        "pages": pages,
+        "citation": "Test Book p. 196",
+        "text_md": "Deals fire damage in a burst.",
+        "fields": {
+            "school": "Evocation",
+            "subschool": None,
+            "descriptors": ["Fire"],
+            "levels": [{"class": "Sorcerer", "level": 3}, {"class": "Wizard", "level": 3}],
+            "components": ["V", "S", "M"],
+            "casting_time": "1 standard action",
+            "range": "Long",
+            "target_effect_area": "20-ft.-radius burst",
+            "duration": "Instantaneous",
+            "saving_throw": "Reflex half",
+            "spell_resistance": "Yes",
+            "costs": {"material": None, "focus": None, "xp": None},
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 2,
+        "extraction": {
+            "tier": "bogus-tier",
+            "model": "bogus-model",
+            "segment_id": "bogus-segment",
+            "timestamp": "1999-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def test_accepted_record_gets_authoritative_pages_and_book_id_overwritten(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        pages=[197, 198],
+        printed_pages=[196, 197],
+    )
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    # The model wrongly wrote the printed page number instead of the PDF
+    # page indices.
+    record_path.write_text(json.dumps(_full_spell_record(pages=[196])))
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    record = json.loads(record_path.read_text())
+    assert record["pages"] == [197, 198]
+    assert record["book_id"] == "book"
+
+
+def test_record_with_wrong_pages_is_corrected_after_complete_and_then_passes_validation(
+    tmp_path: Path,
+) -> None:
+    from owlsperch.validate.runner import run_validate
+
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        pages=[197, 198],
+        printed_pages=[196, 197],
+    )
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    # Wrong: the printed page number (196) instead of the PDF indices
+    # ([197, 198]) -- would fail check_pages_within_segment.
+    record_path.write_text(json.dumps(_full_spell_record(pages=[196])))
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    out = io.StringIO()
+    exit_code = run_validate("book", data_dir=data_dir, schemas_dir=_repo_schemas_dir(), out=out)
+
+    assert exit_code == 0
+    assert "PASS records/book/spell/fireball.json" in out.getvalue()
+    record = json.loads(record_path.read_text())
+    assert record["pages"] == [197, 198]

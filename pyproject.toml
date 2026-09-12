@@ -1,28 +1,32 @@
 # Root of the uv workspace.
 #
 # This file has no [project] table on purpose: it is a "virtual" workspace
-# root whose only job is to declare `pipeline` as a workspace member so that
-# `uv run owlsperch ...` works from the repo root (uv shares one lockfile and
-# virtual environment across all workspace members, and installs each
-# member's console-script entry points into it). See pipeline/pyproject.toml
-# for the actual `owlsperch` package and its dependencies.
+# root whose only job is to declare `pipeline` and `server` as workspace
+# members so that `uv run owlsperch ...` works from the repo root (uv shares
+# one lockfile and virtual environment across all workspace members, and
+# installs each member's console-script entry points into it). See
+# pipeline/pyproject.toml for the `owlsperch` package (the CLI and pipeline)
+# and server/pyproject.toml for `owlsperch_server` (the FastAPI app), which
+# depends on `owlsperch` for schema/registry loading and data-dir resolution.
 [tool.uv.workspace]
-members = ["pipeline"]
+members = ["pipeline", "server"]
 
 # This root pyproject.toml is the single source of truth for all tool
-# configuration (pytest, ruff, mypy). pipeline/pyproject.toml holds only the
-# package definition (project metadata, build system, console script, dev
-# dependency group) and no [tool.*] sections of its own.
+# configuration (pytest, ruff, mypy). pipeline/pyproject.toml and
+# server/pyproject.toml hold only the package definition (project metadata,
+# build system, console script, dev dependency group) and no [tool.*]
+# sections of their own.
 #
 # This matters in practice for mypy: mypy's config discovery only checks the
 # current *working directory* for a pyproject.toml (unlike ruff, which walks
-# up the tree). Since every documented command (`uv run mypy pipeline`, CI,
-# README, CLAUDE.md) is invoked from the repo root, a [tool.mypy] section in
-# pipeline/pyproject.toml would be silently ignored -- mypy would fall back
-# to non-strict defaults with no warning. Keeping the config here instead
-# means the documented command actually enforces strict mode.
+# up the tree). Since every documented command (`uv run mypy pipeline
+# server`, CI, README, CLAUDE.md) is invoked from the repo root, a
+# [tool.mypy] section in pipeline/pyproject.toml or server/pyproject.toml
+# would be silently ignored -- mypy would fall back to non-strict defaults
+# with no warning. Keeping the config here instead means the documented
+# command actually enforces strict mode.
 [tool.pytest.ini_options]
-testpaths = ["pipeline/tests"]
+testpaths = ["pipeline/tests", "server/tests"]
 markers = [
     "corpus: requires the real PDF corpus ($OWLSPERCH_PDFS or ~/D_D) to be present on disk; skipped otherwise",
 ]
@@ -32,10 +36,11 @@ line-length = 100
 target-version = "py312"
 # Ruff's default first-party source roots are [<this file's dir>, <this file's
 # dir>/src]; since this config now lives at the repo root but the actual
-# `owlsperch` package lives under pipeline/, it must be pointed at pipeline/
-# explicitly so `owlsperch` imports are still classified as first-party by
-# the isort rules (I001) rather than third-party.
-src = ["pipeline"]
+# `owlsperch`/`owlsperch_server` packages live under pipeline/ and server/,
+# it must be pointed at both explicitly so their imports are still
+# classified as first-party by the isort rules (I001) rather than
+# third-party.
+src = ["pipeline", "server"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -43,4 +48,12 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["pipeline/owlsperch", "pipeline/tests"]
+files = ["pipeline/owlsperch", "pipeline/tests", "server/owlsperch_server", "server/tests"]
+
+[[tool.mypy.overrides]]
+# uvicorn is imported lazily (see owlsperch.serve.run_serve) purely to start
+# the dev server; it ships a py.typed marker in recent releases but pin the
+# override anyway so a CI runner on an older resolved version can't fail the
+# gate on missing stubs for an import that's just `uvicorn.run(...)`.
+module = ["uvicorn.*"]
+ignore_missing_imports = true

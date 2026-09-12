@@ -123,7 +123,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `schemas/`, `pipeline/owlsperch/validate/`, tests.
 
 ## B5: `/extract` skill, haiku tier only
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `/extract phb --limit 20` in Claude Code fans out
   haiku subagents over pending spell segments, records land under
   `records/phb/spell/`, and a summary reports pass/fail counts.
@@ -150,7 +150,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `.claude/skills/extract/`, `pipeline/owlsperch/queue/`, tests.
 
 ## B6: `build-db` and API search + detail
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `owlsperch build-db` produces `db/owlsperch.sqlite`
   from records; `uv run owlsperch serve` starts FastAPI; curl returns
   typeahead results and a full record.
