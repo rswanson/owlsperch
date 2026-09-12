@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+# (uv.lock IS committed intentionally, for reproducible workspace installs)
+
+# owlsperch data directory, in case it's ever pointed inside the repo
+owlsperch-data/

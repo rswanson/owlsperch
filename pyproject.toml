@@ -1,0 +1,10 @@
+# Root of the uv workspace.
+#
+# This file has no [project] table on purpose: it is a "virtual" workspace
+# root whose only job is to declare `pipeline` as a workspace member so that
+# `uv run owlsperch ...` works from the repo root (uv shares one lockfile and
+# virtual environment across all workspace members, and installs each
+# member's console-script entry points into it). See pipeline/pyproject.toml
+# for the actual `owlsperch` package and its dependencies.
+[tool.uv.workspace]
+members = ["pipeline"]
