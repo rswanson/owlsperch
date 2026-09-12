@@ -42,7 +42,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from owlsperch.manifest import (
     ManifestEntry,
@@ -180,7 +180,7 @@ class _PageUnit:
     or `kind="table"` (a `TableGroup`'s already-composed row texts, one per
     output line, joined with newlines but never dehyphenated across cells)."""
 
-    kind: str
+    kind: Literal["prose", "table"]
     lines: list[str] = field(default_factory=list)
 
 

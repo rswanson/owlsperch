@@ -26,6 +26,46 @@ Algorithm (per page):
    group** and is pulled out of the normal column-clustering blocks
    entirely.
 
+2a. **Detect single-block tables.** Sometimes `pdftotext` keeps a whole
+    table as a *single* block instead -- e.g. a full-width table wide
+    enough, or with cells close enough together, that poppler never splits
+    it into the separate per-column blocks step 2 looks for. Left alone,
+    such a block is just a block like any other: its lines get flattened
+    into one run-on prose paragraph (see `owlsperch.text.runner`),
+    scrambling the table into a wall of text (its cells are frequently
+    still one `<line>` each, just all inside the same `<block>`).
+
+    To detect this, for each remaining (non-multi-block-table) block:
+    bucket its lines into rows the same way step 2's table groups are (see
+    "Emitting a table group" below), since `pdftotext` often still emits
+    each cell as its own `<line>` even within one block, at the same y
+    position as its row-mates. Within each row, flatten its words (across
+    however many `<line>`s contributed to it) into one x-sorted sequence
+    and measure the horizontal gap between each consecutive pair. A gap is
+    "large" if it exceeds `max(TABLE_GAP_MEDIAN_FACTOR *` the block's
+    median inter-word gap`, TABLE_GAP_HEIGHT_FACTOR *` the block's median
+    word height`)`. The median-gap baseline is measured only *within* each
+    original `<line>` (not across the `<line>` boundaries a row groups
+    together) -- a gap between two words `pdftotext` already put in
+    separate `<line>`s is frequently itself a real column gap, so folding
+    it into the baseline would inflate it and mask genuine column gaps;
+    the height-based floor instead keeps a block with few or no small
+    intra-line gaps to take a median of from treating every gap as "large"
+    by default. A row with at least `TABLE_MIN_GAPS_PER_ROW`
+    (2) large gaps is "gappy"; the block is a single-block table if at
+    least `TABLE_MIN_GAPPY_ROWS` (3) of its rows are gappy *and* the gappy
+    rows' large-gap midpoints cluster at consistent x-positions -- a
+    cluster is a confirmed column split only if it is hit by at least
+    `TABLE_GAP_CLUSTER_FRACTION` (60%) of the gappy rows.
+
+    A confirmed single-block table becomes a table group exactly like
+    step 2's: each gappy row is split into cells at the confirmed
+    x-splits; every other row (a caption, a category sub-heading, an
+    unsplit footnote paragraph line) is kept as its own single-cell row.
+    Superscript footnote markers poppler merges into a word (e.g. "1d23"
+    for "1d2" with footnote marker 3) are not un-merged here -- out of
+    scope.
+
 3. **Split the page into runs at wide blocks and table groups.** The *text
    area* width is the span from the minimum `xMin` to the maximum `xMax`
    across all non-vertical blocks. Any remaining (non-table) block whose
@@ -49,22 +89,27 @@ Algorithm (per page):
    (sorted by `yMin`), then continue with the next run after its wide
    block or table group.
 
-**Emitting a table group.** A table group's member blocks' lines are
-collected into one flat list. Lines are bucketed into rows by y-center:
-lines whose y-centers are within `TABLE_ROW_FRACTION` (40%) of the median
-line height of each other belong to the same row. Rows are ordered top to
-bottom; within a row, cells (one per contributing line) are ordered left to
-right by `xMin` and joined with a single tab character. The caller (see
-`owlsperch.text.runner`) renders a table group's rows one per output line,
-surrounded by blank lines -- like a wide block, a table group is a column
-break for the surrounding prose.
+**Emitting a table group.** A table group's member blocks' lines (for a
+step-2 multi-block table group) or one block's own lines (for a step-2a
+single-block table) are collected into one flat list. Lines are bucketed
+into rows by y-center: lines whose y-centers are within `TABLE_ROW_FRACTION`
+(40%) of the median line height of each other belong to the same row. Rows
+are ordered top to bottom. For a multi-block table group, within a row,
+cells (one per contributing line) are ordered left to right by `xMin` and
+joined with a single tab character. For a single-block table, a *gappy* row
+is instead split into cells at its confirmed large-gap x-positions (see
+step 2a) and a non-gappy row is kept as one cell -- both cases end up as the
+same `TableRow`/`TableGroup` shape. The caller (see `owlsperch.text.runner`)
+renders a table group's rows one per output line, surrounded by blank lines
+-- like a wide block, a table group is a column break for the surrounding
+prose.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from owlsperch.text.bbox import Block, Line, Page
+from owlsperch.text.bbox import Block, Line, Page, Word
 
 #: A block wider than this fraction of the text area is treated as a column
 #: break (a full-width table or heading) rather than clustered into a column.
@@ -88,6 +133,27 @@ TABLE_MIN_BLOCKS = 3
 #: the median line height of each other belong to the same row (see the
 #: "Emitting a table group" section above).
 TABLE_ROW_FRACTION = 0.40
+
+#: A single-block table's word gap must exceed this multiple of the
+#: block's own median inter-word gap to count as "large" (see step 2a).
+TABLE_GAP_MEDIAN_FACTOR = 2.5
+
+#: ...or this multiple of the block's median word height, whichever is
+#: greater -- a floor for blocks with few small gaps to take a median of.
+TABLE_GAP_HEIGHT_FACTOR = 1.2
+
+#: A row needs at least this many large gaps to count as "gappy" (see step
+#: 2a).
+TABLE_MIN_GAPS_PER_ROW = 2
+
+#: A single block needs at least this many gappy rows to be a table (see
+#: step 2a) -- fewer is an ordinary two-cell layout, not a table.
+TABLE_MIN_GAPPY_ROWS = 3
+
+#: A cluster of gappy rows' large-gap midpoints is a confirmed column
+#: split only if at least this fraction of the gappy rows land in it (see
+#: step 2a).
+TABLE_GAP_CLUSTER_FRACTION = 0.60
 
 
 def is_vertical_block(block: Block) -> bool:
@@ -149,14 +215,12 @@ def _is_table_pair(a: Block, b: Block) -> bool:
     )
 
 
-def _build_table_group(member_blocks: list[Block]) -> TableGroup:
-    lines: list[Line] = [
-        line for block in member_blocks for line in block.lines if line.text.strip()
-    ]
-    y_min = min(b.y_min for b in member_blocks)
-    if not lines:
-        return TableGroup(rows=[], y_min=y_min)
-
+def _cluster_lines_into_rows(lines: list[Line]) -> list[list[Line]]:
+    """Group `lines` into rows by y-center, top to bottom: lines whose
+    y-centers are within `TABLE_ROW_FRACTION` of the median line height of
+    each other belong to the same row (see "Emitting a table group" in the
+    module docstring). Shared by multi-block table groups (step 2) and
+    single-block table detection (step 2a)."""
     heights = sorted(line.height for line in lines)
     median_height = heights[len(heights) // 2] if heights[len(heights) // 2] > 0 else 1.0
     row_threshold = median_height * TABLE_ROW_FRACTION
@@ -174,12 +238,146 @@ def _build_table_group(member_blocks: list[Block]) -> TableGroup:
                 continue
         row_clusters.append([line])
         row_center_sums.append(center)
+    return row_clusters
 
+
+def _build_table_group(member_blocks: list[Block]) -> TableGroup:
+    lines: list[Line] = [
+        line for block in member_blocks for line in block.lines if line.text.strip()
+    ]
+    y_min = min(b.y_min for b in member_blocks)
+    if not lines:
+        return TableGroup(rows=[], y_min=y_min)
+
+    row_clusters = _cluster_lines_into_rows(lines)
     rows = [
         TableRow(cells=[ln.text for ln in sorted(cluster, key=lambda ln: ln.x_min)])
         for cluster in row_clusters
     ]
     return TableGroup(rows=rows, y_min=y_min)
+
+
+def _row_words(cluster: list[Line]) -> list[Word]:
+    """Flatten one row cluster's lines into a single x-sorted word list --
+    the unit single-block table detection measures gaps across (see step
+    2a), regardless of how many separate `<line>`s the row's cells arrived
+    as."""
+    words = [w for line in cluster for w in line.words if w.text]
+    return sorted(words, key=lambda w: w.x_min)
+
+
+def _word_gaps(words: list[Word]) -> list[tuple[float, float]]:
+    """Each consecutive pair's (gap size, gap midpoint x) for `words`,
+    already x-sorted. Overlapping/adjacent words contribute no gap."""
+    gaps = []
+    for a, b in zip(words, words[1:], strict=False):
+        gap = b.x_min - a.x_max
+        if gap > 0:
+            gaps.append((gap, (a.x_max + b.x_min) / 2))
+    return gaps
+
+
+def _median(values: list[float], default: float) -> float:
+    if not values:
+        return default
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+def _confirmed_gap_splits(
+    row_gap_midpoints: list[list[float]],
+    gappy_row_indices: list[int],
+    cluster_tolerance: float,
+) -> list[float]:
+    """Cluster the gappy rows' large-gap midpoints (single-pass, by
+    running average, like `_cluster_columns`) and return the x-position of
+    every cluster hit by at least `TABLE_GAP_CLUSTER_FRACTION` of the
+    gappy rows -- the confirmed column splits (see step 2a)."""
+    entries = sorted((mid, i) for i in gappy_row_indices for mid in row_gap_midpoints[i])
+    clusters: list[list[tuple[float, int]]] = []
+    cluster_sums: list[float] = []
+    for mid, row_index in entries:
+        if clusters:
+            running_avg = cluster_sums[-1] / len(clusters[-1])
+            if mid - running_avg <= cluster_tolerance:
+                clusters[-1].append((mid, row_index))
+                cluster_sums[-1] += mid
+                continue
+        clusters.append([(mid, row_index)])
+        cluster_sums.append(mid)
+
+    n_gappy = len(gappy_row_indices)
+    return sorted(
+        sum(m for m, _ in cluster) / len(cluster)
+        for cluster in clusters
+        if len({row_index for _, row_index in cluster}) / n_gappy >= TABLE_GAP_CLUSTER_FRACTION
+    )
+
+
+def _split_words_at(words: list[Word], splits: list[float]) -> list[str]:
+    """Bucket `words` (x-sorted) into `len(splits) + 1` cells at the given
+    x-positions, space-joining each cell's words."""
+    buckets: list[list[str]] = [[] for _ in range(len(splits) + 1)]
+    for word in words:
+        index = 0
+        while index < len(splits) and word.x_min > splits[index]:
+            index += 1
+        buckets[index].append(word.text)
+    return [" ".join(bucket) for bucket in buckets]
+
+
+def _detect_single_block_table_group(block: Block) -> TableGroup | None:
+    """If `block`'s own lines look like a table flattened into one block
+    (see step 2a in the module docstring), return the `TableGroup` it
+    represents; otherwise `None`."""
+    lines = [line for line in block.lines if line.words]
+    if not lines:
+        return None
+
+    row_clusters = _cluster_lines_into_rows(lines)
+    rows_words = [_row_words(cluster) for cluster in row_clusters]
+
+    all_words = [word for row in rows_words for word in row]
+    if not all_words:
+        return None
+    median_height = _median([w.y_max - w.y_min for w in all_words], default=1.0)
+
+    # The block's "normal" word-spacing baseline is measured within each
+    # original <line> (pdftotext's own line-breaking), not across the row
+    # cluster's merged word list: two words `pdftotext` put in separate
+    # `<line>`s are frequently separate table cells, so a gap between them
+    # is exactly the kind of "large" gap this is trying to detect --
+    # folding it into the baseline would only inflate the baseline and
+    # mask real column gaps.
+    intra_line_gaps = [
+        gap for line in lines for gap, _ in _word_gaps(sorted(line.words, key=lambda w: w.x_min))
+    ]
+    median_gap = _median(intra_line_gaps, default=0.0)
+    threshold = max(TABLE_GAP_MEDIAN_FACTOR * median_gap, TABLE_GAP_HEIGHT_FACTOR * median_height)
+
+    row_gap_midpoints = [
+        [mid for gap, mid in _word_gaps(row) if gap > threshold] for row in rows_words
+    ]
+    gappy_row_indices = [
+        i
+        for i, midpoints in enumerate(row_gap_midpoints)
+        if len(midpoints) >= TABLE_MIN_GAPS_PER_ROW
+    ]
+    if len(gappy_row_indices) < TABLE_MIN_GAPPY_ROWS:
+        return None
+
+    confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
+    if not confirmed_splits:
+        return None
+
+    gappy = set(gappy_row_indices)
+    rows = [
+        TableRow(cells=_split_words_at(words, confirmed_splits))
+        if i in gappy
+        else TableRow(cells=[" ".join(w.text for w in words)])
+        for i, words in enumerate(rows_words)
+    ]
+    return TableGroup(rows=rows, y_min=block.y_min)
 
 
 def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
@@ -266,9 +464,19 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
 
     table_groups, remaining_blocks = _extract_table_groups(blocks)
 
-    combined: list[tuple[float, Block | TableGroup]] = [(b.y_min, b) for b in remaining_blocks] + [
-        (tg.y_min, tg) for tg in table_groups
-    ]
+    single_block_tables: list[TableGroup] = []
+    other_blocks: list[Block] = []
+    for block in remaining_blocks:
+        detected = _detect_single_block_table_group(block)
+        if detected is not None:
+            single_block_tables.append(detected)
+        else:
+            other_blocks.append(block)
+
+    combined: list[tuple[float, Block | TableGroup]] = []
+    combined.extend((b.y_min, b) for b in other_blocks)
+    combined.extend((tg.y_min, tg) for tg in table_groups)
+    combined.extend((tg.y_min, tg) for tg in single_block_tables)
     combined.sort(key=lambda item: item[0])
 
     result: list[Block | TableGroup] = []
