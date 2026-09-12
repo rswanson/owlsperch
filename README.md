@@ -6,8 +6,9 @@ SQLite/API/web reference site. See
 `docs/specs/2026-09-12-dnd-reference-site-spec.md` for the full spec and
 `docs/batches/2026-09-12-dnd-reference-site-batches.md` for the build order.
 
-This batch (B1) delivers the repo scaffold, the `owlsperch` CLI, and the
-curated book manifest (`manifest check` only -- everything else is a stub).
+Batch B1 delivered the repo scaffold, the `owlsperch` CLI, and the curated
+book manifest (`manifest check`). Batch B2 adds `text`, which extracts
+column-repaired page text for text-layer (non-scanned) books.
 
 ## Environment variables
 
@@ -46,6 +47,44 @@ non-zero and lists any file present in
 the PDF directory but missing from the manifest, or any manifest entry whose
 file is missing from the directory.
 
+```sh
+uv run owlsperch text <book_id|all> [--force] [--pages A-B]
+```
+
+Extracts one column-repaired text file per PDF page for a text-layer
+(non-scanned) book, via `pdftotext -bbox-layout` (poppler). For each book:
+
+- A `scanned: true` book is refused (OCR extraction is a future batch, B15)
+  -- for a single `book_id` this is a non-zero exit; inside `all` it is
+  printed as a per-book skip line and the run continues.
+- A book whose manifest status (see `manifest check`) is not `in_scope` or
+  `override` is skipped. Override sources (errata, update, web_enhancement)
+  are still extracted, since they need their own text.
+- `all` runs every eligible book in the manifest and prints one summary
+  line per book (pages written / skipped, headers removed, page numbers
+  found, or the reason it was skipped/refused).
+- An unknown `book_id` is a clear error, exit 1.
+
+`--pages A-B` limits extraction to that inclusive PDF page range (1-based)
+instead of the whole book -- useful for trying a few pages by hand. Header/
+footer detection and dehyphenation only consider the pages in that range.
+
+`--force` re-writes page files that already exist; by default, a page whose
+output file is already present is left alone and counted as "skipped" (the
+command is idempotent -- rerunning it does no extra work).
+
+Output layout, under `$OWLSPERCH_DATA` (default `~/owlsperch-data`):
+
+- `text/<book_id>/p0001.txt`, ... -- one file per PDF page (1-based,
+  4-digit), each page's text reconstructed in reading order (columns left
+  to right, top to bottom within a column), with running headers/footers
+  removed and hyphenated line breaks rejoined. Blocks are separated by a
+  blank line (a paragraph break).
+- `text/<book_id>/pages.json` -- maps a PDF page index (as a string) to the
+  printed page number found in that page's header/footer band, e.g.
+  `{"120": 119}`. A page where no printed number was found is simply absent
+  from the map.
+
 ## Development
 
 ```sh
@@ -61,6 +100,8 @@ Run a single test:
 uv run pytest pipeline/tests/test_manifest.py::test_35_book_is_in_scope
 ```
 
-One test is marked `@pytest.mark.corpus` and runs `manifest check` against
-the real `$OWLSPERCH_PDFS`/`~/D_D` directory; it is skipped automatically
-(not failed) when that directory isn't present, e.g. in CI.
+Some tests are marked `@pytest.mark.corpus` and run against the real
+`$OWLSPERCH_PDFS`/`~/D_D` directory (`manifest check`, and `text phb1` over
+pages 118-122, which needs `pdftotext` on `PATH`); they are skipped
+automatically (not failed) when the corpus or `pdftotext` isn't present,
+e.g. in CI.
