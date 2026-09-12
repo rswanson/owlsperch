@@ -11,7 +11,7 @@ import argparse
 import sys
 
 from owlsperch.manifest import ManifestError, run_check
-from owlsperch.segment.runner import SegmentError, run_segment
+from owlsperch.segment.runner import run_segment
 from owlsperch.text.runner import run_text
 
 
@@ -99,9 +99,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "segment":
+        # Note: run_segment already catches its own SegmentError internally
+        # (naming the failing book and returning exit code 1), so only
+        # ManifestError (raised by load_manifest before any per-book work
+        # starts) can actually reach this handler.
         try:
             return run_segment(args.book_id, force=args.force, page_range=args.pages)
-        except (ManifestError, SegmentError) as exc:
+        except ManifestError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
