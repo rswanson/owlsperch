@@ -73,7 +73,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/text/`, tests, README.
 
 ## B3: `segment`
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `owlsperch segment phb` writes segment JSON files
   under `segments/phb/` and prints counts per kind hint.
 - **Acceptance criteria:**
@@ -97,7 +97,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/segment/`, tests.
 
 ## B4: Envelope, type registry, spell schema, `validate`
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `owlsperch validate phb` checks every record
   under `records/phb/` and prints pass/fail per record with reasons.
 - **Acceptance criteria:**
