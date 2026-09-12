@@ -197,6 +197,49 @@ def test_pass_moves_path_from_pending_records_to_records(tmp_path: Path) -> None
     assert segment["pending_records"] == []
 
 
+def test_pass_promotes_record_found_by_file_discovery_despite_prior_malformed_attempt(
+    tmp_path: Path,
+) -> None:
+    """A segment can carry a `malformed_result` attempt at its tier (a bad
+    `queue complete` reply, e.g. B5 follow-up 1's fenced-JSON trial bug)
+    while the record file itself was written to disk correctly and never
+    made it into `pending_records`. `owlsperch validate` discovers record
+    files directly under `records/<book_id>/<type>/` regardless of
+    `pending_records`, so a later PASS must still promote the path into
+    `records`, clean `pending_records` (already empty here), and leave the
+    segment `done` -- the stale malformed attempt doesn't block any of
+    that."""
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["malformed_result: invalid JSON: ..."],
+            }
+        ],
+        pending_records=[],
+    )
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 0
+    assert f"PASS {record_rel}" in output
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "done"
+    assert segment["outcome"] == "validated"
+    assert segment["records"] == [record_rel]
+    assert segment["pending_records"] == []
+    # The prior malformed attempt is history, not cleared by a later PASS.
+    assert len(segment["attempts"]) == 1
+
+
 def test_fail_removes_path_from_pending_records_without_promoting(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     record_rel = "records/book/spell/fireball.json"

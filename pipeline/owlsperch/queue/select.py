@@ -148,6 +148,10 @@ def select_and_mark(
 
             segment.status = "in_progress"
             segment.in_progress_since = now_iso()
+            # Authoritative record of the model this wave's prompt was
+            # rendered for -- `owlsperch queue complete` copies it into an
+            # accepted record's `extraction.model` (B5 follow-up 3).
+            segment.model = model
             atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
 
             prompt_path = render_prompt_to_file(

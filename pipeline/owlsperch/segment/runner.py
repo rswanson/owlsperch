@@ -116,6 +116,14 @@ class Segment(BaseModel):
     #: complete` and `owlsperch queue reset`. Stale in-progress reset (>60
     #: min, spec 4.5) arrives in B8.
     in_progress_since: str | None = None
+    #: The extraction model string (`--model`, default `claude-haiku-4-5`)
+    #: recorded by `owlsperch queue next` (`select_and_mark`) at selection
+    #: time -- the authoritative source `owlsperch queue complete` copies
+    #: into an accepted record's `extraction.model` (B5 follow-up), since a
+    #: subagent's own `extraction` block is only a placeholder (see
+    #: `owlsperch.queue.prompt`). `None` for a segment that has never been
+    #: through `queue next`.
+    model: str | None = None
 
 
 @dataclass

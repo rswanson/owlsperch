@@ -32,6 +32,7 @@ from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import ManifestEntry, ManifestError, default_manifest_path, load_manifest
+from owlsperch.queue.abbrev import CLASS_ABBREVIATIONS
 from owlsperch.schemas import Registry, load_registry
 from owlsperch.segment.runner import Segment
 
@@ -291,6 +292,13 @@ def render_prompt(
         "  text also uses elsewhere) -- use `[]` if the text gives none.",
         "- `pages` must copy this segment's `pages` list (PDF page indices)",
         f"  exactly, unchanged: `{json.dumps(segment.pages)}`.",
+        "  **`pages` are PDF page indices, not the printed page number shown",
+        "  in the book text -- never substitute one for the other.** For",
+        "  example, if this segment's `pages` were `[197, 198]` and the",
+        "  printed page number visible in the text were 196, the record must",
+        '  still have `"pages": [197, 198]` (the PDF indices, copied',
+        '  verbatim from the segment) even though `"citation": "PHB p. 196"`',
+        "  cites the printed page number instead.",
         f'- `citation` follows the pattern "{citation_prefix} p. <printed page>"',
         f'  (e.g. "{example_citation}"), or "{citation_prefix} pp. <A>-<B>" if',
         "  the entity spans more than one printed page. Use the printed page",
@@ -314,10 +322,28 @@ def render_prompt(
         "  immediately preceding a later, named one), skip writing a record",
         "  for it entirely and report it in `notes` as",
         "  `unnamed_entity: <first 60 chars of its text>`.",
+        "- `levels[].class` must use the FULL class name, never the",
+        "  stat block's abbreviation -- expand every abbreviation using this",
+        "  table:",
+        "",
+        *[f"  - `{abbr}` -> `{full}`" for abbr, full in CLASS_ABBREVIATIONS.items()],
+        "",
+        '  `"Sor/Wiz N"` (or any other "/"-joined run of abbreviations) becomes',
+        "  TWO entries, one per class, both at the same level -- e.g.",
+        '  `"Sor/Wiz 3"` becomes `{"class": "Sorcerer", "level": 3}` and',
+        '  `{"class": "Wizard", "level": 3}`, never a single combined entry.',
+        "  Anything not in the table above (a cleric domain like `Air` or",
+        "  `Fire`, or a prestige class) is kept exactly as written, with only",
+        "  its first letter capitalized.",
         schema_version_line,
         "- `extraction` is exactly:",
         "",
         f"      {extraction_example}",
+        "",
+        "  These exact values don't matter -- `owlsperch queue complete`",
+        "  overwrites `extraction` authoritatively with the real tier, model,",
+        "  segment_id, and timestamp once you respond, so placeholder values",
+        "  here are fine.",
         "",
         "- Never invent fields that are not in the schema above -- both schemas",
         "  reject unknown properties (`additionalProperties: false`). Omit a",

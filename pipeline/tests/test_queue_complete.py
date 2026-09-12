@@ -418,3 +418,141 @@ def test_unknown_seg_id_raises_queue_error(tmp_path: Path) -> None:
         raise AssertionError("expected QueueError")
     except QueueError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Tolerant result parsing (B5 follow-up 1): two of four real haiku replies in
+# the trial came back wrapped in ```json fences and were wrongly rejected as
+# malformed. `_parse_result` must accept a fenced reply, a reply with a
+# leading sentence, and bare JSON alike.
+# ---------------------------------------------------------------------------
+
+
+def test_fenced_json_reply_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    payload = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+    result = f"```json\n{payload}\n```"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["outcome_reason"] == "art"
+
+
+def test_reply_with_leading_sentence_before_json_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    payload = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+    result = f"Here is my final result:\n\n{payload}"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+
+
+def test_bare_json_reply_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+
+
+def test_fenced_reply_with_records_still_validates_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    payload = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+    result = f"```json\n{payload}\n```"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+
+
+# ---------------------------------------------------------------------------
+# Authoritative extraction provenance (B5 follow-up 3): every accepted
+# claimed record file's `extraction` is overwritten with the segment's own
+# tier/model/segment_id and a fresh timestamp, regardless of whatever
+# (possibly placeholder or bogus) values the subagent wrote.
+# ---------------------------------------------------------------------------
+
+
+def test_accepted_record_gets_authoritative_extraction_overwritten(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="haiku", model="claude-haiku-4-5")
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "name": "Fireball",
+                "extraction": {
+                    "tier": "bogus-tier",
+                    "model": "bogus-model",
+                    "segment_id": "bogus-segment",
+                    "timestamp": "1999-01-01T00:00:00+00:00",
+                },
+            }
+        )
+    )
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    record = json.loads(record_path.read_text())
+    assert record["extraction"]["tier"] == "haiku"
+    assert record["extraction"]["model"] == "claude-haiku-4-5"
+    assert record["extraction"]["segment_id"] == "book-p0010-01"
+    assert record["extraction"]["timestamp"] != "1999-01-01T00:00:00+00:00"
+    # The rest of the record is untouched.
+    assert record["name"] == "Fireball"
+
+
+def test_accepted_record_extraction_falls_back_to_default_model_when_segment_has_none(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    # No `model` override -- simulates a segment that never went through
+    # `queue next` (e.g. hand-crafted in a test or an old segment file).
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    record = json.loads((data_dir / "records" / "book" / "spell" / "fireball.json").read_text())
+    assert record["extraction"]["model"] == "claude-haiku-4-5"

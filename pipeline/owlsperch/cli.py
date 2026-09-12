@@ -171,6 +171,14 @@ def build_parser() -> argparse.ArgumentParser:
         "reset", help="Reset one or more in_progress segments back to pending."
     )
     queue_reset_parser.add_argument("seg_id", nargs="+", help="One or more segment ids.")
+    queue_reset_parser.add_argument(
+        "--hard",
+        action="store_true",
+        help=(
+            "Also clear attempts/pending_records/records/notes/outcome and "
+            "delete the record files they named (only ones under records/<book_id>/)."
+        ),
+    )
 
     schema_parser = subparsers.add_parser("schema", help="Inspect record type schemas.")
     schema_parser.set_defaults(schema_parser=schema_parser)
@@ -244,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_queue_summary(args.book_id, json_output=args.json)
 
     if args.command == "queue" and args.queue_command == "reset":
-        return run_queue_reset(args.seg_id)
+        return run_queue_reset(args.seg_id, hard=args.hard)
 
     if args.command == "queue":
         args.queue_parser.print_help()

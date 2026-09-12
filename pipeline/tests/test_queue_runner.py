@@ -390,6 +390,89 @@ def test_run_queue_reset_unknown_seg_id_reports_error_but_exits_nonzero(tmp_path
     assert exit_code == 1
 
 
+def test_run_queue_reset_soft_leaves_records_and_notes_untouched(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_dir = data_dir / "records" / "book" / "spell"
+    record_dir.mkdir(parents=True)
+    (record_dir / "fireball.json").write_text("{}")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="in_progress",
+        records=["records/book/spell/fireball.json"],
+        notes=["a note"],
+    )
+
+    exit_code = run_queue_reset(["book-p0010-01"], data_dir=data_dir, out=io.StringIO())
+
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["records"] == ["records/book/spell/fireball.json"]
+    assert segment["notes"] == ["a note"]
+    assert (record_dir / "fireball.json").exists()
+
+
+def test_run_queue_reset_hard_clears_state_and_deletes_record_files(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_dir = data_dir / "records" / "book" / "spell"
+    record_dir.mkdir(parents=True)
+    (record_dir / "fireball.json").write_text("{}")
+    (record_dir / "icy-bolt.json").write_text("{}")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="in_progress",
+        in_progress_since="2026-01-01T00:05:00+00:00",
+        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": ["x"]}],
+        records=["records/book/spell/fireball.json"],
+        pending_records=["records/book/spell/icy-bolt.json"],
+        notes=["a note"],
+        outcome="no_content",
+        outcome_reason="art",
+    )
+
+    out = io.StringIO()
+    exit_code = run_queue_reset(["book-p0010-01"], hard=True, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    assert "hard" in out.getvalue()
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["in_progress_since"] is None
+    assert segment["attempts"] == []
+    assert segment["pending_records"] == []
+    assert segment["records"] == []
+    assert segment["notes"] == []
+    assert segment["outcome"] is None
+    assert segment["outcome_reason"] is None
+    assert not (record_dir / "fireball.json").exists()
+    assert not (record_dir / "icy-bolt.json").exists()
+
+
+def test_run_queue_reset_hard_never_deletes_files_outside_the_book_records_dir(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    other_book_dir = data_dir / "records" / "other-book" / "spell"
+    other_book_dir.mkdir(parents=True)
+    (other_book_dir / "fireball.json").write_text("{}")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="in_progress",
+        records=["records/other-book/spell/fireball.json"],
+    )
+
+    exit_code = run_queue_reset(["book-p0010-01"], hard=True, data_dir=data_dir, out=io.StringIO())
+
+    assert exit_code == 0
+    assert (other_book_dir / "fireball.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------

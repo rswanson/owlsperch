@@ -3,7 +3,12 @@ subagent's final JSON reply, per spec 4.5 and B5 acceptance criterion 3.
 
 The subagent's final message must be exactly one JSON object:
 `{"seg_id": ..., "records": [...], "no_content": null | {"reason": ...},
-"notes": [...] | "..." | omitted}`. Three outcomes:
+"notes": [...] | "..." | omitted}` -- tolerantly extracted first (B5
+follow-up 1): whitespace is stripped, a Markdown code fence's content is
+used if present, otherwise the substring from the first `{` to the last `}`
+is used, and only a `json.loads` failure on *that* is a malformed reply (see
+`_extract_candidate_json`) -- two of four real haiku replies in the B5 trial
+came back fenced and were wrongly rejected before this. Three outcomes:
 
 - `no_content` is not null: the segment is done, `outcome` is `"no_content"`
   and `outcome_reason` records the reason.
@@ -12,7 +17,11 @@ The subagent's final message must be exactly one JSON object:
   (this segment's own book, not any other) and (b) actually exist on disk.
   A path failing either check is never merged into `pending_records`;
   instead an attempt is appended with error `"missing_record_path: <path>"`
-  for each such path. Every path that passes both checks is merged into the
+  for each such path. Every path that passes both checks has its own
+  `extraction` overwritten with the authoritative `{tier, model, segment_id,
+  timestamp}` (B5 follow-up 3 -- see `_overwrite_extraction`; `model` is
+  whatever `owlsperch queue next` recorded on the segment at selection time,
+  not whatever placeholder the subagent wrote), then is merged into the
   segment's `pending_records` (not `records` -- `owlsperch validate`
   promotes a path once the record actually conforms), and `status` goes
   back to `"pending"` so validate can run.
@@ -35,12 +44,14 @@ Every branch clears `in_progress_since` back to `None`.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import find_segment_path, now_iso
+from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.segment.runner import Segment
 
 
@@ -55,12 +66,41 @@ class CompleteOutcome:
     detail: str
 
 
+#: Matches a Markdown-fenced block (```` ```json ... ``` ```` or plain
+#: ```` ``` ... ``` ````), non-greedy so the first closing fence wins.
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
+
+
+def _extract_candidate_json(text: str) -> str:
+    """Best-effort extraction of the JSON object text out of a subagent's
+    final message, tolerating the two shapes real replies actually came
+    back in during the B5 trial: wrapped in a Markdown code fence, or
+    preceded (and/or followed) by prose. Stripped whitespace first; if a
+    fenced block is present its content is used; otherwise the substring
+    from the first `{` to the last `}` is used; failing that, the
+    whole (stripped) text is returned as-is so `json.loads` produces a
+    normal decode error for it. `_parse_result` only ever reports
+    `malformed_result` once `json.loads` on this candidate itself fails."""
+    stripped = text.strip()
+
+    fence_match = _FENCE_RE.search(stripped)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return stripped[start : end + 1]
+
+    return stripped
+
+
 def _parse_result(text: str, seg_id: str) -> tuple[dict[str, Any] | None, str | None]:
     """Parse and shape-check a subagent result against the segment it's
     completing. Returns `(parsed, None)` on success or `(None, "<reason>")`
     on any malformed input."""
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(_extract_candidate_json(text))
     except json.JSONDecodeError as exc:
         return None, f"invalid JSON: {exc}"
 
@@ -124,6 +164,26 @@ def _is_valid_record_path(data_dir: Path, book_id: str, record_path: str) -> boo
     return candidate.is_file()
 
 
+def _overwrite_extraction(
+    data_dir: Path, record_path: str, *, tier: str, model: str, segment_id: str
+) -> None:
+    """Overwrite `extraction` on an accepted claimed record file with the
+    authoritative tier/model/segment_id/timestamp (B5 follow-up 3) -- a
+    subagent's own `extraction` block is only a placeholder (see
+    `owlsperch.queue.prompt`); this is the only place those values become
+    real. Runs only for a path that already passed `_is_valid_record_path`,
+    so it's known to resolve inside `records/<book_id>/` and exist."""
+    path = data_dir / record_path
+    record: dict[str, Any] = json.loads(path.read_text())
+    record["extraction"] = {
+        "tier": tier,
+        "model": model,
+        "segment_id": segment_id,
+        "timestamp": now_iso(),
+    }
+    atomic_write_text(path, json.dumps(record, indent=2) + "\n")
+
+
 def _append_attempt_if_new(segment: Segment, *, errors: list[str]) -> None:
     last = segment.attempts[-1] if segment.attempts else None
     already_recorded = isinstance(last, dict) and last.get("errors") == errors
@@ -170,6 +230,14 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
             valid_paths.append(record_path)
         else:
             invalid_paths.append(record_path)
+
+    # Extraction provenance is authoritative from here, not whatever
+    # (possibly placeholder) values the subagent put in its own record.
+    model = segment.model if segment.model is not None else DEFAULT_MODEL
+    for record_path in valid_paths:
+        _overwrite_extraction(
+            data_dir, record_path, tier=segment.tier, model=model, segment_id=segment.seg_id
+        )
 
     merged = list(segment.pending_records)
     for record_path in valid_paths:

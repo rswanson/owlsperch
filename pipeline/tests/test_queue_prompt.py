@@ -362,6 +362,59 @@ def test_prompt_instructs_aliases_pages_and_unnamed_entity_rule(tmp_path: Path) 
     assert "Markdown table" in text
 
 
+def test_prompt_states_pages_are_pdf_indices_with_literal_example(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"pages": [197, 198]' in text
+    assert '"citation": "PHB p. 196"' in text
+    assert "PDF page indices" in text
+    assert "verbatim" in text.lower()
+
+
+def test_prompt_contains_class_abbreviation_table(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "`Adp` -> `Adept`" in text
+    assert "`Sor` -> `Sorcerer`" in text
+    assert "`Wiz` -> `Wizard`" in text
+    assert "`Clr` -> `Cleric`" in text
+    assert "TWO entries" in text
+    assert "Sorcerer" in text and "Wizard" in text
+    assert "prestige class" in text.lower()
+
+
+def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "placeholder" in text.lower()
+    assert "queue complete" in text.lower()
+    assert "authoritatively" in text.lower() or "overwrites" in text.lower()
+
+
 def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
     segment = _segment(kind_hint="rules_section")
     manifest_path = _write_manifest(tmp_path)

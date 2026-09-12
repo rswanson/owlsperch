@@ -145,9 +145,27 @@ def run_queue_summary(
     return 0
 
 
+def _delete_record_file_under_book(data_dir: Path, book_id: str, record_path: str) -> None:
+    """Delete `record_path` (relative to `data_dir`) iff it resolves inside
+    `records/<book_id>/` -- mirrors `owlsperch.queue.complete`'s
+    `_is_valid_record_path` check so `queue reset --hard` never deletes
+    anything outside a book's own records directory, path traversal
+    included. Silently does nothing for a path that doesn't resolve there or
+    doesn't exist on disk."""
+    records_root = (data_dir / "records" / book_id).resolve()
+    candidate = (data_dir / record_path).resolve()
+    try:
+        candidate.relative_to(records_root)
+    except ValueError:
+        return
+    if candidate.is_file():
+        candidate.unlink()
+
+
 def run_queue_reset(
     seg_ids: list[str],
     *,
+    hard: bool = False,
     data_dir: Path | None = None,
     out: Any = None,
 ) -> int:
@@ -155,7 +173,15 @@ def run_queue_reset(
     `in_progress_since` -- for undoing a `queue next` mark by hand (e.g.
     after a manual smoke test), not part of the normal extract loop. Stale
     (>60 min) auto-reset is a future batch (B8); this is an explicit,
-    operator-invoked undo."""
+    operator-invoked undo.
+
+    `--hard` additionally clears `attempts`, `pending_records`, `records`,
+    `notes`, `outcome`, and `outcome_reason` back to empty/`None`, and
+    deletes every record file named in `records`/`pending_records` (only
+    ones that actually resolve under `records/<book_id>/` -- see
+    `_delete_record_file_under_book`) -- for fully discarding a trial run's
+    state, not just unsticking an in-progress segment.
+    """
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
 
@@ -170,7 +196,19 @@ def run_queue_reset(
         segment = Segment.model_validate_json(path.read_text())
         segment.status = "pending"
         segment.in_progress_since = None
+
+        if hard:
+            for record_path in [*segment.records, *segment.pending_records]:
+                _delete_record_file_under_book(data_dir, segment.book_id, record_path)
+            segment.attempts = []
+            segment.pending_records = []
+            segment.records = []
+            segment.notes = []
+            segment.outcome = None
+            segment.outcome_reason = None
+
         atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
-        print(f"{seg_id}: reset to pending", file=out)
+        suffix = " (hard)" if hard else ""
+        print(f"{seg_id}: reset to pending{suffix}", file=out)
 
     return exit_code
