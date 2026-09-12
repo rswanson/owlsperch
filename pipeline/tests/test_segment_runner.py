@@ -108,7 +108,7 @@ def test_segment_file_has_all_required_fields(tmp_path: Path) -> None:
     assert seg["seg_id"] == "book-p0001-01"
     assert seg["book_id"] == "book"
     assert seg["pages"] == [1]
-    assert seg["printed_pages"] == []
+    assert seg["printed_pages"] == [None]
     assert seg["kind_hint"] == "rules_section"
     assert seg["heading"] == ""
     assert "Front matter" in seg["text"]
@@ -129,6 +129,36 @@ def test_printed_pages_pulled_from_pages_json(tmp_path: Path) -> None:
 
     segments = _segment_files(data_dir, "book")
     assert segments[0]["printed_pages"] == [42]
+
+
+def test_printed_pages_stays_aligned_with_pages_when_some_are_missing(tmp_path: Path) -> None:
+    # A page-spanning segment where only some of its pages have a detected
+    # printed number: printed_pages must stay the same length and order as
+    # pages, with None (not a dropped entry) for the page with no number.
+    data_dir = tmp_path / "data"
+    text_dir = _write_book(
+        data_dir,
+        "book",
+        {
+            10: [
+                _para("Fireball"),
+                _para("Evocation [Fire]"),
+                _para("Level: Sor/Wiz 3. Explanation begins here on page ten.", line_count=3),
+            ],
+            11: [
+                _para("The explanation continues describing area and damage here.", line_count=3),
+            ],
+        },
+    )
+    (text_dir / "pages.json").write_text(json.dumps({"10": 200}))
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    spells = _by_kind(segments, "spell")
+    assert len(spells) == 1
+    assert spells[0]["pages"] == [10, 11]
+    assert spells[0]["printed_pages"] == [200, None]
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +404,30 @@ def test_existing_segment_files_are_kept_unless_force(tmp_path: Path) -> None:
     third = segment_book(entry, data_dir=data_dir, force=True)
     assert third.written == 1
     assert "SENTINEL" not in seg_path.read_text()
+
+
+def test_force_removes_stale_segment_files_in_processed_range(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {1: [_para("Page one body text runs on for a while here.", line_count=3)]},
+    )
+    entry = _entry("book")
+
+    seg_dir = data_dir / "segments" / "book"
+    seg_dir.mkdir(parents=True)
+    orphan = seg_dir / "book-p0005-01.json"
+    orphan.write_text("{}")
+
+    # Without --force, an orphan whose page is no longer produced is kept.
+    segment_book(entry, data_dir=data_dir, page_range=(1, 10))
+    assert orphan.exists()
+
+    # With --force, it is removed before writing since page 5 falls inside
+    # the processed range (1-10).
+    segment_book(entry, data_dir=data_dir, page_range=(1, 10), force=True)
+    assert not orphan.exists()
 
 
 def test_pages_option_limits_range(tmp_path: Path) -> None:

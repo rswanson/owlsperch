@@ -141,7 +141,8 @@ Output layout, under `$OWLSPERCH_DATA`:
   `<book_id>-p<NNNN>-<NN>`: the segment's first PDF page, then a
   per-first-page ordinal, both assigned in stream order so rerunning
   produces identical ids. Fields: `book_id`, `pages` (every PDF page index
-  the segment spans), `printed_pages` (from `pages.json`, where known),
+  the segment spans), `printed_pages` (same length and order as `pages`,
+  from `pages.json`; `null` for a page with no detected printed number),
   `kind_hint` (`spell` | `stat_block` | `feat` | `table` | `rules_section`),
   `heading` (the section heading the segment falls under, or the anchor's
   name), `text`, `status` (`"pending"`), `tier` (`"haiku"`), `attempts`

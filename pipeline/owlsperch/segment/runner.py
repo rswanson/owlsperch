@@ -18,13 +18,19 @@ Per book:
    segments (`owlsperch.segment.splitter.build_segments`): pattern anchors
    (spell, stat_block, feat, table) plus `rules_section` for everything
    between them, split further at headings.
-4. For each non-empty segment, compute its `seg_id` (`<book_id>-p<NNNN>-<NN>`
+4. If `--force` was given, first delete every existing
+   `segments/<book_id>/<seg_id>.json` whose first page falls inside the
+   processed page range (the whole book when no `--pages` was given) --
+   otherwise a page whose segmentation changed (e.g. it used to produce two
+   segments and now produces one) would leave a stale orphan file behind
+   alongside the freshly written ones.
+5. For each non-empty segment, compute its `seg_id` (`<book_id>-p<NNNN>-<NN>`
    -- first page spanned, then a per-first-page ordinal, both assigned in
    stream order so reruns reproduce the same ids) and write
    `segments/<book_id>/<seg_id>.json` unless it already exists and `--force`
    was not given. Prints one line per book: counts per `kind_hint`, and how
    many segment files were written vs already present.
-5. As a coverage safety net (every page with any text should land in at
+6. As a coverage safety net (every page with any text should land in at
    least one segment -- acceptance criterion 5), warns on stderr listing any
    page in the processed range that ended up in no segment's `pages`.
 """
@@ -32,6 +38,7 @@ Per book:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -71,7 +78,10 @@ class Segment(BaseModel):
     seg_id: str
     book_id: str
     pages: list[int]
-    printed_pages: list[int]
+    #: Same length and order as `pages`; `None` where no printed page number
+    #: was detected for that PDF page (see `owlsperch.text.runner`'s
+    #: `pages.json`).
+    printed_pages: list[int | None]
     kind_hint: KindHint
     heading: str
     text: str
@@ -163,6 +173,29 @@ def _load_paragraphs(text_dir: Path, page_indices: list[int], book_id: str) -> l
     return paragraphs
 
 
+#: Matches a segment file's name (`<book_id>-p<NNNN>-<NN>.json`), capturing
+#: the first page it spans -- used by `_remove_stale_segments` to find every
+#: existing segment file for a book without depending on its JSON content.
+_SEG_FILENAME_RE = re.compile(r"^p(\d{4})-\d+\.json$")
+
+
+def _remove_stale_segments(out_dir: Path, book_id: str, page_range: tuple[int, int] | None) -> None:
+    """Delete every existing `segments/<book_id>/*.json` whose first page
+    falls inside the range about to be (re)processed, so a page whose
+    segmentation changed (e.g. it used to produce two segments and now
+    produces one) doesn't leave a stale orphan file behind. Only called
+    when `--force` is given; the whole book counts as in range when no
+    `--pages` was given."""
+    prefix = f"{book_id}-"
+    for path in out_dir.glob(f"{book_id}-*.json"):
+        match = _SEG_FILENAME_RE.match(path.name.removeprefix(prefix))
+        if match is None:
+            continue
+        first_page = int(match.group(1))
+        if page_range is None or page_range[0] <= first_page <= page_range[1]:
+            path.unlink()
+
+
 def _pages_spanned(paragraphs: list[Paragraph], start: int, end: int) -> list[int]:
     pages: list[int] = []
     seen: set[int] = set()
@@ -199,6 +232,8 @@ def segment_book(
 
     out_dir = data_dir / "segments" / entry.book_id
     out_dir.mkdir(parents=True, exist_ok=True)
+    if force:
+        _remove_stale_segments(out_dir, entry.book_id, page_range)
     pages_json = _load_pages_json(text_dir)
 
     summary = BookSegmentSummary(entry.book_id)
@@ -261,7 +296,7 @@ def _write_one_segment(
         summary.skipped += 1
         return
 
-    printed_pages = [pages_json[p] for p in pages if p in pages_json]
+    printed_pages: list[int | None] = [pages_json.get(p) for p in pages]
     segment = Segment(
         seg_id=seg_id,
         book_id=entry.book_id,
