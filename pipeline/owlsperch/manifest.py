@@ -178,10 +178,6 @@ def default_pdf_dir() -> Path:
     return Path(os.environ.get("OWLSPERCH_PDFS", str(Path.home() / "D_D")))
 
 
-def default_data_dir() -> Path:
-    return Path(os.environ.get("OWLSPERCH_DATA", str(Path.home() / "owlsperch-data")))
-
-
 def default_manifest_path() -> Path:
     # pipeline/owlsperch/manifest.py -> pipeline/manifest.yaml
     return Path(__file__).resolve().parent.parent / "manifest.yaml"

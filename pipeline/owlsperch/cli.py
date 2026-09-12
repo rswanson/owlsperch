@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     manifest_parser = subparsers.add_parser("manifest", help="Work with the curated book manifest.")
+    manifest_parser.set_defaults(manifest_parser=manifest_parser)
     manifest_subparsers = manifest_parser.add_subparsers(dest="manifest_command")
     manifest_subparsers.add_parser(
         "check", help="Validate the manifest against the PDF directory and print a summary."
@@ -38,6 +39,10 @@ def main(argv: list[str] | None = None) -> int:
         except ManifestError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+
+    if args.command == "manifest":
+        args.manifest_parser.print_help()
+        return 0
 
     parser.print_help()
     return 0 if args.command is None else 1
