@@ -21,7 +21,15 @@ self-terminating extent runs to.
   that *contains* "Prerequisite:"/"Prerequisites:"/"Benefit:" anywhere --
   not necessarily at its start, since a book's column repair often keeps a
   lead-in sentence in the same paragraph as the cue (e.g. "You are
-  proficient with bucklers... Benefit: You can use a shield...").
+  proficient with bucklers... Benefit: You can use a shield..."). A long
+  name's column repair sometimes splits the bracketed type onto its own
+  paragraph right after the name line instead of keeping it on the same
+  line (e.g. PHB p0101's "SHOT ON THE RUN" / "[GENERAL]"); when the
+  paragraph right after the name line is bracket-only
+  (`owlsperch.segment.headings.BRACKET_ONLY_TAG_RE`), it is folded into the
+  feat's heading ("SHOT ON THE RUN [GENERAL]") and the
+  Prerequisite/Benefit lookahead starts after it, so the tag-only paragraph
+  does not itself burn one of the `FEAT_LOOKAHEAD` slots.
 - **table**: a line matching `Table <N>-<M>:`. Its extent runs forward
   while the following paragraphs are table-kind or prose paragraphs
   starting with a digit (a footnote), stopping at the first paragraph that
@@ -40,7 +48,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from owlsperch.segment.headings import Paragraph, is_heading
+from owlsperch.segment.headings import BRACKET_ONLY_TAG_RE, Paragraph, is_heading
 
 Kind = Literal["spell", "stat_block", "feat", "table"]
 
@@ -206,14 +214,28 @@ def find_triggers(paragraphs: list[Paragraph], body_median: float) -> list[Trigg
     # Feat: short name line, "Prerequisite:"/"Benefit:" anywhere within the
     # next FEAT_LOOKAHEAD paragraphs (not necessarily at their start -- a
     # real book's column repair often keeps a lead-in sentence in the same
-    # paragraph as the cue).
+    # paragraph as the cue). If the paragraph right after the name line is
+    # itself a bracket-only tag (a long name's column repair split it onto
+    # its own line), fold it into the heading and start the lookahead after
+    # it instead of burning a lookahead slot on the tag-only paragraph.
     for i in range(n):
         if i in found or not _is_feat_name_line(paragraphs[i]):
             continue
-        for j in range(i + 1, min(i + 1 + FEAT_LOOKAHEAD, n)):
+        heading = paragraphs[i].text.strip()
+        lookahead_start = i + 1
+        if lookahead_start < n:
+            tag_paragraph = paragraphs[lookahead_start]
+            if (
+                tag_paragraph.kind == "prose"
+                and tag_paragraph.line_count == 1
+                and BRACKET_ONLY_TAG_RE.match(tag_paragraph.text.strip())
+            ):
+                heading = f"{heading} {tag_paragraph.text.strip()}"
+                lookahead_start += 1
+        for j in range(lookahead_start, min(lookahead_start + FEAT_LOOKAHEAD, n)):
             candidate = paragraphs[j]
             if candidate.kind == "prose" and _PREREQ_RE.search(candidate.text):
-                found[i] = Trigger(start=i, kind="feat", heading=paragraphs[i].text.strip())
+                found[i] = Trigger(start=i, kind="feat", heading=heading)
                 break
 
     # Stat block: "Size/Type:"/"Hit Dice:" line, name backdated.

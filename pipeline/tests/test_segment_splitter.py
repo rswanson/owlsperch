@@ -103,6 +103,41 @@ def test_table_extent_is_capped_at_next_anchor() -> None:
     ]
 
 
+def test_feat_with_bracket_tag_on_its_own_line_stays_one_segment() -> None:
+    # Column-repair artifact for a long feat name: the bracketed type lands
+    # in its own paragraph after the name line (e.g. PHB p0101 "SHOT ON THE
+    # RUN" / "[GENERAL]"). The tag-only paragraph must not be treated as a
+    # heading (which would otherwise truncate the feat's segment right
+    # after its name line) and must fold into the feat's own heading
+    # instead, leaving one feat segment with a non-empty body and no
+    # "[GENERAL]"-headed rules_section.
+    paragraphs = [
+        _para("SHOT ON THE RUN"),
+        _para("[GENERAL]"),
+        _para(
+            "You may fire ranged weapons up to your normal number of ranged "
+            "attacks any time during your movement.",
+            line_count=3,
+        ),
+        _para("Prerequisite: Dex 13, Point Blank Shot, base attack bonus +6."),
+        _para(
+            "Benefit: You may move both before and after your ranged attack.",
+            line_count=3,
+        ),
+        _para("COMBAT"),
+    ]
+    segments = build_segments(paragraphs, body_median=10.0)
+    feat_segments = [s for s in segments if s.kind == "feat"]
+    assert len(feat_segments) == 1
+    feat = feat_segments[0]
+    assert feat.heading == "SHOT ON THE RUN [GENERAL]"
+    assert (feat.start, feat.end) == (0, 5)
+    assert feat.end > feat.start + 1  # not just the name line -- has a body
+    body_text = " ".join(paragraphs[i].text for i in range(feat.start + 1, feat.end))
+    assert "Benefit:" in body_text
+    assert not any(s.kind == "rules_section" and s.heading == "[GENERAL]" for s in segments)
+
+
 def test_no_zero_length_segments_emitted() -> None:
     # Two headings with nothing between them produce no empty rules_section.
     paragraphs = [_para("CHAPTER ONE"), _para("CHAPTER TWO"), _para("Body text.", line_count=3)]

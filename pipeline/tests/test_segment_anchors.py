@@ -123,6 +123,27 @@ def test_feat_anchor_prerequisite_mid_paragraph_after_lead_sentence() -> None:
     assert triggers[0].heading == "Improved Shield Bash [General]"
 
 
+def test_feat_name_followed_by_bracket_only_line_folds_tag_into_heading() -> None:
+    # Column-repair artifact for a long name: the bracketed type lands on
+    # its own paragraph right after the name line instead of staying on the
+    # same line (see also
+    # test_segment_headings.test_bracket_only_paragraph_is_never_a_heading).
+    # The tag paragraph must fold into the feat's heading, and must not
+    # itself burn one of the two Prerequisite/Benefit lookahead slots --
+    # here the cue is two paragraphs after the tag, which only the extended
+    # lookahead reaches.
+    paragraphs = [
+        _para("SHOT ON THE RUN"),
+        _para("[GENERAL]"),
+        _para("Flavor sentence with no cue at all in it here.", line_count=3),
+        _para("Prerequisite: Dex 13, Point Blank Shot, base attack bonus +6."),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["feat"]
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "SHOT ON THE RUN [GENERAL]"
+
+
 def test_feat_lookahead_too_far_does_not_trigger() -> None:
     paragraphs = [
         _para("Toughness"),

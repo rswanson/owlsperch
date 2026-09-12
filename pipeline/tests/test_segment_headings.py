@@ -79,3 +79,22 @@ def test_table_kind_is_never_a_heading() -> None:
     body_median = 10.0
     not_heading = _para("COMBAT", kind="table", height=20.0, line_count=1)
     assert not is_heading(not_heading, body_median)
+
+
+def test_bracket_only_paragraph_is_never_a_heading() -> None:
+    # Column-repair artifact for a long feat name: the bracketed type lands
+    # in its own paragraph after the name line (e.g. PHB p0101 "SHOT ON THE
+    # RUN" / "[GENERAL]"). It is all-caps and short enough to otherwise
+    # match the all-caps heading rule (and its height here also clears the
+    # font-size threshold), but must never count as a heading either way --
+    # see `owlsperch.segment.anchors`, which folds it into the feat's own
+    # heading instead.
+    body_median = 10.0
+    not_heading = _para("[GENERAL]", height=20.0, line_count=1)
+    assert not is_heading(not_heading, body_median)
+
+
+def test_bracket_only_paragraph_with_multiple_words_is_never_a_heading() -> None:
+    body_median = 10.0
+    not_heading = _para("[ITEM CREATION]", height=20.0, line_count=1)
+    assert not is_heading(not_heading, body_median)

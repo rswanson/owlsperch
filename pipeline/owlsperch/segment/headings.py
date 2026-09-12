@@ -23,10 +23,21 @@ either:
   regardless of measured height -- catches headings the height heuristic
   alone might miss (e.g. a short window with too few body paragraphs to set
   a reliable baseline).
+
+A paragraph that consists solely of a bracketed tag (`BRACKET_ONLY_TAG_RE`,
+e.g. "[GENERAL]", "[METAMAGIC]", "[ITEM CREATION]") is never a heading,
+regardless of height or the all-caps rule above. A long feat name's
+column-repair can split its bracketed type onto its own paragraph right
+after the name line (e.g. PHB p0101's "SHOT ON THE RUN" / "[GENERAL]"); such
+a tag-only line is all-caps and short enough to otherwise match the all-caps
+rule, which would wrongly end the feat's segment right after its name (see
+`owlsperch.segment.anchors`, which folds the tag into the feat's own
+heading instead).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -41,6 +52,12 @@ BODY_MIN_LINE_COUNT = 3
 #: An all-uppercase single-line paragraph of at most this many words is a
 #: heading regardless of its measured height.
 HEADING_MAX_WORDS = 8
+
+#: A paragraph consisting solely of a bracketed tag, e.g. "[GENERAL]" or
+#: "[ITEM CREATION]" -- never a heading (see module docstring). Exposed
+#: (not underscore-prefixed) so `owlsperch.segment.anchors` can recognize
+#: the same shape when folding a feat's tag-only paragraph into its heading.
+BRACKET_ONLY_TAG_RE = re.compile(r"^\[[A-Za-z ,]+\]$")
 
 ParagraphKind = Literal["prose", "table"]
 
@@ -76,6 +93,8 @@ def is_heading(paragraph: Paragraph, body_median: float) -> bool:
         return False
     text = paragraph.text.strip()
     if not text:
+        return False
+    if BRACKET_ONLY_TAG_RE.match(text):
         return False
     if body_median > 0 and paragraph.median_word_height >= HEADING_HEIGHT_FACTOR * body_median:
         return True
