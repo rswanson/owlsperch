@@ -194,7 +194,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `web/`, `.github/workflows/ci.yml`, root dev script.
 
 ## B8: Escalation ladder
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `/extract` retries haiku failures on sonnet,
   then opus, then moves them to `human/`; the summary shows per-tier counts.
 - **Acceptance criteria:**
