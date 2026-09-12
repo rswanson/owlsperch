@@ -15,7 +15,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 ---
 
 ## B1: Repo scaffold, curated manifest, `manifest check`, CI
-- **Status:** pending
+- **Status:** in-progress
 - **Branch base:** `spec/dnd-reference-site` (carries the spec and this plan to main).
 - **User-visible outcome:** `uv run owlsperch manifest check` reports every
   file in the PDF dir as in-scope, override, index, or excluded, and exits
