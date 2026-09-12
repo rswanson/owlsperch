@@ -102,3 +102,49 @@ def test_render_and_to_json(tmp_path: Path) -> None:
     assert "pending" in summary.render()
     payload = summary.to_json()
     assert payload["counts_by_status"]["pending"] == 1
+
+
+# ---------------------------------------------------------------------------
+# awaiting_escalation: pending segments with an attempt at their current tier
+# ---------------------------------------------------------------------------
+
+
+def test_awaiting_escalation_counts_pending_segments_with_attempt_at_current_tier(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0001-01",
+        status="pending",
+        tier="haiku",
+        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+    )
+    # Pending but no attempt yet -- not awaiting escalation.
+    _write_segment(data_dir, "book", "book-p0002-01", status="pending", tier="haiku")
+    # An attempt, but at a different (earlier) tier -- not awaiting escalation.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0003-01",
+        status="pending",
+        tier="sonnet",
+        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+    )
+    # done, not pending -- not counted even though it has an attempt.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0004-01",
+        status="done",
+        tier="haiku",
+        outcome="validated",
+        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+    )
+
+    summary = compute_summary("book", data_dir=data_dir)
+
+    assert summary.awaiting_escalation == 1
+    assert "awaiting_escalation: 1" in summary.render()
+    assert summary.to_json()["awaiting_escalation"] == 1

@@ -237,6 +237,131 @@ def test_render_prompt_to_file_writes_file_and_returns_path(tmp_path: Path) -> N
     assert segment.text in path.read_text()
 
 
+def test_prompt_renders_nested_array_item_schema_for_levels(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    levels_index = text.index("`levels`")
+    class_index = text.index("`class`")
+    level_index = text.index("`level`", class_index)
+    # Both nested item properties are rendered indented right after the
+    # `levels` bullet itself (not, say, in an unrelated place in the file).
+    assert levels_index < class_index < level_index
+    next_top_level_bullet = text.index("`components`")
+    assert class_index < next_top_level_bullet
+    assert level_index < next_top_level_bullet
+
+
+def test_prompt_contains_example_record_for_spell(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "EXAMPLE RECORD" in text
+    # The example fixture's invented spell shows up verbatim, and its
+    # `levels` array's keys are the quoted JSON keys (not the schema's
+    # backtick-rendered nested property bullets).
+    assert "Sable Bloom" in text
+    assert '"class"' in text
+    assert '"level"' in text
+
+
+def test_prompt_omits_example_record_section_for_kind_without_one(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="stat_block")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "EXAMPLE RECORD" not in text
+
+
+def test_prompt_citation_falls_back_to_pdf_page_when_not_detected(tmp_path: Path) -> None:
+    segment = _segment(printed_pages=[None], pages=[197])
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "pdf p. 197" in text
+    assert "not detected" not in text.lower()
+
+
+def test_prompt_default_model_is_claude_haiku_4_5(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"model": "claude-haiku-4-5"' in text
+
+
+def test_prompt_honors_explicit_model_argument(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        model="claude-opus-4-6",
+    )
+
+    assert '"model": "claude-opus-4-6"' in text
+    # The "## Book" header line renders the same explicit override too --
+    # not just the extraction block (the EXAMPLE RECORD fixture's own
+    # `extraction.model` is a separate, unrelated occurrence of the default
+    # string, so it isn't asserted against here).
+    assert "Extraction model for this task: claude-opus-4-6" in text
+
+
+def test_prompt_instructs_aliases_pages_and_unnamed_entity_rule(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "alternate spellings" in text
+    assert "`pages` must copy this segment's `pages` list" in text
+    assert "Never invent a name" in text
+    assert "unnamed_entity:" in text
+    assert "bulleted list" in text
+    assert "**Level:**" in text
+    assert "Markdown table" in text
+
+
 def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
     segment = _segment(kind_hint="rules_section")
     manifest_path = _write_manifest(tmp_path)

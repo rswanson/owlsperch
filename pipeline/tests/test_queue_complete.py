@@ -42,6 +42,16 @@ def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
     return raw
 
 
+def _write_record_file(data_dir: Path, rel_path: str) -> None:
+    """Create an (empty-content-wise) record file on disk at `rel_path`
+    (relative to `data_dir`) -- `complete_segment` (B5 follow-up) requires a
+    claimed record path to actually exist, not just be a well-formed
+    string."""
+    path = data_dir / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+
+
 # ---------------------------------------------------------------------------
 # records -> pending_records
 # ---------------------------------------------------------------------------
@@ -50,6 +60,7 @@ def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
 def test_records_result_sets_pending_records_and_status_pending(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
@@ -66,6 +77,8 @@ def test_records_result_sets_pending_records_and_status_pending(tmp_path: Path) 
     assert segment["status"] == "pending"
     assert segment["pending_records"] == ["records/book/spell/fireball.json"]
     assert segment["in_progress_since"] is None
+    # A plain string `notes` value is normalized to a one-element list.
+    assert segment["notes"] == ["found one spell"]
 
 
 def test_records_result_merges_without_duplicating(tmp_path: Path) -> None:
@@ -76,6 +89,8 @@ def test_records_result_merges_without_duplicating(tmp_path: Path) -> None:
         "book-p0010-01",
         pending_records=["records/book/spell/fireball.json"],
     )
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    _write_record_file(data_dir, "records/book/spell/icy-bolt.json")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
@@ -193,6 +208,186 @@ def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error
     assert len(segment["attempts"]) == 1
 
 
+def test_seg_id_mismatch_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"seg_id": "book-p0099-01", "records": [], "no_content": {"reason": "art"}})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    assert "seg_id mismatch" in outcome.detail
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+
+
+def test_missing_seg_id_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"records": [], "no_content": {"reason": "art"}})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_notes_as_list_of_strings_is_stored_as_is(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": {"reason": "art"},
+            "notes": ["unnamed_entity: Conjuration (Creation) [Acid] Level: Sor/Wiz 0"],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["notes"] == ["unnamed_entity: Conjuration (Creation) [Acid] Level: Sor/Wiz 0"]
+
+
+def test_notes_not_a_string_or_list_of_strings_is_malformed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": 5}
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_notes_merge_across_multiple_completes_without_duplicating(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    first = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": ["first note"],
+        }
+    )
+    second = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": {"reason": "done"},
+            "notes": ["first note", "second note"],
+        }
+    )
+
+    complete_segment("book-p0010-01", first, data_dir=data_dir)
+    complete_segment("book-p0010-01", second, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["notes"] == ["first note", "second note"]
+
+
+# ---------------------------------------------------------------------------
+# Record path validation (each claimed path must resolve inside
+# records/<book_id>/ under the data dir and exist on disk)
+# ---------------------------------------------------------------------------
+
+
+def test_record_path_outside_book_records_dir_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/other-book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/other-book/spell/fireball.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/other-book/spell/fireball.json"
+    ]
+    assert segment["status"] == "pending"
+
+
+def test_record_path_with_traversal_outside_records_dir_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/../../../etc/passwd"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert "missing_record_path" in segment["attempts"][0]["errors"][0]
+
+
+def test_record_path_that_does_not_exist_on_disk_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/never-written.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/book/spell/never-written.json"
+    ]
+
+
+def test_mix_of_valid_and_invalid_record_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [
+                "records/book/spell/fireball.json",
+                "records/book/spell/never-written.json",
+            ],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/book/spell/never-written.json"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Segment lookup (hyphenated book_ids, unknown seg_id)
 # ---------------------------------------------------------------------------
@@ -201,7 +396,13 @@ def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error
 def test_finds_segment_for_hyphenated_book_id(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "dmg1-building-a-city-we", "dmg1-building-a-city-we-p0001-01")
-    result = json.dumps({"seg_id": "x", "records": [], "no_content": {"reason": "art"}})
+    result = json.dumps(
+        {
+            "seg_id": "dmg1-building-a-city-we-p0001-01",
+            "records": [],
+            "no_content": {"reason": "art"},
+        }
+    )
 
     outcome = complete_segment("dmg1-building-a-city-we-p0001-01", result, data_dir=data_dir)
 

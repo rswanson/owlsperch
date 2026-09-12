@@ -16,8 +16,8 @@ from typing import Any
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import find_segment_path
 from owlsperch.queue.complete import QueueError, complete_segment
-from owlsperch.queue.prompt import render_prompt_to_file
-from owlsperch.queue.select import select_and_mark
+from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
+from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT, LockTimeoutError, select_and_mark
 from owlsperch.queue.summary import compute_summary
 from owlsperch.segment.runner import Segment
 from owlsperch.text.runner import default_data_dir
@@ -29,6 +29,8 @@ def run_queue_next(
     tier: str = "haiku",
     limit: int,
     kind: str = "spell",
+    model: str = DEFAULT_MODEL,
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
     json_output: bool = False,
     data_dir: Path | None = None,
     manifest_path: Path | None = None,
@@ -38,15 +40,21 @@ def run_queue_next(
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
 
-    selected = select_and_mark(
-        book_id,
-        data_dir=data_dir,
-        tier=tier,
-        limit=limit,
-        kind=kind,
-        manifest_path=manifest_path,
-        schemas_dir=schemas_dir,
-    )
+    try:
+        selected = select_and_mark(
+            book_id,
+            data_dir=data_dir,
+            tier=tier,
+            limit=limit,
+            kind=kind,
+            manifest_path=manifest_path,
+            schemas_dir=schemas_dir,
+            model=model,
+            lock_timeout=lock_timeout,
+        )
+    except LockTimeoutError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if json_output:
         print(json.dumps([s.to_json() for s in selected]), file=out)
@@ -62,6 +70,7 @@ def run_queue_next(
 def run_queue_prompt(
     seg_id: str,
     *,
+    model: str = DEFAULT_MODEL,
     data_dir: Path | None = None,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
@@ -77,7 +86,11 @@ def run_queue_prompt(
 
     segment = Segment.model_validate_json(path.read_text())
     prompt_path = render_prompt_to_file(
-        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=schemas_dir
+        segment,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=schemas_dir,
+        model=model,
     )
     print(str(prompt_path), file=out)
     return 0
@@ -98,7 +111,11 @@ def run_queue_complete(
         print(f"error: unknown segment '{seg_id}'", file=sys.stderr)
         return 1
 
-    result_text = sys.stdin.read() if result_arg == "-" else Path(result_arg).read_text()
+    try:
+        result_text = sys.stdin.read() if result_arg == "-" else Path(result_arg).read_text()
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     try:
         outcome = complete_segment(seg_id, result_text, data_dir=data_dir)

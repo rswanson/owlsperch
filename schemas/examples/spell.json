@@ -1,0 +1,40 @@
+{
+  "id": "spell:example:sable-bloom",
+  "type": "spell",
+  "name": "Sable Bloom",
+  "slug": "sable-bloom",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [1],
+  "citation": "Example p. 1",
+  "text_md": "- **Level:** Sor/Wiz 3\n- **Components:** V, S, M\n- **Casting Time:** 1 standard action\n- **Range:** Medium (100 ft. + 10 ft./level)\n- **Target:** One creature\n- **Duration:** 1 round/level\n- **Saving Throw:** Fortitude partial\n- **Spell Resistance:** Yes\n\nA wilted black flower crumbles to ash in your hand as night-dark tendrils lash out from your fingertips, wrapping the target and drawing away its vitality. Each round the target takes 1d6 points of Constitution damage (Fortitude half) and you gain temporary hit points equal to the damage dealt, lasting for the duration of the spell.",
+  "fields": {
+    "school": "Necromancy",
+    "subschool": null,
+    "descriptors": ["Death"],
+    "levels": [
+      { "class": "Sorcerer", "level": 3 },
+      { "class": "Wizard", "level": 3 }
+    ],
+    "components": ["V", "S", "M"],
+    "casting_time": "1 standard action",
+    "range": "Medium (100 ft. + 10 ft./level)",
+    "target_effect_area": "One creature",
+    "duration": "1 round/level",
+    "saving_throw": "Fortitude partial",
+    "spell_resistance": "Yes",
+    "costs": { "material": "a wilted black flower", "focus": null, "xp": null }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "haiku",
+    "model": "claude-haiku-4-5",
+    "segment_id": "example-p0001-01",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

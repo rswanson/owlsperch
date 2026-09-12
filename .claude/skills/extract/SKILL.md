@@ -31,6 +31,15 @@ them and launches subagents.
 2. Run:
    `uv run owlsperch queue next <book_id> --tier haiku --limit <wave size> --kind <kind> --json`
    Parse the JSON array of `{seg_id, segment_path, kind_hint, prompt_path}`.
+   **The loop for this book_id ends only when this returns `[]`.** `queue
+   next` never (re)selects a segment that already has an attempt recorded
+   at the requested tier -- those are waiting for a future tier-escalation
+   batch (B8), not stuck, and are counted separately as
+   `awaiting_escalation` in `queue summary`'s output. This is what
+   guarantees the loop terminates: once every remaining pending segment for
+   this book_id/tier/kind is in that state, `queue next` returns `[]`
+   regardless of how many segments are still `pending` overall, and the
+   loop moves on to step 6 instead of spinning on the same segments forever.
    If it is empty, this book is done -- go to step 6.
 3. For every item in the wave, in **one message** (so they run concurrently,
    up to `--parallel` at a time), launch an Agent tool call with:

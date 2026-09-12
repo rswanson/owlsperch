@@ -8,11 +8,15 @@ directory, matching the batch's fixture convention (see
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from owlsperch.queue.select import select_and_mark
+import pytest
+
+from owlsperch.queue.select import LockTimeoutError, select_and_mark
 from owlsperch.segment.runner import Segment
 
 # ---------------------------------------------------------------------------
@@ -28,6 +32,7 @@ def _segment(
     kind_hint: str = "spell",
     status: str = "pending",
     tier: str = "haiku",
+    attempts: list[Any] | None = None,
 ) -> Segment:
     pages = pages if pages is not None else [10]
     printed_pages: list[int | None] = list(pages)
@@ -41,6 +46,7 @@ def _segment(
         text="Fireball\n\nEvocation Level: Sor/Wiz 3. Deals fire damage.",
         status=status,
         tier=tier,
+        attempts=attempts if attempts is not None else [],
         created_at="2026-01-01T00:00:00+00:00",
     )
 
@@ -212,3 +218,110 @@ def test_prompt_path_is_written_under_prompts_dir(tmp_path: Path) -> None:
 
     expected = data_dir / "prompts" / "book" / "book-p0010-01.md"
     assert Path(selected[0].prompt_path) == expected
+
+
+# ---------------------------------------------------------------------------
+# Starvation: a segment with an attempt already at the requested tier waits
+# for tier escalation (B8) instead of being reselected forever.
+# ---------------------------------------------------------------------------
+
+
+def test_segment_with_attempt_at_requested_tier_is_not_selected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(
+        data_dir,
+        _segment(
+            "book-p0010-01",
+            attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+        ),
+    )
+
+    selected = select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, kind="spell", manifest_path=manifest_path
+    )
+
+    assert selected == []
+    # Untouched: still pending, not marked in_progress.
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+
+
+def test_segment_with_attempt_at_a_different_tier_is_still_selected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(
+        data_dir,
+        _segment(
+            "book-p0010-01",
+            attempts=[{"tier": "sonnet", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+        ),
+    )
+
+    selected = select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, kind="spell", manifest_path=manifest_path
+    )
+
+    assert len(selected) == 1
+
+
+# ---------------------------------------------------------------------------
+# TOCTOU: the whole select-and-mark operation holds an exclusive flock on
+# segments/<book_id>/.queue.lock.
+# ---------------------------------------------------------------------------
+
+
+def test_select_and_mark_times_out_when_lock_already_held(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, _segment("book-p0010-01"))
+
+    seg_dir = data_dir / "segments" / "book"
+    lock_path = seg_dir / ".queue.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+        with pytest.raises(LockTimeoutError):
+            select_and_mark(
+                "book",
+                data_dir=data_dir,
+                tier="haiku",
+                limit=5,
+                kind="spell",
+                manifest_path=manifest_path,
+                lock_timeout=0.2,
+            )
+
+        # Held the whole time -- nothing was marked in_progress.
+        segment = _read_segment(data_dir, "book", "book-p0010-01")
+        assert segment["status"] == "pending"
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_select_and_mark_succeeds_once_lock_is_released(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, _segment("book-p0010-01"))
+
+    seg_dir = data_dir / "segments" / "book"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = seg_dir / ".queue.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+    selected = select_and_mark(
+        "book",
+        data_dir=data_dir,
+        tier="haiku",
+        limit=5,
+        kind="spell",
+        manifest_path=manifest_path,
+        lock_timeout=2.0,
+    )
+
+    assert len(selected) == 1

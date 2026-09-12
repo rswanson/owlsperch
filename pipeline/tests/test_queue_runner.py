@@ -189,6 +189,61 @@ def test_run_queue_prompt_unknown_seg_id_is_an_error(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
+def test_run_queue_next_reports_lock_timeout_as_error_exit_1(tmp_path: Path) -> None:
+    import fcntl
+    import os
+
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    seg_dir = data_dir / "segments" / "book"
+    lock_path = seg_dir / ".queue.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+        exit_code = run_queue_next(
+            "book",
+            tier="haiku",
+            limit=5,
+            kind="spell",
+            data_dir=data_dir,
+            manifest_path=manifest_path,
+            lock_timeout=0.2,
+            out=io.StringIO(),
+        )
+
+        assert exit_code == 1
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_run_queue_next_renders_explicit_model_into_prompt(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    out = io.StringIO()
+    run_queue_next(
+        "book",
+        tier="haiku",
+        limit=5,
+        kind="spell",
+        model="claude-opus-4-6",
+        json_output=True,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+    )
+
+    parsed = json.loads(out.getvalue())
+    prompt_text = Path(parsed[0]["prompt_path"]).read_text()
+    assert '"model": "claude-opus-4-6"' in prompt_text
+
+
 # ---------------------------------------------------------------------------
 # queue complete
 # ---------------------------------------------------------------------------
@@ -197,6 +252,9 @@ def test_run_queue_prompt_unknown_seg_id_is_an_error(tmp_path: Path) -> None:
 def test_run_queue_complete_reads_result_from_file(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", status="in_progress")
+    record_dir = data_dir / "records" / "book" / "spell"
+    record_dir.mkdir(parents=True)
+    (record_dir / "fireball.json").write_text("{}")
     result_path = tmp_path / "result.json"
     result_path.write_text(
         json.dumps(
@@ -239,6 +297,34 @@ def test_run_queue_complete_unknown_seg_id_is_an_error(tmp_path: Path) -> None:
     data_dir.mkdir(parents=True)
 
     exit_code = run_queue_complete("does-not-exist", "{}", data_dir=data_dir)
+
+    assert exit_code == 1
+
+
+def test_run_queue_complete_missing_result_file_is_an_error_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", status="in_progress")
+
+    # No exception should escape -- a clean "error: ..." exit 1 instead.
+    exit_code = run_queue_complete(
+        "book-p0010-01", str(tmp_path / "does-not-exist.json"), data_dir=data_dir, out=io.StringIO()
+    )
+
+    assert exit_code == 1
+
+
+def test_run_queue_complete_unreadable_result_path_is_an_error(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", status="in_progress")
+    # A directory can't be read as a result file.
+    result_dir = tmp_path / "a-directory"
+    result_dir.mkdir()
+
+    exit_code = run_queue_complete(
+        "book-p0010-01", str(result_dir), data_dir=data_dir, out=io.StringIO()
+    )
 
     assert exit_code == 1
 

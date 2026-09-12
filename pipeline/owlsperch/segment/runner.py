@@ -105,6 +105,12 @@ class Segment(BaseModel):
     #: `owlsperch validate`'s conformance check -- PASS moves a path from
     #: here to `records`; FAIL just drops it from here.
     pending_records: list[str] = []
+    #: Free-text notes accumulated from subagent replies (`owlsperch queue
+    #: complete`, batch B5 follow-up) -- e.g. an `unnamed_entity: <snippet>`
+    #: note for a stat block the subagent deliberately skipped rather than
+    #: invent a name for. Merged (deduplicated, order preserved) across
+    #: multiple `queue complete` calls for the same segment.
+    notes: list[str] = []
     #: ISO timestamp set by `owlsperch queue next` when a segment is marked
     #: `in_progress` (batch B5); cleared back to `None` by `owlsperch queue
     #: complete` and `owlsperch queue reset`. Stale in-progress reset (>60

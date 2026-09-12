@@ -6,7 +6,22 @@ Everything the prompt asserts about a schema (required fields, enums,
 descriptions) is generated from the actual `schemas/*.json` files via
 `owlsperch.schemas.load_registry` -- never hand-copied -- so a schema edit
 (spec 4.14's schema-growth mechanism) is picked up automatically the next
-time a prompt is rendered.
+time a prompt is rendered. Schema rendering recurses into nested `object`
+properties and `array` properties whose `items` are an `object`, so e.g. a
+spell's `levels` array shows its item properties (`class`, `level`) indented
+under the `levels` bullet, not just the array's own type/enum.
+
+The prompt also includes a complete, schema-valid EXAMPLE RECORD for the
+segment's kind_hint, loaded verbatim from `schemas/examples/<kind>.json`
+(invented data, never a real book's spell -- see `test_schemas.py`'s
+schema self-test, which validates every registered type's examples file
+against its own schema).
+
+Default model string ("claude-haiku-4-5") is only ever a placeholder for
+`--model`/`--tier` defaults on the CLI (`owlsperch queue next|prompt`); the
+value actually rendered into a prompt's `extraction.model` example is
+whatever the caller passed (or that default), never a generic instruction
+to the subagent to substitute its own name.
 """
 
 from __future__ import annotations
@@ -19,6 +34,10 @@ from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import ManifestEntry, ManifestError, default_manifest_path, load_manifest
 from owlsperch.schemas import Registry, load_registry
 from owlsperch.segment.runner import Segment
+
+#: Default `extraction.model` value when the caller (`queue next`/`queue
+#: prompt`) doesn't pass `--model` explicitly.
+DEFAULT_MODEL = "claude-haiku-4-5"
 
 
 def prompt_path_for(data_dir: Path, book_id: str, seg_id: str) -> Path:
@@ -40,13 +59,36 @@ def _citation_prefix(book_id: str, entry: ManifestEntry | None) -> str:
     return book_id.upper()
 
 
+def _pdf_pages_str(segment: Segment) -> str:
+    if len(segment.pages) == 1:
+        return f"pdf p. {segment.pages[0]}"
+    return f"pdf pp. {min(segment.pages)}-{max(segment.pages)}"
+
+
 def _printed_pages_str(segment: Segment) -> str:
+    """Human-readable printed page(s) for the "## Book" section. Falls back
+    to the PDF page index (never the word "not detected") when no printed
+    page number was recognized for this segment -- see `_example_citation`
+    for the corresponding fallback in the actual citation instructions."""
     printed = [p for p in segment.printed_pages if p is not None]
     if not printed:
-        return "not detected for this segment's page(s)"
+        return f"none printed -- {_pdf_pages_str(segment)}"
     if len(printed) == 1:
         return str(printed[0])
     return f"{min(printed)}-{max(printed)}"
+
+
+def _example_citation(segment: Segment, citation_prefix: str) -> str:
+    """The example `citation` value for the output contract. Per spec's
+    "Printed page number versus PDF index" rule: if no printed page number
+    was found, the citation falls back to "pdf p. <N>" (the raw PDF page
+    index) instead of a book-prefixed printed-page citation."""
+    printed = [p for p in segment.printed_pages if p is not None]
+    if not printed:
+        return _pdf_pages_str(segment)
+    if len(printed) == 1:
+        return f"{citation_prefix} p. {printed[0]}"
+    return f"{citation_prefix} pp. {min(printed)}-{max(printed)}"
 
 
 def _type_str(prop: dict[str, Any]) -> str:
@@ -56,18 +98,25 @@ def _type_str(prop: dict[str, Any]) -> str:
     return str(prop_type)
 
 
-def _render_schema_properties(schema: dict[str, Any]) -> list[str]:
+def _render_schema_properties(schema: dict[str, Any], *, indent: int = 0) -> list[str]:
     """One Markdown bullet per property: name, type, required/optional, its
     description (falling back to the `x-ui` label), and any enum -- on the
     property itself or, for an array, on its `items` -- so an operator or
-    subagent never has to open the schema file to see what's allowed."""
+    subagent never has to open the schema file to see what's allowed.
+
+    Recurses (at `indent + 1`) into a property's own nested properties: for
+    an `array` property whose `items` is an `object` schema, the item's
+    properties (e.g. `levels`' `class`/`level`) are listed indented under
+    the array's own bullet; for an `object` property, its properties are
+    listed indented the same way (e.g. `costs`' `material`/`focus`/`xp`)."""
     required = set(schema.get("required", []))
+    prefix = "  " * indent
     lines: list[str] = []
     for name, prop in schema.get("properties", {}).items():
         if not isinstance(prop, dict):
             continue
         req = "required" if name in required else "optional"
-        bits = [f"- `{name}` ({_type_str(prop)}, {req})"]
+        bits = [f"{prefix}- `{name}` ({_type_str(prop)}, {req})"]
 
         description = prop.get("description")
         x_ui = prop.get("x-ui")
@@ -86,6 +135,11 @@ def _render_schema_properties(schema: dict[str, Any]) -> list[str]:
             bits.append(f" -- each item enum: {', '.join(str(e) for e in items['enum'])}")
 
         lines.append("".join(bits))
+
+        if isinstance(items, dict) and items.get("type") == "object" and items.get("properties"):
+            lines.extend(_render_schema_properties(items, indent=indent + 1))
+        if prop.get("type") == "object" and prop.get("properties"):
+            lines.extend(_render_schema_properties(prop, indent=indent + 1))
     return lines
 
 
@@ -107,12 +161,23 @@ def _render_candidate_schema(kind_hint: str, registry: Registry) -> tuple[list[s
     return lines, version
 
 
+def _load_example_record(kind_hint: str, registry: Registry) -> dict[str, Any] | None:
+    """The invented, schema-valid `schemas/examples/<kind_hint>.json` fixture
+    for `kind_hint`, if one exists (only `spell` has one this batch)."""
+    path = registry.schemas_dir / "examples" / f"{kind_hint}.json"
+    if not path.is_file():
+        return None
+    raw: dict[str, Any] = json.loads(path.read_text())
+    return raw
+
+
 def render_prompt(
     segment: Segment,
     *,
     data_dir: Path,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
+    model: str = DEFAULT_MODEL,
 ) -> str:
     entry = _lookup_entry(segment.book_id, manifest_path)
     title = entry.title if entry is not None else segment.book_id
@@ -122,13 +187,14 @@ def render_prompt(
     output_dir = (data_dir / "records" / segment.book_id / segment.kind_hint).resolve()
     envelope_lines = _render_schema_properties(registry.envelope_schema)
     candidate_lines, schema_version = _render_candidate_schema(segment.kind_hint, registry)
+    example_record = _load_example_record(segment.kind_hint, registry)
 
     example_id = f"{segment.kind_hint}:{segment.book_id}:<slug>"
-    example_citation = f"{citation_prefix} p. {_printed_pages_str(segment)}"
+    example_citation = _example_citation(segment, citation_prefix)
     extraction_example = json.dumps(
         {
             "tier": segment.tier,
-            "model": "<your own model name, e.g. claude-haiku-4-5>",
+            "model": model,
             "segment_id": segment.seg_id,
             "timestamp": "<ISO-8601 UTC timestamp, e.g. 2026-09-12T18:00:00+00:00>",
         }
@@ -138,7 +204,7 @@ def render_prompt(
             "seg_id": segment.seg_id,
             "records": [f"records/{segment.book_id}/{segment.kind_hint}/<slug>.json"],
             "no_content": None,
-            "notes": "free-text notes, or an empty string",
+            "notes": ["free-text notes, e.g. an unnamed_entity note -- [] if none"],
         }
     )
     example_no_content = json.dumps(
@@ -146,7 +212,7 @@ def render_prompt(
             "seg_id": segment.seg_id,
             "records": [],
             "no_content": {"reason": "why nothing was extracted, e.g. 'table of contents entry'"},
-            "notes": "",
+            "notes": [],
         }
     )
     schema_version_line = (
@@ -168,6 +234,7 @@ def render_prompt(
         f"- Title: {title}",
         f"- Book ID: {segment.book_id}",
         f"- Printed page(s) for this segment: {_printed_pages_str(segment)}",
+        f"- Extraction model for this task: {model}",
         "",
         "## Segment",
         "",
@@ -189,6 +256,23 @@ def render_prompt(
         "",
         *candidate_lines,
         "",
+    ]
+
+    if example_record is not None:
+        lines += [
+            "## EXAMPLE RECORD",
+            "",
+            "A complete, schema-valid example record for this type (an invented",
+            "spell, not copied from any real book) -- your own output must have",
+            "exactly this shape:",
+            "",
+            "```json",
+            json.dumps(example_record, indent=2),
+            "```",
+            "",
+        ]
+
+    lines += [
         "## Output contract",
         "",
         "For every distinct entity you find in the segment text, write ONE JSON",
@@ -202,13 +286,34 @@ def render_prompt(
         "  lowercase it, strip apostrophes, fold accented characters to plain",
         "  ASCII, replace every run of characters that are not `a-z0-9` with a",
         "  single `-`, and trim leading/trailing `-`.",
+        "- `aliases` is a list of alternate spellings or names for the entity",
+        "  found in the segment text (e.g. a non-ASCII spelling, or a name the",
+        "  text also uses elsewhere) -- use `[]` if the text gives none.",
+        "- `pages` must copy this segment's `pages` list (PDF page indices)",
+        f"  exactly, unchanged: `{json.dumps(segment.pages)}`.",
         f'- `citation` follows the pattern "{citation_prefix} p. <printed page>"',
         f'  (e.g. "{example_citation}"), or "{citation_prefix} pp. <A>-<B>" if',
         "  the entity spans more than one printed page. Use the printed page",
         "  number(s) the entity itself is on, not necessarily every page of",
-        "  this segment.",
-        "- `text_md` is the entity's rule text rewritten as faithful Markdown --",
-        "  reproduce the rules text, not a summary of it.",
+        "  this segment. If no printed page number was detected for this",
+        '  segment (see "Printed page(s)" above), cite it as "pdf p. <N>"',
+        "  using the raw PDF page index instead -- never invent a printed",
+        "  page number.",
+        "- `text_md` is the entity's full rule text rewritten as faithful",
+        "  Markdown, not a summary of it:",
+        "  - its stat-block lines (Level, Components, Casting Time, Range,",
+        "    Target/Effect/Area, Duration, Saving Throw, Spell Resistance,",
+        "    etc.) become a bulleted list, each item bold-labeled, e.g.",
+        "    `**Level:** Sor/Wiz 3`;",
+        "  - followed by the description paragraph(s), reproduced faithfully;",
+        "  - any tab-separated lines in the segment text (a table row) become",
+        "    a Markdown table (`| cell | cell | ... |` with a header",
+        "    separator row).",
+        "- Never invent a name. If a stat block in this segment has no name",
+        "  anywhere in the segment text (e.g. a second, unlabeled stat block",
+        "  immediately preceding a later, named one), skip writing a record",
+        "  for it entirely and report it in `notes` as",
+        "  `unnamed_entity: <first 60 chars of its text>`.",
         schema_version_line,
         "- `extraction` is exactly:",
         "",
@@ -242,9 +347,14 @@ def render_prompt_to_file(
     data_dir: Path,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
+    model: str = DEFAULT_MODEL,
 ) -> Path:
     text = render_prompt(
-        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=schemas_dir
+        segment,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=schemas_dir,
+        model=model,
     )
     path = prompt_path_for(data_dir, segment.book_id, segment.seg_id)
     path.parent.mkdir(parents=True, exist_ok=True)
