@@ -186,6 +186,12 @@ class TableGroup:
 
     rows: list[TableRow]
     y_min: float
+    #: Median/max word glyph height (`yMax - yMin`) across every word that
+    #: contributed to this table group, for `owlsperch.text.runner`'s
+    #: `.meta.json` sidecar (see B3) -- computed here because `TableRow` only
+    #: keeps cell text, not the source `Word` bboxes.
+    median_word_height: float = 0.0
+    max_word_height: float = 0.0
 
 
 def _text_area_width(blocks: list[Block]) -> float:
@@ -254,7 +260,16 @@ def _build_table_group(member_blocks: list[Block]) -> TableGroup:
         TableRow(cells=[ln.text for ln in sorted(cluster, key=lambda ln: ln.x_min)])
         for cluster in row_clusters
     ]
-    return TableGroup(rows=rows, y_min=y_min)
+    all_words = [w for line in lines for w in line.words if w.text]
+    word_heights = [w.y_max - w.y_min for w in all_words]
+    median_word_height = _median(word_heights, default=0.0)
+    max_word_height = max(word_heights) if word_heights else 0.0
+    return TableGroup(
+        rows=rows,
+        y_min=y_min,
+        median_word_height=median_word_height,
+        max_word_height=max_word_height,
+    )
 
 
 def _row_words(cluster: list[Line]) -> list[Word]:
@@ -377,7 +392,13 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
         else TableRow(cells=[" ".join(w.text for w in words)])
         for i, words in enumerate(rows_words)
     ]
-    return TableGroup(rows=rows, y_min=block.y_min)
+    max_height = max(w.y_max - w.y_min for w in all_words)
+    return TableGroup(
+        rows=rows,
+        y_min=block.y_min,
+        median_word_height=median_height,
+        max_word_height=max_height,
+    )
 
 
 def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
