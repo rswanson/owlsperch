@@ -11,6 +11,15 @@ import argparse
 import sys
 
 from owlsperch.manifest import ManifestError, run_check
+from owlsperch.queue.prompt import DEFAULT_MODEL
+from owlsperch.queue.runner import (
+    run_queue_complete,
+    run_queue_next,
+    run_queue_prompt,
+    run_queue_reset,
+    run_queue_summary,
+)
+from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT
 from owlsperch.schemas import SchemaError, load_registry, render_schema_show
 from owlsperch.segment.runner import run_segment
 from owlsperch.text.runner import run_text
@@ -89,6 +98,88 @@ def build_parser() -> argparse.ArgumentParser:
         help="List records whose schema_version is behind the current type version, and exit 0.",
     )
 
+    queue_parser = subparsers.add_parser(
+        "queue", help="The extraction queue used by the /extract skill."
+    )
+    queue_parser.set_defaults(queue_parser=queue_parser)
+    queue_subparsers = queue_parser.add_subparsers(dest="queue_command")
+
+    queue_next_parser = queue_subparsers.add_parser(
+        "next", help="Select and mark in_progress the next pending segments for a subagent wave."
+    )
+    queue_next_parser.add_argument("book_id", help="Manifest book_id.")
+    queue_next_parser.add_argument(
+        "--tier", default="haiku", help="Only select segments on this tier (default: haiku)."
+    )
+    queue_next_parser.add_argument(
+        "--limit", type=int, required=True, help="Maximum number of segments to select."
+    )
+    queue_next_parser.add_argument(
+        "--kind",
+        default="spell",
+        help="Only select segments with this kind_hint (default: spell).",
+    )
+    queue_next_parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Model string rendered into each prompt's extraction.model "
+        f"(default: {DEFAULT_MODEL}).",
+    )
+    queue_next_parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=DEFAULT_LOCK_TIMEOUT,
+        metavar="SECONDS",
+        help=f"Seconds to wait for the book's queue lock before giving up "
+        f"(default: {DEFAULT_LOCK_TIMEOUT}).",
+    )
+    queue_next_parser.add_argument(
+        "--json", action="store_true", help="Print a JSON array instead of human-readable lines."
+    )
+
+    queue_prompt_parser = queue_subparsers.add_parser(
+        "prompt", help="Render (or re-render) one segment's subagent prompt and print its path."
+    )
+    queue_prompt_parser.add_argument("seg_id", help="Segment id, e.g. phb1-p0257-04.")
+    queue_prompt_parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Model string rendered into the prompt's extraction.model "
+        f"(default: {DEFAULT_MODEL}).",
+    )
+
+    queue_complete_parser = queue_subparsers.add_parser(
+        "complete", help="Ingest a subagent's final JSON reply for one segment."
+    )
+    queue_complete_parser.add_argument("seg_id", help="Segment id, e.g. phb1-p0257-04.")
+    queue_complete_parser.add_argument(
+        "--result",
+        required=True,
+        metavar="FILE|-",
+        help="Path to the subagent's JSON reply, or '-' to read it from stdin.",
+    )
+
+    queue_summary_parser = queue_subparsers.add_parser(
+        "summary", help="Print segment/record counts for a book."
+    )
+    queue_summary_parser.add_argument("book_id", help="Manifest book_id.")
+    queue_summary_parser.add_argument(
+        "--json", action="store_true", help="Print JSON instead of human-readable lines."
+    )
+
+    queue_reset_parser = queue_subparsers.add_parser(
+        "reset", help="Reset one or more in_progress segments back to pending."
+    )
+    queue_reset_parser.add_argument("seg_id", nargs="+", help="One or more segment ids.")
+    queue_reset_parser.add_argument(
+        "--hard",
+        action="store_true",
+        help=(
+            "Also clear attempts/pending_records/records/notes/outcome and "
+            "delete the record files they named (only ones under records/<book_id>/)."
+        ),
+    )
+
     schema_parser = subparsers.add_parser("schema", help="Inspect record type schemas.")
     schema_parser.set_defaults(schema_parser=schema_parser)
     schema_subparsers = schema_parser.add_subparsers(dest="schema_command")
@@ -139,6 +230,33 @@ def main(argv: list[str] | None = None) -> int:
         except SchemaError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+
+    if args.command == "queue" and args.queue_command == "next":
+        return run_queue_next(
+            args.book_id,
+            tier=args.tier,
+            limit=args.limit,
+            kind=args.kind,
+            model=args.model,
+            lock_timeout=args.lock_timeout,
+            json_output=args.json,
+        )
+
+    if args.command == "queue" and args.queue_command == "prompt":
+        return run_queue_prompt(args.seg_id, model=args.model)
+
+    if args.command == "queue" and args.queue_command == "complete":
+        return run_queue_complete(args.seg_id, args.result)
+
+    if args.command == "queue" and args.queue_command == "summary":
+        return run_queue_summary(args.book_id, json_output=args.json)
+
+    if args.command == "queue" and args.queue_command == "reset":
+        return run_queue_reset(args.seg_id, hard=args.hard)
+
+    if args.command == "queue":
+        args.queue_parser.print_help()
+        return 0
 
     if args.command == "schema" and args.schema_command == "show":
         try:

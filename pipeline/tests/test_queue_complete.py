@@ -1,0 +1,558 @@
+"""Tests for `owlsperch.queue.complete` (and `owlsperch queue complete`), per
+B5 acceptance criterion 3: ingest the subagent's final JSON, covering the
+`no_content`, `records` (-> `pending_records`), and malformed-JSON branches.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from owlsperch.queue.complete import QueueError, complete_segment
+from owlsperch.segment.runner import Segment
+
+
+def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> Path:
+    defaults: dict[str, Any] = dict(
+        seg_id=seg_id,
+        book_id=book_id,
+        pages=[10],
+        printed_pages=[10],
+        kind_hint="spell",
+        heading="Fireball",
+        text="Fireball\n\nEvocation Level: Sor/Wiz 3.",
+        status="in_progress",
+        tier="haiku",
+        created_at="2026-01-01T00:00:00+00:00",
+        in_progress_since="2026-01-01T00:05:00+00:00",
+    )
+    defaults.update(overrides)
+    segment = Segment(**defaults)
+    seg_dir = data_dir / "segments" / book_id
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    path = seg_dir / f"{seg_id}.json"
+    path.write_text(segment.model_dump_json(indent=2))
+    return path
+
+
+def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
+    path = data_dir / "segments" / book_id / f"{seg_id}.json"
+    raw: dict[str, Any] = json.loads(path.read_text())
+    return raw
+
+
+def _write_record_file(data_dir: Path, rel_path: str) -> None:
+    """Create an (empty-content-wise) record file on disk at `rel_path`
+    (relative to `data_dir`) -- `complete_segment` (B5 follow-up) requires a
+    claimed record path to actually exist, not just be a well-formed
+    string."""
+    path = data_dir / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+
+
+# ---------------------------------------------------------------------------
+# records -> pending_records
+# ---------------------------------------------------------------------------
+
+
+def test_records_result_sets_pending_records_and_status_pending(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": "found one spell",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+    assert segment["in_progress_since"] is None
+    # A plain string `notes` value is normalized to a one-element list.
+    assert segment["notes"] == ["found one spell"]
+
+
+def test_records_result_merges_without_duplicating(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        pending_records=["records/book/spell/fireball.json"],
+    )
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    _write_record_file(data_dir, "records/book/spell/icy-bolt.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json", "records/book/spell/icy-bolt.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == [
+        "records/book/spell/fireball.json",
+        "records/book/spell/icy-bolt.json",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# no_content
+# ---------------------------------------------------------------------------
+
+
+def test_no_content_marks_segment_done_with_reason(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": {"reason": "table of contents entry, no rule text"},
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "done"
+    assert segment["outcome"] == "no_content"
+    assert segment["outcome_reason"] == "table of contents entry, no rule text"
+    assert segment["in_progress_since"] is None
+
+
+# ---------------------------------------------------------------------------
+# malformed
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_json_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    outcome = complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "haiku"
+    assert len(segment["attempts"]) == 1
+    assert "malformed_result" in segment["attempts"][0]["errors"][0]
+
+
+def test_missing_required_keys_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    outcome = complete_segment("book-p0010-01", json.dumps({"notes": "oops"}), data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+
+
+def test_non_object_json_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    outcome = complete_segment("book-p0010-01", json.dumps([1, 2, 3]), data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_records_not_a_list_of_strings_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"seg_id": "book-p0010-01", "records": [1, 2], "no_content": None})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_no_content_without_reason_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"seg_id": "book-p0010-01", "records": [], "no_content": {}})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
+    complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert len(segment["attempts"]) == 1
+
+
+def test_seg_id_mismatch_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"seg_id": "book-p0099-01", "records": [], "no_content": {"reason": "art"}})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    assert "seg_id mismatch" in outcome.detail
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+
+
+def test_missing_seg_id_is_malformed_result(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps({"records": [], "no_content": {"reason": "art"}})
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_notes_as_list_of_strings_is_stored_as_is(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": {"reason": "art"},
+            "notes": ["unnamed_entity: Conjuration (Creation) [Acid] Level: Sor/Wiz 0"],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["notes"] == ["unnamed_entity: Conjuration (Creation) [Acid] Level: Sor/Wiz 0"]
+
+
+def test_notes_not_a_string_or_list_of_strings_is_malformed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": 5}
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_notes_merge_across_multiple_completes_without_duplicating(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    first = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": ["first note"],
+        }
+    )
+    second = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": {"reason": "done"},
+            "notes": ["first note", "second note"],
+        }
+    )
+
+    complete_segment("book-p0010-01", first, data_dir=data_dir)
+    complete_segment("book-p0010-01", second, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["notes"] == ["first note", "second note"]
+
+
+# ---------------------------------------------------------------------------
+# Record path validation (each claimed path must resolve inside
+# records/<book_id>/ under the data dir and exist on disk)
+# ---------------------------------------------------------------------------
+
+
+def test_record_path_outside_book_records_dir_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/other-book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/other-book/spell/fireball.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/other-book/spell/fireball.json"
+    ]
+    assert segment["status"] == "pending"
+
+
+def test_record_path_with_traversal_outside_records_dir_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/../../../etc/passwd"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert "missing_record_path" in segment["attempts"][0]["errors"][0]
+
+
+def test_record_path_that_does_not_exist_on_disk_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/never-written.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/book/spell/never-written.json"
+    ]
+
+
+def test_mix_of_valid_and_invalid_record_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [
+                "records/book/spell/fireball.json",
+                "records/book/spell/never-written.json",
+            ],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/book/spell/never-written.json"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Segment lookup (hyphenated book_ids, unknown seg_id)
+# ---------------------------------------------------------------------------
+
+
+def test_finds_segment_for_hyphenated_book_id(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "dmg1-building-a-city-we", "dmg1-building-a-city-we-p0001-01")
+    result = json.dumps(
+        {
+            "seg_id": "dmg1-building-a-city-we-p0001-01",
+            "records": [],
+            "no_content": {"reason": "art"},
+        }
+    )
+
+    outcome = complete_segment("dmg1-building-a-city-we-p0001-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+
+
+def test_unknown_seg_id_raises_queue_error(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+
+    try:
+        complete_segment("does-not-exist", "{}", data_dir=data_dir)
+        raise AssertionError("expected QueueError")
+    except QueueError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Tolerant result parsing (B5 follow-up 1): two of four real haiku replies in
+# the trial came back wrapped in ```json fences and were wrongly rejected as
+# malformed. `_parse_result` must accept a fenced reply, a reply with a
+# leading sentence, and bare JSON alike.
+# ---------------------------------------------------------------------------
+
+
+def test_fenced_json_reply_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    payload = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+    result = f"```json\n{payload}\n```"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["outcome_reason"] == "art"
+
+
+def test_reply_with_leading_sentence_before_json_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    payload = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+    result = f"Here is my final result:\n\n{payload}"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+
+
+def test_bare_json_reply_is_parsed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}, "notes": []}
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "no_content"
+
+
+def test_fenced_reply_with_records_still_validates_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    payload = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+    result = f"```json\n{payload}\n```"
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+
+
+# ---------------------------------------------------------------------------
+# Authoritative extraction provenance (B5 follow-up 3): every accepted
+# claimed record file's `extraction` is overwritten with the segment's own
+# tier/model/segment_id and a fresh timestamp, regardless of whatever
+# (possibly placeholder or bogus) values the subagent wrote.
+# ---------------------------------------------------------------------------
+
+
+def test_accepted_record_gets_authoritative_extraction_overwritten(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="haiku", model="claude-haiku-4-5")
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "name": "Fireball",
+                "extraction": {
+                    "tier": "bogus-tier",
+                    "model": "bogus-model",
+                    "segment_id": "bogus-segment",
+                    "timestamp": "1999-01-01T00:00:00+00:00",
+                },
+            }
+        )
+    )
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    record = json.loads(record_path.read_text())
+    assert record["extraction"]["tier"] == "haiku"
+    assert record["extraction"]["model"] == "claude-haiku-4-5"
+    assert record["extraction"]["segment_id"] == "book-p0010-01"
+    assert record["extraction"]["timestamp"] != "1999-01-01T00:00:00+00:00"
+    # The rest of the record is untouched.
+    assert record["name"] == "Fireball"
+
+
+def test_accepted_record_extraction_falls_back_to_default_model_when_segment_has_none(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    # No `model` override -- simulates a segment that never went through
+    # `queue next` (e.g. hand-crafted in a test or an old segment file).
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+            "notes": [],
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    record = json.loads((data_dir / "records" / "book" / "spell" / "fireball.json").read_text())
+    assert record["extraction"]["model"] == "claude-haiku-4-5"

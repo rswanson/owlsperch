@@ -97,7 +97,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/segment/`, tests.
 
 ## B4: Envelope, type registry, spell schema, `validate`
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `owlsperch validate phb` checks every record
   under `records/phb/` and prints pass/fail per record with reasons.
 - **Acceptance criteria:**
@@ -123,7 +123,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `schemas/`, `pipeline/owlsperch/validate/`, tests.
 
 ## B5: `/extract` skill, haiku tier only
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `/extract phb --limit 20` in Claude Code fans out
   haiku subagents over pending spell segments, records land under
   `records/phb/spell/`, and a summary reports pass/fail counts.

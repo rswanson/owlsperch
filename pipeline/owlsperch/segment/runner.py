@@ -94,9 +94,36 @@ class Segment(BaseModel):
     #: "validated" on a passing record, "no_content" from the extract skill
     #: (B5).
     outcome: str | None = None
+    #: Set alongside `outcome` for outcomes that carry a reason (currently
+    #: just "no_content", set by `owlsperch queue complete`, batch B5).
+    outcome_reason: str | None = None
     #: Paths (relative to `$OWLSPERCH_DATA`) of every record validated back
     #: to this segment. Set by `owlsperch validate` on PASS.
     records: list[str] = []
+    #: Paths (relative to `$OWLSPERCH_DATA`) a subagent claimed to have
+    #: written, recorded by `owlsperch queue complete` (batch B5) pending
+    #: `owlsperch validate`'s conformance check -- PASS moves a path from
+    #: here to `records`; FAIL just drops it from here.
+    pending_records: list[str] = []
+    #: Free-text notes accumulated from subagent replies (`owlsperch queue
+    #: complete`, batch B5 follow-up) -- e.g. an `unnamed_entity: <snippet>`
+    #: note for a stat block the subagent deliberately skipped rather than
+    #: invent a name for. Merged (deduplicated, order preserved) across
+    #: multiple `queue complete` calls for the same segment.
+    notes: list[str] = []
+    #: ISO timestamp set by `owlsperch queue next` when a segment is marked
+    #: `in_progress` (batch B5); cleared back to `None` by `owlsperch queue
+    #: complete` and `owlsperch queue reset`. Stale in-progress reset (>60
+    #: min, spec 4.5) arrives in B8.
+    in_progress_since: str | None = None
+    #: The extraction model string (`--model`, default `claude-haiku-4-5`)
+    #: recorded by `owlsperch queue next` (`select_and_mark`) at selection
+    #: time -- the authoritative source `owlsperch queue complete` copies
+    #: into an accepted record's `extraction.model` (B5 follow-up), since a
+    #: subagent's own `extraction` block is only a placeholder (see
+    #: `owlsperch.queue.prompt`). `None` for a segment that has never been
+    #: through `queue next`.
+    model: str | None = None
 
 
 @dataclass

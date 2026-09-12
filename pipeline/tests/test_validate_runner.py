@@ -37,6 +37,7 @@ def _write_segment(
     tier: str = "haiku",
     attempts: list[dict[str, Any]] | None = None,
     status: str = "pending",
+    pending_records: list[str] | None = None,
 ) -> Path:
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,7 @@ def _write_segment(
         "tier": tier,
         "attempts": attempts or [],
         "created_at": "2026-01-01T00:00:00+00:00",
+        "pending_records": pending_records or [],
     }
     path = seg_dir / f"{seg_id}.json"
     path.write_text(json.dumps(segment, indent=2))
@@ -172,6 +174,87 @@ def test_pass_write_back_is_idempotent_no_duplicate_record_paths(tmp_path: Path)
 
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["records"] == ["records/book/spell/fireball.json"]
+
+
+# ---------------------------------------------------------------------------
+# pending_records (B5 acceptance criterion 6: the extract skill's queue
+# complete records claimed paths under pending_records; validate promotes or
+# drops them)
+# ---------------------------------------------------------------------------
+
+
+def test_pass_moves_path_from_pending_records_to_records(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel])
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code, _ = _run(data_dir)
+
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["records"] == [record_rel]
+    assert segment["pending_records"] == []
+
+
+def test_pass_promotes_record_found_by_file_discovery_despite_prior_malformed_attempt(
+    tmp_path: Path,
+) -> None:
+    """A segment can carry a `malformed_result` attempt at its tier (a bad
+    `queue complete` reply, e.g. B5 follow-up 1's fenced-JSON trial bug)
+    while the record file itself was written to disk correctly and never
+    made it into `pending_records`. `owlsperch validate` discovers record
+    files directly under `records/<book_id>/<type>/` regardless of
+    `pending_records`, so a later PASS must still promote the path into
+    `records`, clean `pending_records` (already empty here), and leave the
+    segment `done` -- the stale malformed attempt doesn't block any of
+    that."""
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["malformed_result: invalid JSON: ..."],
+            }
+        ],
+        pending_records=[],
+    )
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 0
+    assert f"PASS {record_rel}" in output
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "done"
+    assert segment["outcome"] == "validated"
+    assert segment["records"] == [record_rel]
+    assert segment["pending_records"] == []
+    # The prior malformed attempt is history, not cleared by a later PASS.
+    assert len(segment["attempts"]) == 1
+
+
+def test_fail_removes_path_from_pending_records_without_promoting(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel])
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, _ = _run(data_dir)
+
+    assert exit_code == 1
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["records"] == []
+    assert segment["status"] == "pending"
 
 
 # ---------------------------------------------------------------------------

@@ -4,16 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-`owlsperch` is a Python (uv-managed) pipeline. As of batch B4 it has: the
+`owlsperch` is a Python (uv-managed) pipeline. As of batch B5 it has: the
 `owlsperch` CLI and package (`pipeline/owlsperch/`), the curated PDF manifest
 (`pipeline/manifest.yaml`), `manifest check`, `text` (column-repaired
 per-page text extraction for text-layer books, plus a `.meta.json` sidecar
 of paragraph font-size stats), `segment` (splits a book's text into
 candidate spell/stat_block/feat/table/rules_section segments), the
 `schemas/` type registry (envelope + spell schema, JSON Schema draft
-2020-12) with `validate` and `schema show`, and CI. Everything else is a
-future-batch stub (`build-db`, `check-completeness`, `coverage`,
-`schema review`, `sample`).
+2020-12) with `validate` and `schema show`, the `queue` extraction-queue CLI
+plus the `/extract` Claude Code skill (haiku tier only; see "Extraction" and
+"Architecture" below), and CI. Everything else is a future-batch stub
+(`build-db`, `check-completeness`, `coverage`, `schema review`, `sample`).
 
 ### Commands
 
@@ -27,6 +28,11 @@ uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
 uv run owlsperch validate <book_id|all> [--json] [--stale]
 uv run owlsperch schema show <type>
+uv run owlsperch queue next <book_id> --tier haiku --limit N [--kind spell] [--model M] [--lock-timeout S] [--json]
+uv run owlsperch queue prompt <seg_id> [--model M]
+uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
+uv run owlsperch queue summary <book_id> [--json]
+uv run owlsperch queue reset <seg_id>... [--hard]
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy pipeline
@@ -100,6 +106,10 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   `pipeline/owlsperch/schemas.py` finds this directory by walking up from
   the package to one containing `schemas/registry.json` (overridable via
   `$OWLSPERCH_SCHEMAS`), loads the registry, and renders `schema show`.
+  `schemas/examples/<type>.json` (currently just `spell.json`) is an
+  invented, schema-valid example record for that type, rendered verbatim
+  into extraction prompts (`owlsperch.queue.prompt`) and checked against its
+  own schema by a self-test in `test_schemas.py`.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -109,6 +119,33 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
   writes the outcome back to the originating segment (via the `Segment`
   model) idempotently.
+
+- `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
+  `complete`, `summary`, `reset`), the Python side of the `/extract` skill
+  (spec 4.5, batch B5): `select.py` picks pending segments for a tier/kind
+  and marks them `in_progress`, holding an exclusive `flock` on
+  `segments/<book_id>/.queue.lock` for the whole select-and-mark operation
+  (`--lock-timeout`, default 30s) so two concurrent `queue next` runs can't
+  race on the same segment, and skips any segment that already has an
+  attempt recorded at the requested tier (it's waiting for a B8 tier
+  escalation -- `queue summary`'s `awaiting_escalation` count surfaces
+  these, and this is what guarantees `queue next` eventually returns `[]`);
+  `prompt.py` renders a segment's subagent prompt (book metadata, segment
+  text, the candidate schema(s) -- including nested `object`/array-of-object
+  properties -- rendered live from `schemas/`, a complete EXAMPLE RECORD
+  loaded from `schemas/examples/<kind>.json` when one exists, the output
+  contract, and `extraction.model` from `--model`, default
+  `claude-haiku-4-5`) to `prompts/<book_id>/<seg_id>.md`; `complete.py`
+  ingests a subagent's final JSON (records -> `pending_records` after
+  checking each path resolves inside `records/<book_id>/` and exists on
+  disk, `no_content`, or a malformed reply -- including a `seg_id` mismatch
+  -- and merges `notes` (a list of strings) onto the segment); `summary.py`
+  reports counts; `runner.py` wires all of it into the CLI. `owlsperch
+  validate` promotes a path from `pending_records` to `records` on PASS and
+  drops it on FAIL. The skill itself is `.claude/skills/extract/SKILL.md`
+  -- a short Claude-Code-facing loop over these commands plus Agent-tool
+  subagent launches; all the logic that can be unit tested lives in
+  `queue/` instead of the skill doc.
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and

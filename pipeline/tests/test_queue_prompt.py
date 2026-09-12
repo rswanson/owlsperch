@@ -1,0 +1,464 @@
+"""Tests for `owlsperch.queue.prompt` (and `owlsperch queue prompt <seg_id>`),
+per B5 acceptance criterion 2: the rendered prompt must contain the segment
+text verbatim, the kind hint, book metadata, the candidate schema(s)
+(rendered from the JSON, not hand-copied), the exact output contract
+(absolute output directory, id/slug/citation rules, extraction block, schema
+version), the exact response contract, and the text_md / no-invented-fields
+instructions.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from owlsperch.queue.prompt import prompt_path_for, render_prompt, render_prompt_to_file
+from owlsperch.segment.runner import Segment
+
+
+def _repo_schemas_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "schemas"
+
+
+def _segment(**overrides: object) -> Segment:
+    defaults: dict[str, Any] = dict(
+        seg_id="phb1-p0257-04",
+        book_id="phb1",
+        pages=[257],
+        printed_pages=[256],
+        kind_hint="spell",
+        heading="Mount",
+        text=(
+            "Mount\n\nConjuration (Summoning) Level: Sor/Wiz 1 Components: V, S, M "
+            "Casting Time: 1 round Range: Close (25 ft. + 5 ft./2 levels) "
+            "Effect: One mount Duration: 2 hours/level (D) Saving Throw: None "
+            "Spell Resistance: No\n\nYou summon a light horse or a pony."
+        ),
+        status="in_progress",
+        tier="haiku",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    defaults.update(overrides)
+    return Segment(**defaults)
+
+
+def _write_manifest(tmp_path: Path, *, short_title: str | None = "PHB") -> Path:
+    manifest_path = tmp_path / "manifest.yaml"
+    short_title_line = f'    short_title: "{short_title}"\n' if short_title else ""
+    manifest_path.write_text(
+        f"""
+entries:
+  - book_id: phb1
+    title: "Player's Handbook (Core Rulebook I)"
+{short_title_line}    file: "phb1.pdf"
+    edition: "3.5"
+    kind: rulebook
+"""
+    )
+    return manifest_path
+
+
+def test_prompt_contains_segment_text_verbatim(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert segment.text in text
+
+
+def test_prompt_contains_kind_hint_and_book_metadata(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "spell" in text
+    assert "phb1" in text
+    assert "Player's Handbook (Core Rulebook I)" in text
+    assert "256" in text  # printed page number
+
+
+def test_prompt_renders_schema_enum_values_from_json(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    # Spell schema's `school` enum -- proves the schema is rendered from the
+    # JSON file, not hand-copied into the prompt template.
+    assert "Evocation" in text
+    assert "Abjuration" in text
+    assert "Universal" in text
+    # Components item enum.
+    assert "DF" in text and "XP" in text
+
+
+def test_prompt_contains_absolute_output_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    expected_dir = (data_dir / "records" / "phb1" / "spell").resolve()
+    assert str(expected_dir) in text
+    assert expected_dir.is_absolute()
+
+
+def test_prompt_contains_exact_response_contract(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"seg_id"' in text
+    assert '"records"' in text
+    assert '"no_content"' in text
+    assert '"notes"' in text
+
+
+def test_prompt_contains_id_slug_and_citation_rules(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "spell:phb1:<slug>" in text
+    assert "kebab-case" in text
+    assert "PHB p." in text  # short_title-derived citation prefix
+
+
+def test_prompt_uses_book_id_upper_when_no_short_title(tmp_path: Path) -> None:
+    segment = _segment(book_id="testbook", seg_id="testbook-p0001-01")
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        """
+entries:
+  - book_id: testbook
+    title: "Test Book"
+    file: "testbook.pdf"
+    edition: "3.5"
+    kind: rulebook
+"""
+    )
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "TESTBOOK p." in text
+
+
+def test_prompt_contains_extraction_block_and_schema_version_instructions(
+    tmp_path: Path,
+) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"tier"' in text and "haiku" in text
+    assert '"segment_id"' in text and "phb1-p0257-04" in text
+    assert "schema_version" in text
+    assert '"model"' in text
+    assert '"timestamp"' in text
+
+
+def test_prompt_instructs_faithful_markdown_and_no_invented_fields(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "text_md" in text
+    assert "not a summary" in text.lower() or "not a summary" in text
+    assert "never invent" in text.lower()
+
+
+def test_prompt_path_for_matches_data_dir_prompts_layout(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    assert prompt_path_for(data_dir, "phb1", "phb1-p0257-04") == (
+        data_dir / "prompts" / "phb1" / "phb1-p0257-04.md"
+    )
+
+
+def test_render_prompt_to_file_writes_file_and_returns_path(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    path = render_prompt_to_file(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert path == data_dir / "prompts" / "phb1" / "phb1-p0257-04.md"
+    assert path.is_file()
+    assert segment.text in path.read_text()
+
+
+def test_prompt_renders_nested_array_item_schema_for_levels(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    levels_index = text.index("`levels`")
+    class_index = text.index("`class`")
+    level_index = text.index("`level`", class_index)
+    # Both nested item properties are rendered indented right after the
+    # `levels` bullet itself (not, say, in an unrelated place in the file).
+    assert levels_index < class_index < level_index
+    next_top_level_bullet = text.index("`components`")
+    assert class_index < next_top_level_bullet
+    assert level_index < next_top_level_bullet
+
+
+def test_prompt_contains_example_record_for_spell(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "EXAMPLE RECORD" in text
+    # The example fixture's invented spell shows up verbatim, and its
+    # `levels` array's keys are the quoted JSON keys (not the schema's
+    # backtick-rendered nested property bullets).
+    assert "Sable Bloom" in text
+    assert '"class"' in text
+    assert '"level"' in text
+
+
+def test_prompt_omits_example_record_section_for_kind_without_one(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="stat_block")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "EXAMPLE RECORD" not in text
+
+
+def test_prompt_citation_falls_back_to_pdf_page_when_not_detected(tmp_path: Path) -> None:
+    segment = _segment(printed_pages=[None], pages=[197])
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "pdf p. 197" in text
+    assert "not detected" not in text.lower()
+
+
+def test_prompt_default_model_is_claude_haiku_4_5(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"model": "claude-haiku-4-5"' in text
+
+
+def test_prompt_honors_explicit_model_argument(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        model="claude-opus-4-6",
+    )
+
+    assert '"model": "claude-opus-4-6"' in text
+    # The "## Book" header line renders the same explicit override too --
+    # not just the extraction block (the EXAMPLE RECORD fixture's own
+    # `extraction.model` is a separate, unrelated occurrence of the default
+    # string, so it isn't asserted against here).
+    assert "Extraction model for this task: claude-opus-4-6" in text
+
+
+def test_prompt_instructs_aliases_pages_and_unnamed_entity_rule(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "alternate spellings" in text
+    assert "`pages` must copy this segment's `pages` list" in text
+    assert "Never invent a name" in text
+    assert "unnamed_entity:" in text
+    assert "bulleted list" in text
+    assert "**Level:**" in text
+    assert "Markdown table" in text
+
+
+def test_prompt_states_pages_are_pdf_indices_with_literal_example(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"pages": [197, 198]' in text
+    assert '"citation": "PHB p. 196"' in text
+    assert "PDF page indices" in text
+    assert "verbatim" in text.lower()
+
+
+def test_prompt_contains_class_abbreviation_table(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "`Adp` -> `Adept`" in text
+    assert "`Sor` -> `Sorcerer`" in text
+    assert "`Wiz` -> `Wizard`" in text
+    assert "`Clr` -> `Cleric`" in text
+    assert "TWO entries" in text
+    assert "Sorcerer" in text and "Wizard" in text
+    assert "prestige class" in text.lower()
+
+
+def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "placeholder" in text.lower()
+    assert "queue complete" in text.lower()
+    assert "authoritatively" in text.lower() or "overwrites" in text.lower()
+
+
+def test_prompt_procedure_section_instructs_write_then_read_back(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    expected_dir = (data_dir / "records" / "phb1" / "spell").resolve()
+
+    # Rendered near the top, before the segment text / schemas, so a reader
+    # cannot miss it.
+    procedure_index = text.index("## Procedure")
+    book_index = text.index("## Book")
+    assert procedure_index < book_index
+
+    procedure_section = text[procedure_index:book_index]
+    assert "Read the file back" in procedure_section
+    assert str(expected_dir) in procedure_section
+    assert "STEP 1" in procedure_section and "STEP 2" in procedure_section
+    assert "STEP 3" in procedure_section
+    assert "retried on a more" in procedure_section
+    assert "Do not describe the record in your reply" in procedure_section
+
+    # Repeated again immediately before the reply contract.
+    respond_index = text.index("## How to respond")
+    second_procedure_index = text.rindex("## Procedure", 0, respond_index)
+    second_procedure_section = text[second_procedure_index:respond_index]
+    assert "Read the file back" in second_procedure_section
+    assert str(expected_dir) in second_procedure_section
+    assert second_procedure_index > procedure_index
+
+
+def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="rules_section")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "rules_section" in text
+    assert "no schema" in text.lower()

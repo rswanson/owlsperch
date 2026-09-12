@@ -93,3 +93,50 @@ def test_every_schema_has_a_top_level_integer_version() -> None:
             continue
         schema = json.loads(path.read_text())
         assert isinstance(schema.get("version"), int)
+
+
+# ---------------------------------------------------------------------------
+# Example-record self-test (B5 follow-up): every registered type with a
+# `schemas/examples/<type>.json` fixture must actually conform to its own
+# schema (envelope + `fields`) and pass the same envelope-consistency and
+# type-specific field checks `owlsperch validate` runs, so the EXAMPLE
+# RECORD rendered into a subagent prompt (`owlsperch.queue.prompt`) is never
+# itself invalid.
+# ---------------------------------------------------------------------------
+
+
+def test_every_type_examples_file_validates_against_its_schema() -> None:
+    from jsonschema import Draft202012Validator
+
+    from owlsperch.validate.checks import TYPE_FIELD_CHECKS, check_envelope_consistency
+
+    schemas_dir = _repo_schemas_dir()
+    registry = load_registry(schemas_dir)
+    envelope_validator = Draft202012Validator(registry.envelope_schema)
+
+    examples_dir = schemas_dir / "examples"
+    example_files = sorted(examples_dir.glob("*.json")) if examples_dir.is_dir() else []
+    assert example_files, "expected at least one schemas/examples/*.json fixture"
+
+    for path in example_files:
+        type_name = path.stem
+        assert type_name in registry.types, f"{path}: '{type_name}' is not a registered type"
+        record = json.loads(path.read_text())
+
+        envelope_errors = sorted(envelope_validator.iter_errors(record), key=str)
+        assert not envelope_errors, f"{path}: envelope errors: {envelope_errors}"
+
+        type_schema = registry.load_type_schema(type_name)
+        type_validator = Draft202012Validator(type_schema)
+        field_errors = sorted(type_validator.iter_errors(record.get("fields", {})), key=str)
+        assert not field_errors, f"{path}: fields errors: {field_errors}"
+
+        consistency_errors = check_envelope_consistency(
+            record, type_dir=type_name, registry_version=registry.types[type_name].version
+        )
+        assert not consistency_errors, f"{path}: consistency errors: {consistency_errors}"
+
+        field_check = TYPE_FIELD_CHECKS.get(type_name)
+        if field_check is not None:
+            type_field_errors = field_check(record)
+            assert not type_field_errors, f"{path}: type field errors: {type_field_errors}"

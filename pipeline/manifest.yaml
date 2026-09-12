@@ -1074,6 +1074,7 @@ entries:
 
   - book_id: dmg1
     title: "Dungeon Master's Guide (Core Rulebook II)"
+    short_title: "DMG"
     file: "Dungeon Master's Guide I.pdf"
     edition: "3.5"
     kind: rulebook
@@ -1832,6 +1833,7 @@ entries:
 
   - book_id: mm1
     title: "Monster Manual (Core Rulebook III)"
+    short_title: "MM"
     file: "Monster Manual I.pdf"
     edition: "3.5"
     kind: rulebook
@@ -2045,6 +2047,7 @@ entries:
 
   - book_id: phb1
     title: "Player's Handbook (Core Rulebook I)"
+    short_title: "PHB"
     file: "Player_s Handbook I.pdf"
     edition: "3.5"
     kind: rulebook

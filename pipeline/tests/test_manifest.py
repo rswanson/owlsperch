@@ -528,6 +528,53 @@ entries:
 
 
 # ---------------------------------------------------------------------------
+# short_title (B5 acceptance criterion 2: used to build citations)
+# ---------------------------------------------------------------------------
+
+
+def test_short_title_defaults_to_none(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+entries:
+  - book_id: book
+    title: "A Book"
+    file: "book.pdf"
+    edition: "3.5"
+    kind: rulebook
+""",
+    )
+    entries = load_manifest(manifest_path)
+    assert entries[0].short_title is None
+
+
+def test_short_title_can_be_set(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+entries:
+  - book_id: phb1
+    title: "Player's Handbook (Core Rulebook I)"
+    short_title: "PHB"
+    file: "phb.pdf"
+    edition: "3.5"
+    kind: rulebook
+""",
+    )
+    entries = load_manifest(manifest_path)
+    assert entries[0].short_title == "PHB"
+
+
+def test_repo_manifest_sets_short_title_for_phb1_dmg1_mm1() -> None:
+    repo_manifest = Path(__file__).resolve().parents[1] / "manifest.yaml"
+    entries = load_manifest(repo_manifest)
+    by_id = {e.book_id: e for e in entries}
+    assert by_id["phb1"].short_title == "PHB"
+    assert by_id["dmg1"].short_title == "DMG"
+    assert by_id["mm1"].short_title == "MM"
+
+
+# ---------------------------------------------------------------------------
 # The real corpus (acceptance criterion 5's corpus marker)
 # ---------------------------------------------------------------------------
 
