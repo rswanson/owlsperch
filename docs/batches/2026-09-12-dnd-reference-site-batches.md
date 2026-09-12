@@ -46,7 +46,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `README.md`, `CLAUDE.md`, `.gitignore`.
 
 ## B2: `text` for text-layer books
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `owlsperch text phb` writes one repaired text
   file per page under `text/phb/`, in reading order, without running
   headers, with a sidecar of printed page numbers.
@@ -73,7 +73,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/text/`, tests, README.
 
 ## B3: `segment`
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `owlsperch segment phb` writes segment JSON files
   under `segments/phb/` and prints counts per kind hint.
 - **Acceptance criteria:**

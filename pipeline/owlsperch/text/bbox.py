@@ -30,15 +30,35 @@ A page can have several `<flow>` siblings; poppler's flow grouping does not
 reliably correspond to reading columns, so this module flattens every flow's
 blocks into one list per page and leaves column ordering to
 `owlsperch.text.columns`.
+
+**Invalid XML control characters.** A handful of real-world PDFs (found
+while working on batch B3, against the real Player's Handbook) have a font
+glyph that `pdftotext` extracts as a raw C0 control character -- e.g.
+`\x01` -- inside a `<word>`'s text. XML 1.0 forbids those characters
+anywhere in a document, so `ET.parse` raises `xml.etree.ElementTree.
+ParseError: not well-formed (invalid token)` on the raw file. Since these
+characters are extraction noise, not real glyph content, they are stripped
+(at the decoded-character level, so a multi-byte UTF-8 sequence is never
+split) before parsing -- see `_strip_invalid_xml_chars`.
 """
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
 _XHTML_NS = "{http://www.w3.org/1999/xhtml}"
+
+#: XML 1.0's Char production excludes every C0 control character except
+#: tab/newline/carriage-return; see the module docstring's "Invalid XML
+#: control characters".
+_INVALID_XML_CHAR_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _strip_invalid_xml_chars(text: str) -> str:
+    return _INVALID_XML_CHAR_RE.sub("", text)
 
 
 def _tag(name: str) -> str:
@@ -148,8 +168,9 @@ def _parse_page(elem: ET.Element) -> Page:
 def parse_bbox_xhtml(path: Path) -> list[Page]:
     """Parse a `pdftotext -bbox-layout` XHTML file into a list of `Page`s,
     one per `<page>` element in document order."""
-    tree = ET.parse(path)
-    root = tree.getroot()
+    raw_bytes = path.read_bytes()
+    text = raw_bytes.decode("utf-8", errors="replace")
+    root = ET.fromstring(_strip_invalid_xml_chars(text))
     doc = root.find(_tag("body") + "/" + _tag("doc"))
     if doc is None:
         # Some poppler versions omit the wrapping <body>; fall back to

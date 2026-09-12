@@ -1,8 +1,8 @@
 """The `owlsperch` command-line entry point.
 
-`manifest check` and `text` are implemented; the other subcommands listed in
-the spec (segment, validate, build-db, check-completeness, coverage, schema
-review, sample) are future-batch stubs.
+`manifest check`, `text`, and `segment` are implemented; the other
+subcommands listed in the spec (validate, build-db, check-completeness,
+coverage, schema review, sample) are future-batch stubs.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from owlsperch.manifest import ManifestError, run_check
+from owlsperch.segment.runner import run_segment
 from owlsperch.text.runner import run_text
 
 
@@ -56,6 +57,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Limit extraction to PDF page range A-B (1-based, inclusive).",
     )
 
+    segment_parser = subparsers.add_parser(
+        "segment",
+        help="Split a book's extracted text into candidate segments with kind hints.",
+    )
+    segment_parser.add_argument("book_id", help="Manifest book_id, or 'all'.")
+    segment_parser.add_argument(
+        "--force", action="store_true", help="Re-write segment files that already exist."
+    )
+    segment_parser.add_argument(
+        "--pages",
+        type=_parse_pages,
+        default=None,
+        metavar="A-B",
+        help="Limit segmentation to PDF page range A-B (1-based, inclusive).",
+    )
+
     return parser
 
 
@@ -77,6 +94,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "text":
         try:
             return run_text(args.book_id, force=args.force, page_range=args.pages)
+        except ManifestError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "segment":
+        # Note: run_segment already catches its own SegmentError internally
+        # (naming the failing book and returning exit code 1), so only
+        # ManifestError (raised by load_manifest before any per-book work
+        # starts) can actually reach this handler.
+        try:
+            return run_segment(args.book_id, force=args.force, page_range=args.pages)
         except ManifestError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

@@ -63,3 +63,27 @@ def test_empty_doc_returns_no_pages(tmp_path: Path) -> None:
         '<html xmlns="http://www.w3.org/1999/xhtml"><body><doc></doc></body></html>'
     )
     assert parse_bbox_xhtml(html_path) == []
+
+
+def test_invalid_xml_control_character_in_word_text_is_stripped(tmp_path: Path) -> None:
+    """Regression test: a real-world PDF's `pdftotext -bbox-layout` output can
+    contain a raw C0 control character (observed: `\\x01`) inside a <word>'s
+    text -- invalid in XML 1.0, which `ET.parse` used to reject outright with
+    `not well-formed (invalid token)`. It should be stripped, not crash."""
+    html_path = tmp_path / "bad_char.html"
+    html_bytes = (
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body><doc>'
+        b'<page width="612.000000" height="792.000000"><flow>'
+        b'<block xMin="34.0" yMin="40.0" xMax="200.0" yMax="60.0">'
+        b'<line xMin="34.0" yMin="40.0" xMax="200.0" yMax="60.0">'
+        b'<word xMin="34.0" yMin="40.0" xMax="80.0" yMax="60.0">Real'
+        b"\x01"
+        b"text</word>"
+        b"</line></block></flow></page></doc></body></html>"
+    )
+    html_path.write_bytes(html_bytes)
+
+    pages = parse_bbox_xhtml(html_path)
+
+    assert len(pages) == 1
+    assert pages[0].blocks[0].lines[0].words[0].text == "Realtext"

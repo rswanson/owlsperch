@@ -12,19 +12,60 @@ Algorithm (per page):
    since the same rule also discards image credits like "Illus. by ...",
    and that loss is otherwise invisible.)
 
+1a. **Exclude prose-like blocks from table grouping.** A three (or more)
+    -column prose layout (e.g. the PHB spell chapter) looks, block by
+    block, exactly like step 2's table-column shape: several blocks side
+    by side, each spanning a similar y-range. To tell them apart, a block
+    is **prose-like** -- and never eligible to join a table group -- when
+    it has at least `PROSE_MIN_LINES` (4) non-blank lines, its median
+    words-per-line is at least `PROSE_MIN_MEDIAN_WORDS_PER_LINE` (5), and
+    at least `PROSE_SPANNING_LINE_FRACTION` (60%) of its lines each span
+    at least `PROSE_LINE_SPAN_FRACTION` (75%) of the block's own width
+    (justified body text runs edge to edge). A table cell block -- short,
+    ragged, few-word lines -- fails this test and remains eligible.
+
+1b. **Exclude stat-block-like blocks from table grouping.** Two (or more)
+    spell or monster stat blocks that happen to sit side by side with a
+    shared y-range (e.g. two adjacent spell descriptions' "Level:"/
+    "Casting Time:"/"Saving Throw:" blocks in the PHB's 3-column spell
+    chapter) satisfy step 2's pairwise table-column test just as well as
+    real table columns do, and are not prose-like either (their lines are
+    short, not justified running text) -- so they slip past 1a. To catch
+    this instead: a block is **label:value-like** -- and, like a
+    prose-like block, never eligible to join a table group -- when at
+    least `LABEL_VALUE_LINE_FRACTION` (50%) of its (non-blank) lines match
+    `^[A-Z][A-Za-z' /()]{1,30}:\\s` (e.g. "Level: Sor/Wiz 3", "Casting
+    Time: 1 standard action", "Saving Throw: None"). A genuine table
+    column's cells (a name, a cost, a die code) essentially never take
+    this "Label: value" shape.
+
 2. **Detect table groups.** `pdftotext` frequently emits each column of a
    multi-column table (e.g. a weapon table: name, cost, damage, critical,
    type) as its own narrow block rather than one block per row. Left to
    step 3's column clustering, these narrow blocks would each become their
    own "column" and get emitted one after another -- i.e. column-major
    (every name, then every cost, then every damage) instead of row-major.
-   To detect this: among the remaining (non-vertical) blocks, find every
-   pair whose vertical extents overlap by at least `TABLE_OVERLAP_FRACTION`
-   (70%) of the shorter block's height *and* whose x-extents do not
-   overlap at all. Blocks connected (transitively) by such pairs form a
-   group; a group of at least `TABLE_MIN_BLOCKS` (3) blocks is a **table
-   group** and is pulled out of the normal column-clustering blocks
-   entirely.
+   To detect this: among the remaining non-vertical, non-prose-like,
+   non-label:value-like blocks with at least `TABLE_CANDIDATE_MIN_LINES`
+   (2) non-blank lines -- a
+   one-line block is a heading or caption, never a table column, however
+   its y-range happens to sit -- find every pair whose vertical extents
+   overlap by at least `TABLE_OVERLAP_FRACTION` (70%) of the *shorter*
+   block's height *and* at least `TABLE_OVERLAP_TALLER_FRACTION` (50%) of
+   the *taller* block's height, and whose x-extents do not overlap at all.
+   Requiring both fractions (not just the shorter-block one) matters
+   because true table columns span the same rows top to bottom, so the
+   overlap is large relative to both blocks, not just the smaller one --
+   otherwise a short block (e.g. a one-line heading) that merely happens to
+   sit fully nested inside a much taller neighbor's y-range would trivially
+   score 100% of its own (shorter) height while covering only a sliver of
+   the taller block's. A **table group** is a *clique* of such pairs --
+   every member overlaps every other member this way, not merely chained
+   transitively (A-B and B-C does not imply A-C) -- of at least
+   `TABLE_MIN_BLOCKS` (3) blocks. Where a candidate's blocks admit more than
+   one maximal clique of qualifying size (rare), the largest wins and its
+   blocks are removed from consideration by smaller, overlapping candidate
+   cliques.
 
 2a. **Detect single-block tables.** Sometimes `pdftotext` keeps a whole
     table as a *single* block instead -- e.g. a full-width table wide
@@ -58,6 +99,21 @@ Algorithm (per page):
     cluster is a confirmed column split only if it is hit by at least
     `TABLE_GAP_CLUSTER_FRACTION` (60%) of the gappy rows.
 
+    Before committing to a table, one more check guards against a
+    different false positive: two adjacent prose columns (e.g. two spell
+    entries side by side) that `pdftotext` happened to keep as one block.
+    These have the same consistent-large-gap shape a table does -- the
+    gap is the column gutter -- but each "cell" is a run of prose words,
+    not a table cell. So the confirmed splits' cells (across the gappy
+    rows) are measured for their median word count; a median of
+    `TABLE_CELL_MAX_MEDIAN_WORDS` (4) or fewer confirms a table, but a
+    higher median means these are sentences, not cells, and the block is
+    instead split at the confirmed x-positions into that many ordinary
+    `Block`s (one per column, each keeping every original line's words
+    that fall on its side of the split) and handed back to be ordered as
+    prose columns like any other block (step 3 onward) -- not as a table
+    at all.
+
     A confirmed single-block table becomes a table group exactly like
     step 2's: each gappy row is split into cells at the confirmed
     x-splits; every other row (a caption, a category sub-heading, an
@@ -78,12 +134,14 @@ Algorithm (per page):
    break 2, ... (a page with no breaks is one run).
 
 4. **Cluster each run's blocks into columns by x-position.** Within a run,
-   blocks are sorted by `xMin` and assigned to columns greedily: each
-   block joins the existing column whose running x-center average is
-   closest, if within `COLUMN_GAP_FRACTION` (25%) of the text-area width;
-   otherwise it starts a new column. This is a simple single-pass
-   clustering, not k-means -- sufficient for the typical one- or
-   two-column D&D 3.5e rulebook layouts this pipeline targets.
+   blocks are sorted by `xMin` and merged left to right: a block joins the
+   current column if its `xMin` is within `COLUMN_GAP_HEIGHT_FACTOR` (1.5)
+   times the run's median word glyph height of that column's rightmost
+   extent so far; otherwise a horizontal gap that wide is a real column
+   gutter and it starts a new column. Splitting on an absolute,
+   text-size-relative gap (rather than a fixed fraction of the text-area
+   width, which implicitly assumed two columns) means this works the same
+   whether the page actually has one, two, three, or four prose columns.
 
 5. **Emit columns left to right, each column's blocks top to bottom**
    (sorted by `yMin`), then continue with the next run after its wide
@@ -107,6 +165,7 @@ prose.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from owlsperch.text.bbox import Block, Line, Page, Word
@@ -115,19 +174,58 @@ from owlsperch.text.bbox import Block, Line, Page, Word
 #: break (a full-width table or heading) rather than clustered into a column.
 WIDE_BLOCK_FRACTION = 0.6
 
-#: Greedy column-clustering threshold, as a fraction of the text-area width:
-#: a block joins the nearest existing column if its x-center is within this
-#: distance of that column's running average center.
-COLUMN_GAP_FRACTION = 0.25
+#: Column-clustering threshold, as a multiple of the run's median word
+#: glyph height: a block starts a new column when the horizontal gap from
+#: the current column's rightmost extent so far is at least this wide (see
+#: step 4).
+COLUMN_GAP_HEIGHT_FACTOR = 1.5
 
 #: Two blocks are candidate table columns if their vertical extents overlap
 #: by at least this fraction of the shorter block's height (see step 2).
 TABLE_OVERLAP_FRACTION = 0.70
 
+#: ...and by at least this fraction of the TALLER block's height (see step
+#: 2) -- true table columns span the same rows, so the overlap must be
+#: large relative to both blocks, not just the shorter one; this is what
+#: rejects a short heading/caption block that happens to nest inside a much
+#: taller neighbor's y-range.
+TABLE_OVERLAP_TALLER_FRACTION = 0.50
+
+#: A block needs at least this many non-blank lines to be a candidate table
+#: column (see step 2) -- a single-line block is a heading or caption, and
+#: is never a table column regardless of its overlap with its neighbors.
+TABLE_CANDIDATE_MIN_LINES = 2
+
 #: A group of blocks connected by the table-column relationship is only
 #: treated as a table if it has at least this many members (see step 2) --
 #: a two-block group is an ordinary two-column prose layout.
 TABLE_MIN_BLOCKS = 3
+
+#: A block needs at least this many non-blank lines to be considered
+#: "prose-like" (see step 1a) -- fewer is too little evidence either way.
+PROSE_MIN_LINES = 4
+
+#: ...and a median words-per-line of at least this many (see step 1a) --
+#: a table cell's lines are typically a name or a single number/die code.
+PROSE_MIN_MEDIAN_WORDS_PER_LINE = 5.0
+
+#: A line "spans" its block when its own width is at least this fraction of
+#: the block's width (see step 1a) -- justified body text runs edge to
+#: edge; a table cell's line does not.
+PROSE_LINE_SPAN_FRACTION = 0.75
+
+#: ...and at least this fraction of a block's (non-blank) lines must span
+#: it this way for the block to count as prose-like (see step 1a).
+PROSE_SPANNING_LINE_FRACTION = 0.60
+
+#: A block's line matching this shape ("Label: value...", e.g. "Level:
+#: Sor/Wiz 3", "Casting Time: 1 standard action") is evidence of a spell or
+#: monster stat block rather than a table cell (see step 1b).
+_LABEL_VALUE_LINE_RE = re.compile(r"^[A-Z][A-Za-z' /()]{1,30}:\s")
+
+#: A block needs at least this fraction of its (non-blank) lines to match
+#: `_LABEL_VALUE_LINE_RE` to count as label:value-like (see step 1b).
+LABEL_VALUE_LINE_FRACTION = 0.50
 
 #: Within a table group, lines whose y-centers are within this fraction of
 #: the median line height of each other belong to the same row (see the
@@ -150,6 +248,13 @@ TABLE_MIN_GAPS_PER_ROW = 2
 #: step 2a) -- fewer is an ordinary two-cell layout, not a table.
 TABLE_MIN_GAPPY_ROWS = 3
 
+#: A single-block table's gappy-row cells (split at the confirmed gap
+#: x-positions) must have a median word count no higher than this many
+#: to still be a table (see step 2a) -- a higher median means the "cells"
+#: are full sentences, i.e. two prose columns `pdftotext` merged into one
+#: block, not table cells.
+TABLE_CELL_MAX_MEDIAN_WORDS = 4
+
 #: A cluster of gappy rows' large-gap midpoints is a confirmed column
 #: split only if at least this fraction of the gappy rows land in it (see
 #: step 2a).
@@ -164,6 +269,42 @@ def is_vertical_block(block: Block) -> bool:
     if not block.lines:
         return False
     return all(line.height > line.width for line in block.lines)
+
+
+def _is_prose_like_block(block: Block) -> bool:
+    """Whether `block` looks like justified running prose -- several lines
+    of several words each, most of which stretch across nearly the whole
+    block width -- as opposed to a table cell's short, ragged lines (see
+    module docstring, step 1a). Prose-like blocks are excluded from table
+    grouping entirely (step 2)."""
+    lines = [line for line in block.lines if line.words]
+    if len(lines) < PROSE_MIN_LINES:
+        return False
+
+    words_per_line = sorted(len(line.words) for line in lines)
+    median_words = words_per_line[len(words_per_line) // 2]
+    if median_words < PROSE_MIN_MEDIAN_WORDS_PER_LINE:
+        return False
+
+    block_width = block.width
+    if block_width <= 0:
+        return False
+    spanning = sum(1 for line in lines if line.width >= PROSE_LINE_SPAN_FRACTION * block_width)
+    return spanning / len(lines) >= PROSE_SPANNING_LINE_FRACTION
+
+
+def _is_label_value_block(block: Block) -> bool:
+    """Whether `block` looks like a spell's or monster's own stat block --
+    mostly "Label: value" lines -- as opposed to a genuine table column's
+    cells (see module docstring, step 1b). Like a prose-like block,
+    label:value-like blocks are excluded from table grouping entirely
+    (step 2): two adjacent stat blocks sharing a y-range otherwise satisfy
+    the pairwise table-column test just as well as real table columns do."""
+    lines = [line for line in block.lines if line.text.strip()]
+    if not lines:
+        return False
+    matching = sum(1 for line in lines if _LABEL_VALUE_LINE_RE.match(line.text))
+    return matching / len(lines) >= LABEL_VALUE_LINE_FRACTION
 
 
 @dataclass(frozen=True)
@@ -186,6 +327,12 @@ class TableGroup:
 
     rows: list[TableRow]
     y_min: float
+    #: Median/max word glyph height (`yMax - yMin`) across every word that
+    #: contributed to this table group, for `owlsperch.text.runner`'s
+    #: `.meta.json` sidecar (see B3) -- computed here because `TableRow` only
+    #: keeps cell text, not the source `Word` bboxes.
+    median_word_height: float = 0.0
+    max_word_height: float = 0.0
 
 
 def _text_area_width(blocks: list[Block]) -> float:
@@ -195,24 +342,70 @@ def _text_area_width(blocks: list[Block]) -> float:
     return width if width > 0 else 1.0
 
 
-def _vertical_overlap_fraction(a: Block, b: Block) -> float:
+def _vertical_overlap_fractions(a: Block, b: Block) -> tuple[float, float]:
+    """The vertical overlap between `a` and `b`, as a fraction of each of
+    (the shorter block's height, the taller block's height) -- see step 2's
+    two-sided overlap test."""
     overlap = min(a.y_max, b.y_max) - max(a.y_min, b.y_min)
     if overlap <= 0:
-        return 0.0
-    shorter = min(a.y_max - a.y_min, b.y_max - b.y_min)
-    if shorter <= 0:
-        return 0.0
-    return overlap / shorter
+        return 0.0, 0.0
+    height_a = a.y_max - a.y_min
+    height_b = b.y_max - b.y_min
+    shorter, taller = min(height_a, height_b), max(height_a, height_b)
+    if shorter <= 0 or taller <= 0:
+        return 0.0, 0.0
+    return overlap / shorter, overlap / taller
 
 
 def _x_extents_overlap(a: Block, b: Block) -> bool:
     return min(a.x_max, b.x_max) - max(a.x_min, b.x_min) > 0
 
 
+def _has_min_lines_for_table_candidacy(block: Block) -> bool:
+    """Whether `block` has enough non-blank lines to be a table-column
+    candidate at all (see `TABLE_CANDIDATE_MIN_LINES`, step 2) -- a
+    one-line block is a heading or caption, never a table column."""
+    non_blank = sum(1 for line in block.lines if line.text.strip())
+    return non_blank >= TABLE_CANDIDATE_MIN_LINES
+
+
 def _is_table_pair(a: Block, b: Block) -> bool:
-    return _vertical_overlap_fraction(a, b) >= TABLE_OVERLAP_FRACTION and not _x_extents_overlap(
-        a, b
+    if _x_extents_overlap(a, b):
+        return False
+    shorter_fraction, taller_fraction = _vertical_overlap_fractions(a, b)
+    return (
+        shorter_fraction >= TABLE_OVERLAP_FRACTION
+        and taller_fraction >= TABLE_OVERLAP_TALLER_FRACTION
     )
+
+
+def _cluster_1d[T](items: list[tuple[float, T]], tolerance: float) -> list[list[T]]:
+    """Single-pass 1-D clustering shared by `_cluster_lines_into_rows` and
+    `_confirmed_gap_splits`: `items` (each a `(key, payload)` pair) are
+    visited in ascending `key` order, and a payload joins the current
+    cluster when its key is within `tolerance` of that cluster's
+    running-average key so far -- otherwise it starts a new cluster. Every
+    item before the current one in sorted order has a key no greater than
+    it, so the running average is always <= the current key, making a
+    plain (rather than absolute) difference equivalent here.
+
+    This is *not* what `_cluster_columns` does for column clustering (a
+    different, extent-based test: a block joins a column while its `xMin`
+    is close to that column's *rightmost extent so far*, not the average
+    key of its members) -- the two are only superficially similar."""
+    ordered = sorted(items, key=lambda item: item[0])
+    clusters: list[list[T]] = []
+    key_sums: list[float] = []
+    for key, payload in ordered:
+        if clusters:
+            running_avg = key_sums[-1] / len(clusters[-1])
+            if key - running_avg <= tolerance:
+                clusters[-1].append(payload)
+                key_sums[-1] += key
+                continue
+        clusters.append([payload])
+        key_sums.append(key)
+    return clusters
 
 
 def _cluster_lines_into_rows(lines: list[Line]) -> list[list[Line]]:
@@ -225,20 +418,8 @@ def _cluster_lines_into_rows(lines: list[Line]) -> list[list[Line]]:
     median_height = heights[len(heights) // 2] if heights[len(heights) // 2] > 0 else 1.0
     row_threshold = median_height * TABLE_ROW_FRACTION
 
-    sorted_lines = sorted(lines, key=lambda ln: (ln.y_min + ln.y_max) / 2)
-    row_clusters: list[list[Line]] = []
-    row_center_sums: list[float] = []
-    for line in sorted_lines:
-        center = (line.y_min + line.y_max) / 2
-        if row_clusters:
-            last_avg = row_center_sums[-1] / len(row_clusters[-1])
-            if abs(center - last_avg) <= row_threshold:
-                row_clusters[-1].append(line)
-                row_center_sums[-1] += center
-                continue
-        row_clusters.append([line])
-        row_center_sums.append(center)
-    return row_clusters
+    items = [((ln.y_min + ln.y_max) / 2, ln) for ln in lines]
+    return _cluster_1d(items, row_threshold)
 
 
 def _build_table_group(member_blocks: list[Block]) -> TableGroup:
@@ -254,7 +435,16 @@ def _build_table_group(member_blocks: list[Block]) -> TableGroup:
         TableRow(cells=[ln.text for ln in sorted(cluster, key=lambda ln: ln.x_min)])
         for cluster in row_clusters
     ]
-    return TableGroup(rows=rows, y_min=y_min)
+    all_words = [w for line in lines for w in line.words if w.text]
+    word_heights = [w.y_max - w.y_min for w in all_words]
+    median_word_height = _median(word_heights, default=0.0)
+    max_word_height = max(word_heights) if word_heights else 0.0
+    return TableGroup(
+        rows=rows,
+        y_min=y_min,
+        median_word_height=median_word_height,
+        max_word_height=max_word_height,
+    )
 
 
 def _row_words(cluster: list[Line]) -> list[Word]:
@@ -289,22 +479,17 @@ def _confirmed_gap_splits(
     gappy_row_indices: list[int],
     cluster_tolerance: float,
 ) -> list[float]:
-    """Cluster the gappy rows' large-gap midpoints (single-pass, by
-    running average, like `_cluster_columns`) and return the x-position of
-    every cluster hit by at least `TABLE_GAP_CLUSTER_FRACTION` of the
-    gappy rows -- the confirmed column splits (see step 2a)."""
-    entries = sorted((mid, i) for i in gappy_row_indices for mid in row_gap_midpoints[i])
-    clusters: list[list[tuple[float, int]]] = []
-    cluster_sums: list[float] = []
-    for mid, row_index in entries:
-        if clusters:
-            running_avg = cluster_sums[-1] / len(clusters[-1])
-            if mid - running_avg <= cluster_tolerance:
-                clusters[-1].append((mid, row_index))
-                cluster_sums[-1] += mid
-                continue
-        clusters.append([(mid, row_index)])
-        cluster_sums.append(mid)
+    """Cluster the gappy rows' large-gap midpoints with `_cluster_1d` (the
+    same single-pass, running-average algorithm `_cluster_lines_into_rows`
+    uses) and return the x-position of every cluster hit by at least
+    `TABLE_GAP_CLUSTER_FRACTION` of the gappy rows -- the confirmed column
+    splits (see step 2a)."""
+    items = [
+        (mid, (mid, row_index))
+        for row_index in gappy_row_indices
+        for mid in row_gap_midpoints[row_index]
+    ]
+    clusters = _cluster_1d(items, cluster_tolerance)
 
     n_gappy = len(gappy_row_indices)
     return sorted(
@@ -314,26 +499,77 @@ def _confirmed_gap_splits(
     )
 
 
-def _split_words_at(words: list[Word], splits: list[float]) -> list[str]:
-    """Bucket `words` (x-sorted) into `len(splits) + 1` cells at the given
-    x-positions, space-joining each cell's words."""
-    buckets: list[list[str]] = [[] for _ in range(len(splits) + 1)]
+def _bucket_words_at(words: list[Word], splits: list[float]) -> list[list[Word]]:
+    """Bucket `words` (x-sorted) into `len(splits) + 1` groups at the given
+    x-positions, left to right."""
+    buckets: list[list[Word]] = [[] for _ in range(len(splits) + 1)]
     for word in words:
         index = 0
         while index < len(splits) and word.x_min > splits[index]:
             index += 1
-        buckets[index].append(word.text)
-    return [" ".join(bucket) for bucket in buckets]
+        buckets[index].append(word)
+    return buckets
 
 
-def _detect_single_block_table_group(block: Block) -> TableGroup | None:
-    """If `block`'s own lines look like a table flattened into one block
-    (see step 2a in the module docstring), return the `TableGroup` it
-    represents; otherwise `None`."""
-    lines = [line for line in block.lines if line.words]
-    if not lines:
-        return None
+def _split_words_at(words: list[Word], splits: list[float]) -> list[str]:
+    """Bucket `words` (x-sorted) into `len(splits) + 1` cells at the given
+    x-positions, space-joining each cell's words."""
+    return [" ".join(w.text for w in bucket) for bucket in _bucket_words_at(words, splits)]
 
+
+def _build_prose_sub_blocks(lines: list[Line], splits: list[float]) -> list[Block]:
+    """Split a single block's own `lines` into `len(splits) + 1` ordinary
+    `Block`s at the given x-positions -- used when a block that looked
+    like a single-block table (see step 2a) turns out to be two or more
+    prose columns `pdftotext` merged into one block instead. Each original
+    line's words are bucketed by x-position into the new column they fall
+    in; a line entirely on one side of every split contributes only to
+    that column, just as if `pdftotext` had kept it separate to begin
+    with. The result is meant to be treated as ordinary blocks by the
+    existing column ordering (step 3 onward), not re-checked for
+    tabularity."""
+    n_buckets = len(splits) + 1
+    bucket_lines: list[list[Line]] = [[] for _ in range(n_buckets)]
+    for line in sorted(lines, key=lambda ln: ln.y_min):
+        word_buckets = _bucket_words_at(sorted(line.words, key=lambda w: w.x_min), splits)
+        for index, words in enumerate(word_buckets):
+            if not words:
+                continue
+            bucket_lines[index].append(
+                Line(
+                    x_min=min(w.x_min for w in words),
+                    y_min=min(w.y_min for w in words),
+                    x_max=max(w.x_max for w in words),
+                    y_max=max(w.y_max for w in words),
+                    words=words,
+                )
+            )
+
+    sub_blocks: list[Block] = []
+    for column_lines in bucket_lines:
+        if not column_lines:
+            continue
+        sub_blocks.append(
+            Block(
+                x_min=min(ln.x_min for ln in column_lines),
+                y_min=min(ln.y_min for ln in column_lines),
+                x_max=max(ln.x_max for ln in column_lines),
+                y_max=max(ln.y_max for ln in column_lines),
+                lines=column_lines,
+            )
+        )
+    return sub_blocks
+
+
+def _single_block_table_candidate(
+    lines: list[Line],
+) -> tuple[list[list[Word]], float, float] | None:
+    """Step 1 of single-block table detection (see step 2a in the module
+    docstring): bucket `lines` into rows the same way a table group's rows
+    are (see "Emitting a table group"), then compute the block's "large
+    gap" threshold from its own word spacing. Returns `(rows_words,
+    threshold, median_height)`, or `None` if the block has no words to
+    measure at all."""
     row_clusters = _cluster_lines_into_rows(lines)
     rows_words = [_row_words(cluster) for cluster in row_clusters]
 
@@ -354,7 +590,15 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
     ]
     median_gap = _median(intra_line_gaps, default=0.0)
     threshold = max(TABLE_GAP_MEDIAN_FACTOR * median_gap, TABLE_GAP_HEIGHT_FACTOR * median_height)
+    return rows_words, threshold, median_height
 
+
+def _gappy_rows(
+    rows_words: list[list[Word]], threshold: float
+) -> tuple[list[list[float]], list[int]] | None:
+    """Step 2: each row's large-gap midpoints, and which rows are "gappy"
+    (see `TABLE_MIN_GAPS_PER_ROW`, step 2a). Returns `None` if fewer than
+    `TABLE_MIN_GAPPY_ROWS` rows qualify -- too few to be a table at all."""
     row_gap_midpoints = [
         [mid for gap, mid in _word_gaps(row) if gap > threshold] for row in rows_words
     ]
@@ -365,10 +609,33 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
     ]
     if len(gappy_row_indices) < TABLE_MIN_GAPPY_ROWS:
         return None
+    return row_gap_midpoints, gappy_row_indices
 
-    confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
-    if not confirmed_splits:
-        return None
+
+def _build_single_block_table_or_prose_split(
+    block: Block,
+    lines: list[Line],
+    rows_words: list[list[Word]],
+    confirmed_splits: list[float],
+    gappy_row_indices: list[int],
+    median_height: float,
+) -> TableGroup | list[Block]:
+    """Step 3: given confirmed column splits, decide whether the gappy
+    rows' cells are table cells (build the `TableGroup`) or full sentences
+    -- two prose columns `pdftotext` merged into one block (see step 2a's
+    addendum in the module docstring) -- and split into separate column
+    `Block`s instead."""
+    # A table cell is short -- a name, a number, a die code. If the
+    # confirmed splits' cells are, on the whole, full sentences instead,
+    # this is two prose columns merged into one block, not a table.
+    gappy_cell_word_counts = [
+        float(len(cell_words))
+        for i in gappy_row_indices
+        for cell_words in _bucket_words_at(rows_words[i], confirmed_splits)
+    ]
+    median_words_per_cell = _median(gappy_cell_word_counts, default=0.0)
+    if median_words_per_cell > TABLE_CELL_MAX_MEDIAN_WORDS:
+        return _build_prose_sub_blocks(lines, confirmed_splits)
 
     gappy = set(gappy_row_indices)
     rows = [
@@ -377,28 +644,79 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
         else TableRow(cells=[" ".join(w.text for w in words)])
         for i, words in enumerate(rows_words)
     ]
-    return TableGroup(rows=rows, y_min=block.y_min)
+    all_words = [word for row in rows_words for word in row]
+    max_height = max(w.y_max - w.y_min for w in all_words)
+    return TableGroup(
+        rows=rows,
+        y_min=block.y_min,
+        median_word_height=median_height,
+        max_word_height=max_height,
+    )
 
 
-def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
-    """Split `blocks` into (table groups, remaining non-table blocks) per
-    step 2 of the module docstring."""
-    n = len(blocks)
-    adjacency: list[set[int]] = [set() for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _is_table_pair(blocks[i], blocks[j]):
-                adjacency[i].add(j)
-                adjacency[j].add(i)
+def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] | None:
+    """If `block`'s own lines look like a table flattened into one block
+    (see step 2a in the module docstring), return the `TableGroup` it
+    represents. If they instead look like two (or more) prose columns
+    merged into one block -- the same consistent-gap shape, but with
+    sentence-like cells -- return the `Block`s to split it into. Otherwise
+    `None`. Done in three steps: `_single_block_table_candidate` (row
+    bucketing and gap threshold), `_gappy_rows` (which rows qualify), and
+    `_build_single_block_table_or_prose_split` (the final table-vs-prose
+    decision and result)."""
+    lines = [line for line in block.lines if line.words]
+    if not lines:
+        return None
 
+    candidate = _single_block_table_candidate(lines)
+    if candidate is None:
+        return None
+    rows_words, threshold, median_height = candidate
+
+    gappy = _gappy_rows(rows_words, threshold)
+    if gappy is None:
+        return None
+    row_gap_midpoints, gappy_row_indices = gappy
+
+    confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
+    if not confirmed_splits:
+        return None
+
+    return _build_single_block_table_or_prose_split(
+        block, lines, rows_words, confirmed_splits, gappy_row_indices, median_height
+    )
+
+
+def _maximal_cliques(nodes: set[int], adjacency: list[set[int]]) -> list[set[int]]:
+    """Every maximal clique of the subgraph induced by `nodes` (Bron-Kerbosch,
+    no pivoting) -- a page has few enough non-prose candidate blocks that the
+    naive algorithm is fine. Used so a table group requires every member to
+    mutually overlap every other member, not just be transitively connected
+    (see module docstring, step 2)."""
+    results: list[set[int]] = []
+
+    def expand(r: set[int], p: set[int], x: set[int]) -> None:
+        if not p and not x:
+            results.append(r)
+            return
+        for v in list(p):
+            neighbors = adjacency[v] & nodes
+            expand(r | {v}, p & neighbors, x & neighbors)
+            p = p - {v}
+            x = x | {v}
+
+    expand(set(), set(nodes), set())
+    return results
+
+
+def _connected_components(nodes: list[int], adjacency: list[set[int]]) -> list[set[int]]:
     visited: set[int] = set()
-    table_groups: list[TableGroup] = []
-    remaining: list[Block] = []
-    for i in range(n):
-        if i in visited:
+    components: list[set[int]] = []
+    for start in nodes:
+        if start in visited:
             continue
-        component = {i}
-        queue = [i]
+        component = {start}
+        queue = [start]
         while queue:
             current = queue.pop()
             for neighbor in adjacency[current]:
@@ -406,49 +724,83 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
                     component.add(neighbor)
                     queue.append(neighbor)
         visited |= component
-        if len(component) >= TABLE_MIN_BLOCKS:
-            table_groups.append(_build_table_group([blocks[k] for k in sorted(component)]))
-        else:
-            remaining.extend(blocks[k] for k in sorted(component))
+        components.append(component)
+    return components
+
+
+def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
+    """Split `blocks` into (table groups, remaining non-table blocks) per
+    steps 1a/2 of the module docstring."""
+    n = len(blocks)
+    candidate_indices = [
+        i
+        for i in range(n)
+        if not _is_prose_like_block(blocks[i])
+        and not _is_label_value_block(blocks[i])
+        and _has_min_lines_for_table_candidacy(blocks[i])
+    ]
+
+    adjacency: list[set[int]] = [set() for _ in range(n)]
+    for idx, i in enumerate(candidate_indices):
+        for j in candidate_indices[idx + 1 :]:
+            if _is_table_pair(blocks[i], blocks[j]):
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+
+    claimed: set[int] = set()
+    table_groups: list[TableGroup] = []
+    for component in _connected_components(candidate_indices, adjacency):
+        if len(component) < TABLE_MIN_BLOCKS:
+            continue
+        cliques = _maximal_cliques(component, adjacency)
+        for clique in sorted(cliques, key=len, reverse=True):
+            available = clique - claimed
+            if len(available) >= TABLE_MIN_BLOCKS:
+                claimed |= available
+                table_groups.append(_build_table_group([blocks[k] for k in sorted(available)]))
+
+    remaining = [blocks[i] for i in range(n) if i not in claimed]
     return table_groups, remaining
 
 
-def _cluster_columns(blocks: list[Block], text_area_width: float) -> list[Block]:
-    """Greedily cluster `blocks` into left-to-right columns (see step 4),
-    returning them concatenated column by column, top to bottom within
-    each column."""
+def _run_median_word_height(blocks: list[Block]) -> float:
+    heights = [
+        word.y_max - word.y_min
+        for block in blocks
+        for line in block.lines
+        for word in line.words
+        if word.text
+    ]
+    return _median(heights, default=1.0)
+
+
+def _cluster_columns(blocks: list[Block]) -> list[Block]:
+    """Cluster `blocks` into left-to-right columns by a gap-based split of
+    their x-extents (see step 4), returning them concatenated column by
+    column, top to bottom within each column. The split threshold is
+    relative to the run's own text size, which is what lets this handle any
+    number of columns (one, two, three, four, ...) rather than assuming
+    two."""
     if not blocks:
         return []
 
-    threshold = text_area_width * COLUMN_GAP_FRACTION
-    # Each cluster: running (sum_of_centers, count, [blocks]).
-    clusters: list[list[Block]] = []
-    cluster_center_sums: list[float] = []
+    threshold = _run_median_word_height(blocks) * COLUMN_GAP_HEIGHT_FACTOR
 
-    for block in sorted(blocks, key=lambda b: b.x_min):
-        center = block.x_center
-        best_index = None
-        best_distance = threshold
-        for i, blocks_in_cluster in enumerate(clusters):
-            cluster_center = cluster_center_sums[i] / len(blocks_in_cluster)
-            distance = abs(center - cluster_center)
-            if distance <= best_distance:
-                best_distance = distance
-                best_index = i
-        if best_index is None:
+    ordered = sorted(blocks, key=lambda b: b.x_min)
+    clusters: list[list[Block]] = [[ordered[0]]]
+    cluster_max_x: list[float] = [ordered[0].x_max]
+    for block in ordered[1:]:
+        gap = block.x_min - cluster_max_x[-1]
+        if gap >= threshold:
             clusters.append([block])
-            cluster_center_sums.append(center)
+            cluster_max_x.append(block.x_max)
         else:
-            clusters[best_index].append(block)
-            cluster_center_sums[best_index] += center
+            clusters[-1].append(block)
+            cluster_max_x[-1] = max(cluster_max_x[-1], block.x_max)
 
-    ordered_clusters = sorted(
-        range(len(clusters)),
-        key=lambda i: cluster_center_sums[i] / len(clusters[i]),
-    )
     result: list[Block] = []
-    for i in ordered_clusters:
-        result.extend(sorted(clusters[i], key=lambda b: b.y_min))
+    for cluster in clusters:
+        result.extend(sorted(cluster, key=lambda b: b.y_min))
     return result
 
 
@@ -468,8 +820,10 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
     other_blocks: list[Block] = []
     for block in remaining_blocks:
         detected = _detect_single_block_table_group(block)
-        if detected is not None:
+        if isinstance(detected, TableGroup):
             single_block_tables.append(detected)
+        elif detected is not None:
+            other_blocks.extend(detected)
         else:
             other_blocks.append(block)
 
@@ -483,14 +837,14 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
     run: list[Block] = []
     for _, item in combined:
         if isinstance(item, TableGroup):
-            result.extend(_cluster_columns(run, text_area_width))
+            result.extend(_cluster_columns(run))
             result.append(item)
             run = []
         elif item.width > wide_threshold:
-            result.extend(_cluster_columns(run, text_area_width))
+            result.extend(_cluster_columns(run))
             result.append(item)
             run = []
         else:
             run.append(item)
-    result.extend(_cluster_columns(run, text_area_width))
+    result.extend(_cluster_columns(run))
     return result

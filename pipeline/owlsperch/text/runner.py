@@ -26,8 +26,14 @@ Per book:
 5. Write one `text/<book_id>/p{NNNN}.txt` per page: each block becomes one
    paragraph (dehyphenated, word-joined) and each table group becomes one
    paragraph of tab-separated rows (one row per line), all separated by a
-   blank line. Pages whose file already exists are skipped unless
-   `--force`, and the printed page numbers found are merged into
+   blank line. Alongside it, write `text/<book_id>/p{NNNN}.meta.json` (B3):
+   a list with one entry per output paragraph, in order, giving
+   `{"kind": "prose"|"table", "median_word_height", "max_word_height",
+   "line_count"}` -- the word-glyph-height stats and original line count
+   `owlsperch.segment` uses for heading detection, since the .txt format
+   itself carries no font information. Pages whose file already exists are
+   skipped unless `--force` (the .meta.json sidecar is skipped along with
+   it), and the printed page numbers found are merged into
    `text/<book_id>/pages.json` (a page missing a detected number is simply
    absent from the map).
 """
@@ -178,10 +184,17 @@ class _PageUnit:
     """One output paragraph unit for a page: either `kind="prose"` (a
     block's kept lines, to be dehyphenated and joined into one paragraph),
     or `kind="table"` (a `TableGroup`'s already-composed row texts, one per
-    output line, joined with newlines but never dehyphenated across cells)."""
+    output line, joined with newlines but never dehyphenated across cells).
+
+    `median_word_height`/`max_word_height` are the glyph-height stats (see
+    `p{NNNN}.meta.json`, batch B3) for the words that made up this unit --
+    computed here, while word bboxes are still available, rather than
+    recovered later from plain paragraph text."""
 
     kind: Literal["prose", "table"]
     lines: list[str] = field(default_factory=list)
+    median_word_height: float = 0.0
+    max_word_height: float = 0.0
 
 
 def _process_pages(
@@ -234,10 +247,18 @@ def _process_pages(
                     for cell in row.cells:
                         book_words.update(_tokenize_words(cell))
                 if row_texts:
-                    page_units.append(_PageUnit(kind="table", lines=row_texts))
+                    page_units.append(
+                        _PageUnit(
+                            kind="table",
+                            lines=row_texts,
+                            median_word_height=item.median_word_height,
+                            max_word_height=item.max_word_height,
+                        )
+                    )
                 continue
 
             kept_lines: list[str] = []
+            kept_word_heights: list[float] = []
             for line in item.lines:
                 text = line.text
                 if not text.strip():
@@ -257,9 +278,20 @@ def _process_pages(
                         summary.headers_removed += 1
                         continue
                 kept_lines.append(text)
+                kept_word_heights.extend(w.y_max - w.y_min for w in line.words if w.text)
                 book_words.update(_tokenize_words(text))
             if kept_lines:
-                page_units.append(_PageUnit(kind="prose", lines=kept_lines))
+                sorted_heights = sorted(kept_word_heights)
+                median_h = sorted_heights[len(sorted_heights) // 2] if sorted_heights else 0.0
+                max_h = sorted_heights[-1] if sorted_heights else 0.0
+                page_units.append(
+                    _PageUnit(
+                        kind="prose",
+                        lines=kept_lines,
+                        median_word_height=median_h,
+                        max_word_height=max_h,
+                    )
+                )
         units_per_page.append(page_units)
 
     known_words = book_words | wordlist_words
@@ -267,18 +299,36 @@ def _process_pages(
     for offset, page_units in enumerate(units_per_page):
         pdf_index = start_index + offset
         out_path = out_dir / f"p{pdf_index:04d}.txt"
+        meta_path = out_dir / f"p{pdf_index:04d}.meta.json"
         if out_path.exists() and not force:
             summary.pages_skipped += 1
             continue
-        paragraphs = [
-            "\n".join(unit.lines)
-            if unit.kind == "table"
-            else dehyphenate_lines(unit.lines, known_words)
+        rendered = [
+            (
+                unit,
+                "\n".join(unit.lines)
+                if unit.kind == "table"
+                else dehyphenate_lines(unit.lines, known_words),
+            )
             for unit in page_units
         ]
-        paragraphs = [p for p in paragraphs if p]
+        # Keep the meta-sidecar entries aligned 1:1 with the paragraphs that
+        # actually make it into the .txt file -- a unit whose rendered text
+        # is empty (whitespace-only lines) is dropped from both together.
+        rendered = [(unit, text) for unit, text in rendered if text]
+        paragraphs = [text for _, text in rendered]
         content = "\n\n".join(paragraphs)
         out_path.write_text(content + "\n" if content else "")
+        meta = [
+            {
+                "kind": unit.kind,
+                "median_word_height": unit.median_word_height,
+                "max_word_height": unit.max_word_height,
+                "line_count": len(unit.lines),
+            }
+            for unit, _ in rendered
+        ]
+        meta_path.write_text(json.dumps(meta, indent=2) + "\n")
         summary.pages_written += 1
 
     summary.page_numbers_found = len(page_numbers)

@@ -236,6 +236,107 @@ def test_page_numbers_written_to_pages_json(
 
 
 # ---------------------------------------------------------------------------
+# `p{NNNN}.meta.json` sidecar (batch B3): one entry per output paragraph,
+# giving font-size-free segmentation the word-height/line-count stats the
+# .txt format itself carries none of.
+# ---------------------------------------------------------------------------
+
+
+def test_meta_json_sidecar_written_per_page(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path]
+) -> None:
+    pdf_dir, data_dir = book_dirs
+    (pdf_dir / "book.pdf").write_text("stub")
+    monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_combined_fixture()))
+
+    entry = _manifest_entry_for("book")
+    extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+
+    out_dir = data_dir / "text" / "book"
+    for i in range(1, 6):
+        meta_path = out_dir / f"p{i:04d}.meta.json"
+        assert meta_path.exists()
+        meta = json.loads(meta_path.read_text())
+        assert isinstance(meta, list)
+        assert len(meta) >= 1
+        for entry_meta in meta:
+            assert entry_meta["kind"] in ("prose", "table")
+            assert isinstance(entry_meta["median_word_height"], (int, float))
+            assert isinstance(entry_meta["max_word_height"], (int, float))
+            assert entry_meta["median_word_height"] > 0
+            assert entry_meta["max_word_height"] >= entry_meta["median_word_height"]
+            assert entry_meta["line_count"] >= 1
+
+    # Page one has two paragraphs (a two-line left block, a one-line right
+    # block); the meta list has one entry per paragraph, in order, matching
+    # the blank-line-separated units in the .txt file.
+    page1_meta = json.loads((out_dir / "p0001.meta.json").read_text())
+    page1_text = (out_dir / "p0001.txt").read_text()
+    assert len(page1_meta) == len(page1_text.strip("\n").split("\n\n"))
+    assert page1_meta[0]["line_count"] == 2  # left column: two physical lines
+    assert page1_meta[1]["line_count"] == 1  # right column: one physical line
+
+
+def test_meta_json_table_kind_and_line_count(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path]
+) -> None:
+    pdf_dir, data_dir = book_dirs
+    (pdf_dir / "book.pdf").write_text("stub")
+
+    # A 3-column, 3-row table -- each column its own block, detected as a
+    # multi-block table group by owlsperch.text.columns.
+    def _table_col(x_min: float, x_max: float, values: list[str]) -> str:
+        lines = []
+        y = 100.0
+        for value in values:
+            lines.append(f'<line xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{y + 12}">')
+            lines.append(_words_xml(x_min, y, y + 12, value))
+            lines.append("</line>")
+            y += 20.0
+        lines_xml = "".join(lines)
+        return f'<block xMin="{x_min}" yMin="100" xMax="{x_max}" yMax="{y}">{lines_xml}</block>'
+
+    table_blocks = (
+        _table_col(34, 100, ["Name", "Longsword", "Dagger"])
+        + _table_col(150, 200, ["Cost", "15 gp", "2 gp"])
+        + _table_col(250, 300, ["Dmg", "1d8", "1d4"])
+    )
+    page_xml = (
+        f'<page width="{_PAGE_WIDTH}" height="{_PAGE_HEIGHT}"><flow>{table_blocks}</flow></page>'
+    )
+    monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_doc_xml([page_xml])))
+
+    entry = _manifest_entry_for("book")
+    extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+
+    meta = json.loads((data_dir / "text" / "book" / "p0001.meta.json").read_text())
+    assert len(meta) == 1
+    assert meta[0]["kind"] == "table"
+    assert meta[0]["line_count"] == 3  # three rows
+    assert meta[0]["median_word_height"] > 0
+
+
+def test_meta_json_skipped_and_rewritten_with_force(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path]
+) -> None:
+    pdf_dir, data_dir = book_dirs
+    (pdf_dir / "book.pdf").write_text("stub")
+    monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_combined_fixture()))
+    entry = _manifest_entry_for("book")
+
+    extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+    meta_path = data_dir / "text" / "book" / "p0001.meta.json"
+    meta_path.write_text("SENTINEL")
+
+    extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+    assert meta_path.read_text() == "SENTINEL"
+
+    extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir, force=True)
+    assert meta_path.read_text() != "SENTINEL"
+    json.loads(meta_path.read_text())  # still valid JSON
+
+
+# ---------------------------------------------------------------------------
 # (e) idempotency / --force
 # ---------------------------------------------------------------------------
 
