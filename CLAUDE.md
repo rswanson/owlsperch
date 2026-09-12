@@ -32,7 +32,7 @@ uv run owlsperch queue next <book_id> --tier haiku --limit N [--kind spell] [--m
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
-uv run owlsperch queue reset <seg_id>...
+uv run owlsperch queue reset <seg_id>... [--hard]
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy pipeline

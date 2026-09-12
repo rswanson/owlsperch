@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
-from owlsperch.queue.common import now_iso
+from owlsperch.queue.common import has_attempt_at_tier, now_iso
 from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
 from owlsperch.segment.runner import Segment
 
@@ -88,13 +88,6 @@ class SelectedSegment:
         }
 
 
-def _has_attempt_at_tier(segment: Segment, tier: str) -> bool:
-    """Whether `segment` already carries an attempt recorded at `tier` --
-    such a segment waits for B8's tier escalation and is never (re)selected
-    for the same tier (see module docstring)."""
-    return any(isinstance(a, dict) and a.get("tier") == tier for a in segment.attempts)
-
-
 def select_and_mark(
     book_id: str,
     *,
@@ -142,7 +135,7 @@ def select_and_mark(
                 segment.status != "pending"
                 or segment.tier != tier
                 or segment.kind_hint != kind
-                or _has_attempt_at_tier(segment, tier)
+                or has_attempt_at_tier(segment, tier)
             ):
                 continue
 

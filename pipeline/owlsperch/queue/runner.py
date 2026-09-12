@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
-from owlsperch.queue.common import find_segment_path
+from owlsperch.queue.common import find_segment_path, resolve_record_path_under_book
 from owlsperch.queue.complete import QueueError, complete_segment
 from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
 from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT, LockTimeoutError, select_and_mark
@@ -152,13 +152,8 @@ def _delete_record_file_under_book(data_dir: Path, book_id: str, record_path: st
     anything outside a book's own records directory, path traversal
     included. Silently does nothing for a path that doesn't resolve there or
     doesn't exist on disk."""
-    records_root = (data_dir / "records" / book_id).resolve()
-    candidate = (data_dir / record_path).resolve()
-    try:
-        candidate.relative_to(records_root)
-    except ValueError:
-        return
-    if candidate.is_file():
+    candidate = resolve_record_path_under_book(data_dir, book_id, record_path)
+    if candidate is not None and candidate.is_file():
         candidate.unlink()
 
 

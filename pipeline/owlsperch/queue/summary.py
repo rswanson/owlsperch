@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from owlsperch.queue.common import has_attempt_at_tier
 from owlsperch.segment.runner import Segment
 
 
@@ -69,10 +70,7 @@ def compute_summary(book_id: str, *, data_dir: Path) -> QueueSummary:
     records_written = len(list(records_dir.glob("*/*.json"))) if records_dir.is_dir() else 0
 
     awaiting_escalation = sum(
-        1
-        for s in segments
-        if s.status == "pending"
-        and any(isinstance(a, dict) and a.get("tier") == s.tier for a in s.attempts)
+        1 for s in segments if s.status == "pending" and has_attempt_at_tier(s, s.tier)
     )
 
     return QueueSummary(

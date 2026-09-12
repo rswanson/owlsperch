@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
-from owlsperch.queue.common import find_segment_path, now_iso
+from owlsperch.queue.common import find_segment_path, now_iso, resolve_record_path_under_book
 from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.segment.runner import Segment
 
@@ -155,13 +155,8 @@ def _merge_notes(existing: list[str], new: list[str]) -> list[str]:
 def _is_valid_record_path(data_dir: Path, book_id: str, record_path: str) -> bool:
     """Whether `record_path` (as claimed by a subagent) resolves inside
     `records/<book_id>/` under `data_dir` and exists on disk."""
-    records_root = (data_dir / "records" / book_id).resolve()
-    candidate = (data_dir / record_path).resolve()
-    try:
-        candidate.relative_to(records_root)
-    except ValueError:
-        return False
-    return candidate.is_file()
+    candidate = resolve_record_path_under_book(data_dir, book_id, record_path)
+    return candidate is not None and candidate.is_file()
 
 
 def _overwrite_extraction(
