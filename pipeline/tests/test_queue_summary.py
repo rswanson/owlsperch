@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from owlsperch.queue.summary import compute_summary
 from owlsperch.segment.runner import Segment
 
 
 def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> None:
-    defaults: dict[str, object] = dict(
+    defaults: dict[str, Any] = dict(
         seg_id=seg_id,
         book_id=book_id,
         pages=[10],
@@ -26,7 +27,7 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: objec
         created_at="2026-01-01T00:00:00+00:00",
     )
     defaults.update(overrides)
-    segment = Segment(**defaults)  # type: ignore[arg-type]
+    segment = Segment(**defaults)
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
     (seg_dir / f"{seg_id}.json").write_text(segment.model_dump_json(indent=2))

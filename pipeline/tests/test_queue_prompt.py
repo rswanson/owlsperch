@@ -10,6 +10,7 @@ instructions.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from owlsperch.queue.prompt import prompt_path_for, render_prompt, render_prompt_to_file
 from owlsperch.segment.runner import Segment
@@ -20,7 +21,7 @@ def _repo_schemas_dir() -> Path:
 
 
 def _segment(**overrides: object) -> Segment:
-    defaults: dict[str, object] = dict(
+    defaults: dict[str, Any] = dict(
         seg_id="phb1-p0257-04",
         book_id="phb1",
         pages=[257],
@@ -38,7 +39,7 @@ def _segment(**overrides: object) -> Segment:
         created_at="2026-01-01T00:00:00+00:00",
     )
     defaults.update(overrides)
-    return Segment(**defaults)  # type: ignore[arg-type]
+    return Segment(**defaults)
 
 
 def _write_manifest(tmp_path: Path, *, short_title: str | None = "PHB") -> Path:
@@ -62,7 +63,9 @@ def test_prompt_contains_segment_text_verbatim(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -74,7 +77,9 @@ def test_prompt_contains_kind_hint_and_book_metadata(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -89,7 +94,9 @@ def test_prompt_renders_schema_enum_values_from_json(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -121,7 +128,9 @@ def test_prompt_contains_exact_response_contract(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -136,7 +145,9 @@ def test_prompt_contains_id_slug_and_citation_rules(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -160,7 +171,9 @@ entries:
     )
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -174,7 +187,9 @@ def test_prompt_contains_extraction_block_and_schema_version_instructions(
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -190,7 +205,9 @@ def test_prompt_instructs_faithful_markdown_and_no_invented_fields(tmp_path: Pat
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 
@@ -225,7 +242,9 @@ def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -
     manifest_path = _write_manifest(tmp_path)
 
     text = render_prompt(
-        segment, data_dir=tmp_path / "data", manifest_path=manifest_path,
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
         schemas_dir=_repo_schemas_dir(),
     )
 

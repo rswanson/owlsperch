@@ -94,9 +94,22 @@ class Segment(BaseModel):
     #: "validated" on a passing record, "no_content" from the extract skill
     #: (B5).
     outcome: str | None = None
+    #: Set alongside `outcome` for outcomes that carry a reason (currently
+    #: just "no_content", set by `owlsperch queue complete`, batch B5).
+    outcome_reason: str | None = None
     #: Paths (relative to `$OWLSPERCH_DATA`) of every record validated back
     #: to this segment. Set by `owlsperch validate` on PASS.
     records: list[str] = []
+    #: Paths (relative to `$OWLSPERCH_DATA`) a subagent claimed to have
+    #: written, recorded by `owlsperch queue complete` (batch B5) pending
+    #: `owlsperch validate`'s conformance check -- PASS moves a path from
+    #: here to `records`; FAIL just drops it from here.
+    pending_records: list[str] = []
+    #: ISO timestamp set by `owlsperch queue next` when a segment is marked
+    #: `in_progress` (batch B5); cleared back to `None` by `owlsperch queue
+    #: complete` and `owlsperch queue reset`. Stale in-progress reset (>60
+    #: min, spec 4.5) arrives in B8.
+    in_progress_since: str | None = None
 
 
 @dataclass

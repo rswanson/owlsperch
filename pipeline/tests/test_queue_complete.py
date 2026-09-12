@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from owlsperch.queue.complete import QueueError, complete_segment
 from owlsperch.segment.runner import Segment
 
 
 def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> Path:
-    defaults: dict[str, object] = dict(
+    defaults: dict[str, Any] = dict(
         seg_id=seg_id,
         book_id=book_id,
         pages=[10],
@@ -27,7 +28,7 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: objec
         in_progress_since="2026-01-01T00:05:00+00:00",
     )
     defaults.update(overrides)
-    segment = Segment(**defaults)  # type: ignore[arg-type]
+    segment = Segment(**defaults)
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
     path = seg_dir / f"{seg_id}.json"
@@ -35,9 +36,9 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: objec
     return path
 
 
-def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, object]:
+def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
     path = data_dir / "segments" / book_id / f"{seg_id}.json"
-    raw: dict[str, object] = json.loads(path.read_text())
+    raw: dict[str, Any] = json.loads(path.read_text())
     return raw
 
 
@@ -136,7 +137,7 @@ def test_invalid_json_is_malformed_result(tmp_path: Path) -> None:
     assert segment["status"] == "pending"
     assert segment["tier"] == "haiku"
     assert len(segment["attempts"]) == 1
-    assert "malformed_result" in segment["attempts"][0]["errors"][0]  # type: ignore[index]
+    assert "malformed_result" in segment["attempts"][0]["errors"][0]
 
 
 def test_missing_required_keys_is_malformed_result(tmp_path: Path) -> None:
@@ -189,7 +190,7 @@ def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error
     complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
 
     segment = _read_segment(data_dir, "book", "book-p0010-01")
-    assert len(segment["attempts"]) == 1  # type: ignore[arg-type]
+    assert len(segment["attempts"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +203,7 @@ def test_finds_segment_for_hyphenated_book_id(tmp_path: Path) -> None:
     _write_segment(data_dir, "dmg1-building-a-city-we", "dmg1-building-a-city-we-p0001-01")
     result = json.dumps({"seg_id": "x", "records": [], "no_content": {"reason": "art"}})
 
-    outcome = complete_segment(
-        "dmg1-building-a-city-we-p0001-01", result, data_dir=data_dir
-    )
+    outcome = complete_segment("dmg1-building-a-city-we-p0001-01", result, data_dir=data_dir)
 
     assert outcome.outcome == "no_content"
 

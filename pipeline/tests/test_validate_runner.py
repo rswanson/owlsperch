@@ -186,9 +186,7 @@ def test_pass_write_back_is_idempotent_no_duplicate_record_paths(tmp_path: Path)
 def test_pass_moves_path_from_pending_records_to_records(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     record_rel = "records/book/spell/fireball.json"
-    _write_segment(
-        data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel]
-    )
+    _write_segment(data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel])
     _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
 
     exit_code, _ = _run(data_dir)
@@ -202,9 +200,7 @@ def test_pass_moves_path_from_pending_records_to_records(tmp_path: Path) -> None
 def test_fail_removes_path_from_pending_records_without_promoting(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     record_rel = "records/book/spell/fireball.json"
-    _write_segment(
-        data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel]
-    )
+    _write_segment(data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel])
     record = _valid_spell_record()
     record["fields"]["levels"] = []
     _write_record(data_dir, "book", "spell", "fireball", record)

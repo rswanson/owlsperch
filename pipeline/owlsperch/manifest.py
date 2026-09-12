@@ -57,6 +57,10 @@ class ManifestEntry(BaseModel):
 
     book_id: str
     title: str
+    #: Short form used to build a record's `citation` (e.g. "PHB p. 231"),
+    #: per spec 4.6. Falls back to `book_id.upper()` when unset (batch B5,
+    #: `owlsperch.queue.prompt`).
+    short_title: str | None = None
     file: str
     edition: Edition
     kind: Kind

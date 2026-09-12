@@ -29,6 +29,12 @@ list. FAIL appends `{tier, timestamp, errors}` to the segment's `attempts`
 and leaves `status` as `"pending"`. Both are idempotent: rerunning on an
 unchanged record does not add a duplicate record path or a duplicate
 identical attempt.
+
+Batch B5's extract skill (`owlsperch queue complete`) records a subagent's
+claimed record paths under the segment's `pending_records`, not `records`,
+until they're proven to conform: PASS here moves a path from
+`pending_records` into `records` (on top of the above); FAIL just drops it
+from `pending_records` without ever adding it to `records`.
 """
 
 from __future__ import annotations
@@ -134,11 +140,23 @@ def _write_back_pass(data_dir: Path, book_id: str, segment_id: str, record_rel_p
     segment_model.outcome = "validated"
     if record_rel_path not in segment_model.records:
         segment_model.records = [*segment_model.records, record_rel_path]
+    # B5: a record claimed via `owlsperch queue complete` lives in
+    # pending_records until validated -- promote it out on PASS.
+    if record_rel_path in segment_model.pending_records:
+        segment_model.pending_records = [
+            p for p in segment_model.pending_records if p != record_rel_path
+        ]
     atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
 
 
 def _write_back_fail(
-    data_dir: Path, book_id: str, segment_id: str, *, tier: str, errors: list[str]
+    data_dir: Path,
+    book_id: str,
+    segment_id: str,
+    *,
+    tier: str,
+    errors: list[str],
+    record_rel_path: str | None = None,
 ) -> None:
     path = segment_path(data_dir, book_id, segment_id)
     segment_model = Segment.model_validate_json(path.read_text())
@@ -148,6 +166,12 @@ def _write_back_fail(
     if not already_recorded:
         attempts = [*attempts, {"tier": tier, "timestamp": _now_iso(), "errors": errors}]
     segment_model.attempts = attempts
+    # B5: a record that failed validation never becomes a real record -- drop
+    # it from pending_records instead of leaving it stuck there forever.
+    if record_rel_path is not None and record_rel_path in segment_model.pending_records:
+        segment_model.pending_records = [
+            p for p in segment_model.pending_records if p != record_rel_path
+        ]
     atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
 
 
@@ -200,7 +224,9 @@ def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchema
         else:
             tier_raw = extraction.get("tier")
             tier = tier_raw if isinstance(tier_raw, str) else str(segment.get("tier", "haiku"))
-            _write_back_fail(data_dir, book_id, segment_id, tier=tier, errors=errors)
+            _write_back_fail(
+                data_dir, book_id, segment_id, tier=tier, errors=errors, record_rel_path=rel_path
+            )
 
     return RecordResult(
         path=rel_path,

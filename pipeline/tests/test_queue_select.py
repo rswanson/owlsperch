@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from owlsperch.queue.select import select_and_mark
 from owlsperch.segment.runner import Segment
@@ -29,11 +30,12 @@ def _segment(
     tier: str = "haiku",
 ) -> Segment:
     pages = pages if pages is not None else [10]
+    printed_pages: list[int | None] = list(pages)
     return Segment(
         seg_id=seg_id,
         book_id=book_id,
         pages=pages,
-        printed_pages=pages,
+        printed_pages=printed_pages,
         kind_hint=kind_hint,  # type: ignore[arg-type]
         heading="Fireball",
         text="Fireball\n\nEvocation Level: Sor/Wiz 3. Deals fire damage.",
@@ -66,9 +68,9 @@ entries:
     return manifest_path
 
 
-def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, object]:
+def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
     path = data_dir / "segments" / book_id / f"{seg_id}.json"
-    raw: dict[str, object] = json.loads(path.read_text())
+    raw: dict[str, Any] = json.loads(path.read_text())
     return raw
 
 

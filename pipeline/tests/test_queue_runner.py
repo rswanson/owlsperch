@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from owlsperch.queue.runner import (
     run_queue_complete,
@@ -44,7 +45,7 @@ entries:
 
 
 def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> None:
-    defaults: dict[str, object] = dict(
+    defaults: dict[str, Any] = dict(
         seg_id=seg_id,
         book_id=book_id,
         pages=[10],
@@ -57,19 +58,19 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: objec
         created_at="2026-01-01T00:00:00+00:00",
     )
     defaults.update(overrides)
-    segment = Segment(**defaults)  # type: ignore[arg-type]
+    segment = Segment(**defaults)
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
     (seg_dir / f"{seg_id}.json").write_text(segment.model_dump_json(indent=2))
 
 
-def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, object]:
+def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
     path = data_dir / "segments" / book_id / f"{seg_id}.json"
-    raw: dict[str, object] = json.loads(path.read_text())
+    raw: dict[str, Any] = json.loads(path.read_text())
     return raw
 
 
-def _valid_spell_record(*, seg_id: str) -> dict[str, object]:
+def _valid_spell_record(*, seg_id: str) -> dict[str, Any]:
     return {
         "id": "spell:book:fireball",
         "type": "spell",
@@ -209,23 +210,21 @@ def test_run_queue_complete_reads_result_from_file(tmp_path: Path) -> None:
     )
 
     out = io.StringIO()
-    exit_code = run_queue_complete(
-        "book-p0010-01", str(result_path), data_dir=data_dir, out=out
-    )
+    exit_code = run_queue_complete("book-p0010-01", str(result_path), data_dir=data_dir, out=out)
 
     assert exit_code == 0
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["pending_records"] == ["records/book/spell/fireball.json"]
 
 
-def test_run_queue_complete_reads_result_from_stdin(
-    tmp_path: Path, monkeypatch: object
-) -> None:
+def test_run_queue_complete_reads_result_from_stdin(tmp_path: Path, monkeypatch: object) -> None:
     import sys as sys_module
 
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", status="in_progress")
-    payload = json.dumps({"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}})
+    payload = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": {"reason": "art"}}
+    )
     sys_module.stdin = io.StringIO(payload)
 
     exit_code = run_queue_complete("book-p0010-01", "-", data_dir=data_dir, out=io.StringIO())
