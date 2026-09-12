@@ -1,8 +1,9 @@
 """The `owlsperch` command-line entry point.
 
-`manifest check`, `text`, and `segment` are implemented; the other
-subcommands listed in the spec (validate, build-db, check-completeness,
-coverage, schema review, sample) are future-batch stubs.
+`manifest check`, `text`, `segment`, `validate`, `queue`, `schema show`,
+`build-db`, and `serve` are implemented; the other subcommands listed in the
+spec (check-completeness, coverage, schema review, sample) are future-batch
+stubs.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from owlsperch.build_db.runner import run_build_db
 from owlsperch.manifest import ManifestError, run_check
 from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.queue.runner import (
@@ -22,6 +24,7 @@ from owlsperch.queue.runner import (
 from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT
 from owlsperch.schemas import SchemaError, load_registry, render_schema_show
 from owlsperch.segment.runner import run_segment
+from owlsperch.serve import DEFAULT_HOST, DEFAULT_PORT, run_serve
 from owlsperch.text.runner import run_text
 from owlsperch.validate.runner import run_validate
 
@@ -188,6 +191,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     schema_show_parser.add_argument("type", help="Registered type name, e.g. 'spell'.")
 
+    subparsers.add_parser(
+        "build-db",
+        help="Build $OWLSPERCH_DATA/db/owlsperch.sqlite from validated records.",
+    )
+
+    serve_parser = subparsers.add_parser(
+        "serve", help="Start the owlsperch_server FastAPI app (uvicorn)."
+    )
+    serve_parser.add_argument(
+        "--host", default=DEFAULT_HOST, help=f"Host to bind (default: {DEFAULT_HOST})."
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
+    )
+
     return parser
 
 
@@ -270,6 +288,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "schema":
         args.schema_parser.print_help()
         return 0
+
+    if args.command == "build-db":
+        return run_build_db()
+
+    if args.command == "serve":
+        return run_serve(host=args.host, port=args.port)
 
     parser.print_help()
     return 0 if args.command is None else 1

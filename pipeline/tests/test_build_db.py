@@ -145,7 +145,9 @@ def test_build_db_creates_tables_and_loads_valid_record(tmp_path: Path) -> None:
     _write_segment(data_dir, "book", "book-p0010-01", [10])
     _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
 
     assert result.db_path.is_file()
     assert result.counts_by_type == {"spell": 1}
@@ -203,7 +205,9 @@ def test_build_db_flattens_scalar_array_fields(tmp_path: Path) -> None:
         _valid_spell_record(descriptors=["Fire", "Evil"]),
     )
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
     conn = _connect(result.db_path)
     try:
         rows = conn.execute(
@@ -226,7 +230,9 @@ def test_build_db_flattens_array_of_object_levels_field(tmp_path: Path) -> None:
     _write_segment(data_dir, "book", "book-p0010-01", [10])
     _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
     conn = _connect(result.db_path)
     try:
         rows = conn.execute(
@@ -260,7 +266,9 @@ def test_build_db_skips_invalid_records(tmp_path: Path) -> None:
     _write_record(data_dir, "book", "spell", "fireball", valid)
     _write_record(data_dir, "book", "spell", "broken-spell", invalid)
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
 
     assert result.counts_by_type == {"spell": 1}
     assert result.skipped_invalid == 1
@@ -279,8 +287,12 @@ def test_build_db_is_idempotent(tmp_path: Path) -> None:
     _write_segment(data_dir, "book", "book-p0010-01", [10])
     _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
 
-    first = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
-    second = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    first = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    second = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
 
     assert first.counts_by_type == second.counts_by_type == {"spell": 1}
     assert first.db_path == second.db_path
@@ -297,11 +309,11 @@ def test_build_db_names_fts_prefix_and_alias_match(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
     _write_segment(data_dir, "book", "book-p0010-01", [10])
-    _write_record(
-        data_dir, "book", "spell", "fireball", _valid_spell_record(aliases=["Fyre Ball"])
-    )
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record(aliases=["Fyre Ball"]))
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
     conn = _connect(result.db_path)
     try:
         name_rows = conn.execute(

@@ -46,9 +46,7 @@ def test_search_type_filter(built_data_dir: Path) -> None:
     hits = [h for g in response.json()["groups"] for h in g["hits"]]
     assert len(hits) == 3
 
-    none_response = _client(built_data_dir).get(
-        "/search", params={"q": "test", "types": "monster"}
-    )
+    none_response = _client(built_data_dir).get("/search", params={"q": "test", "types": "monster"})
     assert none_response.json()["groups"] == []
 
 

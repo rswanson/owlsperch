@@ -175,17 +175,25 @@ def _write_back_fail(
     atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
 
 
-def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchemas) -> RecordResult:
-    rel_path = path.relative_to(data_dir).as_posix()
-    type_dir = path.parent.name
+def validate_record(
+    record: dict[str, Any],
+    *,
+    type_dir: str,
+    compiled: CompiledSchemas,
+    segment: dict[str, Any] | None,
+) -> list[str]:
+    """Pure validation of one already-loaded record: JSON Schema conformance
+    (envelope + type fields), envelope/type-specific consistency checks, and
+    the page-within-segment check -- everything `validate_record_file` does
+    *except* loading the record/segment from disk and writing back to the
+    segment. No I/O, no side effects: reused by `owlsperch build-db` (batch
+    B6), which must decide PASS/FAIL for every record without mutating
+    segment files as a side effect of a read-only build.
 
-    try:
-        record = load_json(path)
-    except LoadError as exc:
-        return RecordResult(
-            path=rel_path, status="FAIL", errors=[str(exc)], segment_id=None, type=None
-        )
-
+    `segment` is the already-resolved originating segment (or `None` if it
+    couldn't be found/resolved), matching what `check_pages_within_segment`
+    expects.
+    """
     errors = _schema_errors(compiled.envelope_validator(), record, prefix="envelope")
 
     registry_version: int | None = None
@@ -205,6 +213,21 @@ def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchema
     if field_check is not None:
         errors.extend(field_check(record))
 
+    errors.extend(check_pages_within_segment(record, segment))
+    return errors
+
+
+def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchemas) -> RecordResult:
+    rel_path = path.relative_to(data_dir).as_posix()
+    type_dir = path.parent.name
+
+    try:
+        record = load_json(path)
+    except LoadError as exc:
+        return RecordResult(
+            path=rel_path, status="FAIL", errors=[str(exc)], segment_id=None, type=None
+        )
+
     book_id = record.get("book_id") if isinstance(record.get("book_id"), str) else None
     extraction_raw = record.get("extraction")
     extraction: dict[str, Any] = extraction_raw if isinstance(extraction_raw, dict) else {}
@@ -214,8 +237,8 @@ def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchema
     segment: dict[str, Any] | None = None
     if book_id is not None and segment_id is not None:
         segment = load_segment(data_dir, book_id, segment_id)
-    errors.extend(check_pages_within_segment(record, segment))
 
+    errors = validate_record(record, type_dir=type_dir, compiled=compiled, segment=segment)
     status = "FAIL" if errors else "PASS"
 
     if book_id is not None and segment_id is not None and segment is not None:
