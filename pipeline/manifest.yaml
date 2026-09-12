@@ -1,0 +1,2691 @@
+# owlsperch curated book manifest
+#
+# One entry per file in $OWLSPERCH_PDFS (default ~/D_D). Generated for batch B1 -- see
+# docs/specs/2026-09-12-dnd-reference-site-spec.md sections 'Scope boundaries' and 4.3
+# for the field definitions and in-scope rule. Judgment calls are marked with a plain
+# `#` comment; genuinely uncertain calls are marked `# REVIEW:` for the user to check.
+#
+# NOTE: DnD3.5Index-* entries are unofficial fan-compiled checklists (see spec: used only
+# as completeness checklists, never as sources); their `published` dates are unknown and
+# approximated.
+
+entries:
+  # Personal Aphelion homebrew project files, out of scope per spec scope boundaries.
+  - book_id: aphelion-1
+    title: "Aphelion (1)"
+    file: "Aphelion (1).pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file (Aphelion project), not D&D reference material"
+
+  - book_id: aphelion-gatekeeper-historia
+    title: "Aphelion Gatekeeper Historia"
+    file: "Aphelion_Gatekeeper_Historia.odt"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file (Aphelion project), not D&D reference material"
+
+  - book_id: aphelion-interlude
+    title: "Aphelion Interlude"
+    file: "Aphelion_Interlude.docx"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file (Aphelion project), not D&D reference material"
+
+  - book_id: aphelion-odt
+    title: "Aphelion"
+    file: "Aphelion.odt"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file (Aphelion project), not D&D reference material"
+
+  - book_id: aphelion-pdf
+    title: "Aphelion"
+    file: "Aphelion.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file (Aphelion project), not D&D reference material"
+
+  # REVIEW: page-1 text shows an unofficial homebrew list of fan 'schools'/organizations with no publisher
+  # REVIEW: credits; treated as non-canonical fan content.
+  - book_id: arcane-eagles-affiliations
+    title: "The Arcane Eagles (fan organization writeup)"
+    file: "Arcane Eagles Affiliations.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "homebrew fan-made organization writeup, not an official/published D&D source"
+
+  - book_id: arms-and-equipment-guide
+    title: "Arms and Equipment Guide"
+    file: "Arms and Equipment Guide.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-02"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: This is a WotC-website 'Dragonshards' Eberron column by Keith Baker, not tied to one specific
+  # REVIEW: sourcebook; attributed here to Eberron Campaign Setting as the closest applies_to target. Please
+  # REVIEW: confirm/redirect if a more specific book is intended.
+  - book_id: blades-of-the-quori
+    title: "Blades of the Quori (Dragonshards web article)"
+    file: "Blades Of The Quori.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2005-01"
+    applies_to: eberron-campaign-setting
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: book-of-challenges
+    title: "Book of Challenges"
+    file: "Book of Challenges.pdf"
+    edition: "3.0"
+    kind: guide
+    published: "2003-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: book-of-exalted-deeds-errata
+    title: "Book of Exalted Deeds Errata"
+    file: "Book of Exalted Deeds - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-02"
+    applies_to: book-of-exalted-deeds
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: book-of-exalted-deeds
+    title: "Book of Exalted Deeds"
+    file: "Book of Exalted Deeds.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: book-of-vile-darkness-we
+    title: "Book of Vile Darkness Web Enhancement (Yet More Archfiends)"
+    file: "Book of Vile Darkness - Yet More Archfiends.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2002-06"
+    applies_to: book-of-vile-darkness
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: book-of-vile-darkness
+    title: "Book of Vile Darkness"
+    file: "Book of Vile Darkness.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2002-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Duplicate personal file; both copies excluded regardless.
+  - book_id: borderlands-1
+    title: "Borderlands D...D (1)"
+    file: "Borderlands_D...._D (1).pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file, not D&D reference material"
+
+  - book_id: borderlands
+    title: "Borderlands D...D"
+    file: "Borderlands_D...._D.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file, not D&D reference material"
+
+  - book_id: call-of-cthulhu-investigator-handbook
+    title: "Call of Cthulhu Investigator Handbook: A Core Game Book for Players"
+    file: "Call Of Cthulhu Investigator Handbook A Core Game Book for Players - PDF Room.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "non-D&D (Call of Cthulhu rulebook)"
+
+  - book_id: champions-of-ruin
+    title: "Champions of Ruin"
+    file: "Champions of Ruin.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: champions-of-valor-we
+    title: "Champions of Valor Web Enhancement"
+    file: "Champions of Valor - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2005-02"
+    applies_to: champions-of-valor
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: champions-of-valor
+    title: "Champions of Valor"
+    file: "Champions of Valor.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: cityscape
+    title: "Cityscape"
+    file: "Cityscape - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-adventurer-errata
+    title: "Complete Adventurer Errata"
+    file: "Complete Adventurer - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2005-06"
+    applies_to: complete-adventurer
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-adventurer
+    title: "Complete Adventurer"
+    file: "Complete Adventurer.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-arcane
+    title: "Complete Arcane"
+    file: "Complete Arcane.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-champion
+    title: "Complete Champion"
+    file: "Complete Champion - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-divine-errata
+    title: "Complete Divine Errata"
+    file: "Complete Divine - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-04"
+    applies_to: complete-divine
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-divine
+    title: "Complete Divine"
+    file: "Complete Divine.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-mage-errata
+    title: "Complete Mage Errata"
+    file: "Complete Mage - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2006-12"
+    applies_to: complete-mage
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-mage
+    title: "Complete Mage"
+    file: "Complete Mage.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-psionic
+    title: "Complete Psionic"
+    file: "Complete Psionic - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-09"
+    applies_to: null
+    scanned: false
+    preferred_over: complete-psionic-scan
+    exclude_reason: null
+
+  - book_id: complete-psionic-scan
+    title: "Complete Psionic (scan duplicate)"
+    file: "Complete Psionic.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-09"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-scoundrel-errata
+    title: "Complete Scoundrel Errata"
+    file: "Complete Scoundrel - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2007-06"
+    applies_to: complete-scoundrel
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-scoundrel
+    title: "Complete Scoundrel"
+    file: "Complete Scoundrel.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: complete-warrior
+    title: "Complete Warrior"
+    file: "Complete Warrior - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-11"
+    applies_to: null
+    scanned: false
+    preferred_over: complete-warrior-scan
+    exclude_reason: null
+
+  - book_id: complete-warrior-scan
+    title: "Complete Warrior (scan duplicate)"
+    file: "Complete warrior.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-11"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: creating-the-heroes
+    title: "Creating The Heroes (Dragon Magazine #316 excerpt)"
+    file: "Creating The Heroes (From Dragon Magazine #316).pdf"
+    edition: "3.5"
+    kind: magazine
+    published: "2004-02"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: anauroch-empire-of-shade
+    title: "Forgotten Realms: Anauroch, The Empire of Shade (adventure)"
+    file: "D_D 3.5 - Adventures - Forgotten Realms Anauroch The empire of shade.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "adventure module, out of scope per spec"
+
+  - book_id: defenders-of-the-faith-we
+    title: "Defenders of the Faith Web Enhancement"
+    file: "Defenders of the Faith - WE.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2001-01"
+    applies_to: defenders-of-the-faith
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: defenders-of-the-faith
+    title: "Defenders of the Faith"
+    file: "Defenders of the Faith.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2000-12"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Scan duplicate of Deities and Demigods.pdf; text-layer copy is the source per spec.
+  - book_id: deities-and-demigods-scan
+    title: "Deities & Demigods (scan duplicate)"
+    file: "Deities _ Demigods.pdf"
+    edition: "3.0"
+    kind: rulebook
+    published: "2002-10"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: deities-and-demigods-update
+    title: "Deities and Demigods 3.5 Update"
+    file: "Deities and Demigods - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: deities-and-demigods
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: deities-and-demigods
+    title: "Deities and Demigods"
+    file: "Deities and Demigods.pdf"
+    edition: "3.0"
+    kind: rulebook
+    published: "2002-10"
+    applies_to: null
+    scanned: false
+    preferred_over: deities-and-demigods-scan
+    exclude_reason: null
+
+  - book_id: index-classes-base
+    title: "DnD 3.5 Index: Base Classes Index"
+    file: "DnD3.5Index-Classes-Base.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-classes-prestige
+    title: "DnD 3.5 Index: Prestige Classes Index"
+    file: "DnD3.5Index-Classes-Prestige.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-creatures
+    title: "DnD 3.5 Index: Creatures Index"
+    file: "DnD3.5Index-Creatures.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-deities
+    title: "DnD 3.5 Index: Deities Index"
+    file: "DnD3.5Index-Deities.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-equipment
+    title: "DnD 3.5 Index: Equipment Index"
+    file: "DnD3.5Index-Equipment.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-feats-1
+    title: "DnD 3.5 Index: Feats Index"
+    file: "DnD3.5Index-Feats-1.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Byte-identical copy of DnD3.5Index-Feats-1.pdf (same md5); kept as a separate
+  # entry since it's a distinct file in the PDF directory.
+  - book_id: index-feats-2
+    title: "DnD 3.5 Index: Feats Index"
+    file: "DnD3.5Index-Feats-2.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-feats
+    title: "DnD 3.5 Index: Feats Index"
+    file: "DnD3.5Index-Feats.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-infusions-artificer
+    title: "DnD 3.5 Index: Artificer Infusions Index"
+    file: "DnD3.5Index-Infusions-Artificer.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-invocations-warlock
+    title: "DnD 3.5 Index: Warlock Invocations Index"
+    file: "DnD3.5Index-Invocations-Warlock.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-bycost
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Cost)"
+    file: "DnD3.5Index-MagicItems-Personal-byCost.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-bycreatorlvl
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Creator Level)"
+    file: "DnD3.5Index-MagicItems-Personal-byCreatorLvl.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-bylocation
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Location)"
+    file: "DnD3.5Index-MagicItems-Personal-byLocation.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-byname
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Name)"
+    file: "DnD3.5Index-MagicItems-Personal-byName.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-bysource
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Source)"
+    file: "DnD3.5Index-MagicItems-Personal-bySource.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-personal-bytype
+    title: "DnD 3.5 Index: Personal Magic Items Index (by Type)"
+    file: "DnD3.5Index-MagicItems-Personal-byType.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-stavesrodsmisc
+    title: "DnD 3.5 Index: Staves, Rods & Misc. Magic Items Index"
+    file: "DnD3.5Index-MagicItems-StavesRodsMisc.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-magicitems-weaponsarmor
+    title: "DnD 3.5 Index: Weapons & Armor Magic Items Index"
+    file: "DnD3.5Index-MagicItems-WeaponsArmor.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-byclassfeature
+    title: "DnD 3.5 Index: Monsters Index (by Class Feature)"
+    file: "DnD3.5Index-Monsters-byClassFeature.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-bycr
+    title: "DnD 3.5 Index: Monsters Index (by CR)"
+    file: "DnD3.5Index-Monsters-byCR.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-byenvironment
+    title: "DnD 3.5 Index: Monsters Index (by Environment)"
+    file: "DnD3.5Index-Monsters-byEnvironment.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-byhd
+    title: "DnD 3.5 Index: Monsters Index (by HD)"
+    file: "DnD3.5Index-Monsters-byHD.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-byname
+    title: "DnD 3.5 Index: Monsters Index (by Name)"
+    file: "DnD3.5Index-Monsters-byName.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-bysize
+    title: "DnD 3.5 Index: Monsters Index (by Size)"
+    file: "DnD3.5Index-Monsters-bySize.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-monsters-bysubtype
+    title: "DnD 3.5 Index: Monsters Index (by Subtype)"
+    file: "DnD3.5Index-Monsters-bySubtype.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-races
+    title: "DnD 3.5 Index: Races Index"
+    file: "DnD3.5Index-Races.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-skills-actions
+    title: "DnD 3.5 Index: Skills & Actions Index"
+    file: "DnD3.5Index-Skills_Actions.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spell-summaries-byclass
+    title: "DnD 3.5 Index: Spell Summaries Index (by Class)"
+    file: "DnD3.5Index-Spell-Summaries-byClass.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spell-summaries-byname
+    title: "DnD 3.5 Index: Spell Summaries Index (by Name)"
+    file: "DnD3.5Index-Spell-Summaries-byName.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-assassin
+    title: "DnD 3.5 Index: Assassin Spells Index"
+    file: "DnD3.5Index-Spells-Assassin.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-bard
+    title: "DnD 3.5 Index: Bard Spells Index"
+    file: "DnD3.5Index-Spells-Bard.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-cleric
+    title: "DnD 3.5 Index: Cleric Spells Index"
+    file: "DnD3.5Index-Spells-Cleric.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-clericaldomains
+    title: "DnD 3.5 Index: Clerical Domains Spells Index"
+    file: "DnD3.5Index-Spells-ClericalDomains.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-druid
+    title: "DnD 3.5 Index: Druid Spells Index"
+    file: "DnD3.5Index-Spells-Druid.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-paladin
+    title: "DnD 3.5 Index: Paladin Spells Index"
+    file: "DnD3.5Index-Spells-Paladin.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-ranger
+    title: "DnD 3.5 Index: Ranger Spells Index"
+    file: "DnD3.5Index-Spells-Ranger.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-spells-sorcererwizard
+    title: "DnD 3.5 Index: Sorcerer/Wizard Spells Index"
+    file: "DnD3.5Index-Spells-SorcererWizard.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: index-templates
+    title: "DnD 3.5 Index: Templates Index"
+    file: "DnD3.5Index-Templates.pdf"
+    edition: "3.5"
+    kind: index
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: draconomicon
+    title: "Draconomicon"
+    file: "Draconomicon.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragon-magazine-compendium
+    title: "Dragon Magazine Compendium"
+    file: "Dragon Magazine Compendium.pdf"
+    edition: "3.5"
+    kind: magazine
+    published: "2003-12"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragon-magic
+    title: "Dragon Magic"
+    file: "Dragon Magic - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-11"
+    applies_to: null
+    scanned: false
+    preferred_over: dragon-magic-scan
+    exclude_reason: null
+
+  - book_id: dragon-magic-scan
+    title: "Dragon Magic (scan duplicate)"
+    file: "Dragon Magic.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-11"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: Published Nov 2003 (after the July 2003 3.5 launch); classified as a 3.5 setting book on that
+  # REVIEW: basis. Please confirm it uses 3.5 rules rather than a 3.0/3.5 hybrid.
+  - book_id: dragonlance-campaign-setting
+    title: "Dragonlance Campaign Setting"
+    file: "DragonLance Campaign Setting.pdf"
+    edition: "3.5"
+    kind: setting
+    published: "2003-11"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragonmarked
+    title: "Dragonmarked"
+    file: "Dragonmarked - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2008-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragonmarks-dragonshards-dynasties
+    title: "Dragonmarks, Dragonshards & Dynasties of Power (Dragon Magazine #320 excerpt)"
+    file: "Dragonmarks, Dragonshards _ Dynasties Of Power (From Dragon Magazine #320).pdf"
+    edition: "3.5"
+    kind: magazine
+    published: "2004-06"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragons-of-eberron
+    title: "Dragons of Eberron"
+    file: "Dragons of Eberron.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: looks like a fan-made spreadsheet/checklist of named dragons rather than official WotC book
+  # REVIEW: content or a DnD3.5Index-prefixed checklist; excluded rather than treated as an in-scope source.
+  # REVIEW: Please confirm.
+  - book_id: dragons-of-faerun-list
+    title: "Dragons of Faerûn - List of Dragons (fan compilation)"
+    file: "Dragons of Faerûn - List of Dragons.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "unofficial fan-compiled table of named FR dragons, not official book content"
+
+  - book_id: dragons-of-faerun-we
+    title: "Dragons of Faerûn Web Enhancement"
+    file: "Dragons of Faerûn - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2006-03"
+    applies_to: dragons-of-faerun
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dragons-of-faerun
+    title: "Dragons of Faerûn"
+    file: "Dragons of Faerûn.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-02"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: drow-of-the-underdark
+    title: "Drow of the Underdark"
+    file: "Drow of the Underdark.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dungeon-magazine-001
+    title: "Dungeon Magazine #001"
+    file: "Dungeon Magazine #001.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "single magazine issue, pure adventure content"
+
+  - book_id: dmg1-building-a-city-we
+    title: "Dungeon Master's Guide Web Enhancement (Building a City)"
+    file: "Dungeon Master_s Guide - Building a City.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2003-08"
+    applies_to: dmg1
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Byte-identical duplicate (same page/char counts) of Dungeon Master's Guide I.pdf, just a
+  # differently-encoded apostrophe in the filename.
+  - book_id: dmg1-dup
+    title: "Dungeon Master's Guide I (duplicate copy)"
+    file: "Dungeon Master_s Guide I.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dmg2
+    title: "Dungeon Master's Guide II"
+    file: "Dungeon Master_s Guide II.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: dmg1
+    title: "Dungeon Master's Guide (Core Rulebook II)"
+    file: "Dungeon Master's Guide I.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: dmg1-dup
+    exclude_reason: null
+
+  - book_id: dnd-for-dummies
+    title: "Dungeons & Dragons For Dummies"
+    file: "Dungeons _ Dragons For Dummies.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "non-rules trivia/intro book, not a D&D rules source"
+
+  - book_id: dungeonscape
+    title: "Dungeonscape"
+    file: "Dungeonscape.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Only 92 characters extracted from pages 5-6 across 326 pages; effectively a scan (negligible OCR
+  # noise), treated as scanned.
+  - book_id: eberron-campaign-setting
+    title: "Eberron Campaign Setting"
+    file: "Eberron Campaign Setting.pdf"
+    edition: "3.5"
+    kind: setting
+    published: "2004-06"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: elder-evils
+    title: "Elder Evils"
+    file: "Elder Evils.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: encounter-the-warforged
+    title: "Encounter The Warforged (Dragon Magazine #318 excerpt)"
+    file: "Encounter The Warforged (From Dragon Magazine #318).pdf"
+    edition: "3.5"
+    kind: magazine
+    published: "2004-04"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: Could not confirm exact publication date/content from memory with high confidence; classified
+  # REVIEW: 3.0 per the batch instructions' explicit list. Please confirm date.
+  - book_id: enemies-and-allies
+    title: "Enemies and Allies"
+    file: "Enemies and Allies.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: epic-level-handbook-update
+    title: "Epic Level Handbook 3.5 Update"
+    file: "Epic Level Handbook - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: epic-level-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Scan duplicate of Epic Level Handbook.pdf; text-layer copy is the source per spec.
+  - book_id: epic-level-handbook-scan
+    title: "Epic Level Handbook (scan duplicate)"
+    file: "Epic Level Handbook - 3E.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "1999-11"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: epic-level-handbook-errata
+    title: "Epic Level Handbook Errata"
+    file: "Epic Level Handbook - Erata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2000-01"
+    applies_to: epic-level-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: epic-level-handbook-we
+    title: "Epic Level Handbook Web Enhancement"
+    file: "Epic Level Handbook - WE.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2000-02"
+    applies_to: epic-level-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: epic-level-handbook
+    title: "Epic Level Handbook"
+    file: "Epic Level Handbook.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "1999-11"
+    applies_to: null
+    scanned: false
+    preferred_over: epic-level-handbook-scan
+    exclude_reason: null
+
+  - book_id: exemplars-of-evil
+    title: "Exemplars of Evil"
+    file: "Exemplars of Evil - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: expanded-psionics-handbook-errata
+    title: "Expanded Psionics Handbook Errata"
+    file: "Expanded Psionics Handbook - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-06"
+    applies_to: expanded-psionics-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: expanded-psionics-handbook
+    title: "Expanded Psionics Handbook"
+    file: "Expanded Psionics Handbook.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2004-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: explorers-handbook
+    title: "Explorer's Handbook"
+    file: "Explorer_s Handbook.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-04"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: Publication date recollection uncertain; using best-guess 2002-09. If this is pre-July-2003,
+  # REVIEW: edition should be 3.0 instead -- please confirm.
+  - book_id: faiths-and-pantheons
+    title: "Faiths and Pantheons"
+    file: "Faiths and Pantheons.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2002-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: faiths-of-eberron
+    title: "Faiths of Eberron"
+    file: "Faiths of Eberron.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiend-folio-update
+    title: "Fiend Folio 3.5 Update"
+    file: "Fiend Folio - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: fiend-folio
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiend-folio-errata
+    title: "Fiend Folio Errata"
+    file: "Fiend Folio - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2003-03"
+    applies_to: fiend-folio
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiend-folio
+    title: "Fiend Folio"
+    file: "Fiend Folio.pdf"
+    edition: "3.0"
+    kind: rulebook
+    published: "2003-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiendish-codex-1-we
+    title: "Fiendish Codex I Web Enhancement"
+    file: "Fiendish Codex I - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2006-04"
+    applies_to: fiendish-codex-1
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiendish-codex-1
+    title: "Fiendish Codex I: Hordes of the Abyss"
+    file: "Fiendish Codex I.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fiendish-codex-2
+    title: "Fiendish Codex II: Tyrants of the Nine Hells"
+    file: "Fiendish Codex II - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fillinchar-sheet
+    title: "FillInCharSHEET"
+    file: "FillInCharSHEET.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal blank character sheet file, not D&D reference material"
+
+  - book_id: five-nations
+    title: "Five Nations"
+    file: "Five Nations.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: forge-of-war
+    title: "Forge of War"
+    file: "Forge of War.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: fr-deities-we
+    title: "Forgotten Realms Campaign Setting Web Enhancement (Deities)"
+    file: "Forgotten Realms - Deities.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2001-06"
+    applies_to: forgotten-realms-campaign-setting
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Same title as Lords of Darkness.pdf (page counts close: 193 vs 199); treated as a scan
+  # duplicate, text-layer copy preferred.
+  - book_id: lords-of-darkness-scan
+    title: "Forgotten Realms: Lords of Darkness (scan duplicate)"
+    file: "Forgotten Realms - Lords of Darkness.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "1999-11"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  # Page 1 identifies itself as 'A Web Enhancement for the Player's Guide to Faerûn Accessory',
+  # though its content updates monster stats from FRCS and Monsters of Faerûn to 3.5 rules;
+  # applies_to follows the stated accessory.
+  # REVIEW: byte-identical to monsters-of-faerun-update; marked as its duplicate there (this
+  # REVIEW: entry's applies_to/attribution is dropped in favor of that one). Please confirm.
+  - book_id: fr-players-guide-monsters-update
+    title: "Player's Guide to Faerûn Web Enhancement (Monster Update)"
+    file: "Forgotten Realms - Players Guide to Faerun - Monsters Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2004-04"
+    applies_to: players-guide-to-faerun
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: forgotten-realms-campaign-setting
+    title: "Forgotten Realms Campaign Setting"
+    file: "Forgotten Realms Campaign Setting.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2001-05"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: frostburn-errata
+    title: "Frostburn Errata"
+    file: "Frostburn - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-08"
+    applies_to: frostburn
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: frostburn
+    title: "Frostburn"
+    file: "Frostburn.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: 38-page excerpt covering just 'The World of D&D' / 'Timetable of History' / 'Gazetteer of the
+  # REVIEW: Flanaess' chapters, credited to the same authors as Living Greyhawk Gazetteer.pdf (200pp).
+  # REVIEW: Likely a shorter free preview of that book rather than a wholly separate title, but not marked
+  # REVIEW: as a duplicate/preferred_over pair since the content is a subset, not the same book. Please
+  # REVIEW: confirm the relationship.
+  - book_id: gazetteer-flanaess
+    title: "Gazetteer (Living Greyhawk world-overview preview excerpt)"
+    file: "Gazetteer.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2000-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: geanavue
+    title: "Geanavue, The Stones Of Peace"
+    file: "Geanavue, The Stones Of Peace.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2002-01"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: ghostwalk-we
+    title: "Ghostwalk Web Enhancement"
+    file: "Ghostwalk Web Enhancement.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2003-03"
+    applies_to: ghostwalk
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: ghostwalk
+    title: "Ghostwalk"
+    file: "Ghostwalk.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2003-02"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: grand-history-of-the-realms
+    title: "Grand History of the Realms"
+    file: "Grand History of the Realms.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: Spell list for the Healer base class introduced in Miniatures Handbook; attributed here as a web
+  # REVIEW: enhancement for that book. Please confirm.
+  - book_id: healer-spell-list-we
+    title: "Healer Spell List (web enhancement)"
+    file: "Healer spell list.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2003-12"
+    applies_to: miniatures-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: hero-builders-guidebook
+    title: "Hero Builder's Guidebook"
+    file: "Hero Builder_s Guidebook.pdf"
+    edition: "3.0"
+    kind: guide
+    published: "2001-02"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: heroes-of-battle-we
+    title: "Heroes of Battle Web Enhancement"
+    file: "Heroes of Battle - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2005-04"
+    applies_to: heroes-of-battle
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: heroes-of-battle
+    title: "Heroes of Battle"
+    file: "Heroes Of Battle.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: heroes-of-horror
+    title: "Heroes of Horror"
+    file: "Heroes of Horror.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: img-2390
+    title: "IMG_2390"
+    file: "IMG_2390.png"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal image file, not D&D reference material"
+
+  - book_id: kalamar-atlas
+    title: "Kingdoms of Kalamar Atlas"
+    file: "Kingdoms Of Kalamar Atlas.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2002-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: kalamar-campaign-setting
+    title: "Kingdoms of Kalamar Campaign Setting"
+    file: "Kingdoms Of Kalamar Campaign Setting.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2001-08"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: kalamar-players-guide
+    title: "Kingdoms of Kalamar Player's Guide"
+    file: "Kingdoms Of Kalamar Player_s Guide.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2002-06"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: libris-mortis-errata
+    title: "Libris Mortis Errata"
+    file: "Libris Mortis - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-06"
+    applies_to: libris-mortis
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: libris-mortis
+    title: "Libris Mortis"
+    file: "Libris Mortis.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: living-greyhawk-gazetteer
+    title: "Living Greyhawk Gazetteer"
+    file: "Living Greyhawk Gazetteer.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2000-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: loona-port-of-intrigue
+    title: "Loona, Port of Intrigue"
+    file: "Loona, Port Of Intrigue.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: lords-of-darkness
+    title: "Lords of Darkness"
+    file: "Lords of Darkness.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "1999-11"
+    applies_to: null
+    scanned: false
+    preferred_over: lords-of-darkness-scan
+    exclude_reason: null
+
+  - book_id: lords-of-madness
+    title: "Lords of Madness"
+    file: "Lords Of Madness.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: lost-empires-of-faerun
+    title: "Lost Empires of Faerûn"
+    file: "Lost Empires of Faerûn.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: magic-item-compendium
+    title: "Magic Item Compendium"
+    file: "Magic Item Compendium - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: magic-of-eberron
+    title: "Magic of Eberron"
+    file: "Magic of Eberron.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: magic-of-faerun
+    title: "Magic of Faerûn"
+    file: "Magic of Faerûn.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: magic-of-incarnum
+    title: "Magic of Incarnum"
+    file: "Magic Of Incarnum.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: manual-of-the-planes-3.5-update
+    title: "Manual of the Planes 3.5 Update"
+    file: "Manual of the Planes - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: manual-of-the-planes
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: manual-of-the-planes-errata
+    title: "Manual of the Planes Errata"
+    file: "Manual of the Planes - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2001-12"
+    applies_to: manual-of-the-planes
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: manual-of-the-planes
+    title: "Manual of the Planes"
+    file: "Manual of the Planes.pdf"
+    edition: "3.0"
+    kind: rulebook
+    published: "2001-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: map-folio-3d
+    title: "Map Folio 3-D"
+    file: "Map Folio 3-D.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "map folio, out of scope per spec"
+
+  - book_id: map-folio-1
+    title: "Map Folio I"
+    file: "Map Folio I.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "map folio, out of scope per spec"
+
+  - book_id: map-folio-2
+    title: "Map Folio II"
+    file: "Map Folio II.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "map folio, out of scope per spec"
+
+  - book_id: map-of-khorvaire
+    title: "Map Of Khorvaire"
+    file: "Map Of Khorvaire.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "map folio, out of scope per spec"
+
+  - book_id: masters-of-the-wild
+    title: "Masters of the Wild"
+    file: "Masters of the Wild.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2000-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: miniatures-handbook
+    title: "Miniatures Handbook"
+    file: "Miniatures Handbook.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm1
+    title: "Monster Manual (Core Rulebook III)"
+    file: "Monster Manual I.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm2-update
+    title: "Monster Manual II 3.5 Update"
+    file: "Monster Manual II - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: mm2
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm2-errata
+    title: "Monster Manual II Errata"
+    file: "Monster Manual II - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2001-01"
+    applies_to: mm2
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm2
+    title: "Monster Manual II"
+    file: "Monster Manual II.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2000-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm3-errata
+    title: "Monster Manual III Errata"
+    file: "Monster Manual III Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-10"
+    applies_to: mm3
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm3
+    title: "Monster Manual III"
+    file: "Monster Manual III.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm4
+    title: "Monster Manual IV"
+    file: "Monster Manual IV.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: mm5
+    title: "Monster Manual V"
+    file: "Monster Manual V.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: byte-identical to fr-players-guide-monsters-update (Forgotten Realms - Players Guide
+  # REVIEW: to Faerun - Monsters Update.pdf); kept as the live entry since its applies_to matches
+  # REVIEW: the file's actual title page, and the other file's attribution to Player's Guide to
+  # REVIEW: Faerûn is dropped as a duplicate. Please confirm.
+  - book_id: monsters-of-faerun-update
+    title: "Monsters of Faerûn 3.5 Update"
+    file: "Monsters of Faerûn - 3.5 Update.pdf"
+    edition: "3.5"
+    kind: update
+    published: "2003-07"
+    applies_to: monsters-of-faerun
+    scanned: false
+    preferred_over: fr-players-guide-monsters-update
+    exclude_reason: null
+
+  - book_id: monsters-of-faerun
+    title: "Monsters of Faerûn"
+    file: "Monsters of Faerûn.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: oriental-adventures-errata
+    title: "Oriental Adventures Errata"
+    file: "Oriental Adventures - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2001-06"
+    applies_to: oriental-adventures
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: oriental-adventures
+    title: "Oriental Adventures"
+    file: "Oriental Adventures.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: pekal-gazetteer
+    title: "Pekal Gazetteer"
+    file: "Pekal Gazetteer.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-01"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: planar-handbook-errata
+    title: "Planar Handbook Errata"
+    file: "Planar Handbook - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2005-01"
+    applies_to: planar-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: planar-handbook
+    title: "Planar Handbook"
+    file: "Planar Handbook.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: players-guide-to-eberron
+    title: "Player's Guide to Eberron"
+    file: "Player_s Guide to Eberron.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: players-guide-to-faerun
+    title: "Player's Guide to Faerûn"
+    file: "Player_s Guide to Faerûn.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: phb1-errata
+    title: "Player's Handbook Errata"
+    file: "Player_s Handbook I - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2003-09"
+    applies_to: phb1
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: phb1-we
+    title: "Player's Handbook Web Enhancement"
+    file: "Player_s Handbook I - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2003-08"
+    applies_to: phb1
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: phb1
+    title: "Player's Handbook (Core Rulebook I)"
+    file: "Player_s Handbook I.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: phb2-errata
+    title: "Player's Handbook II Errata"
+    file: "Player_s Handbook II - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2006-08"
+    applies_to: phb2
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Byte-identical duplicate of Player's Handbook II.pdf, differently-encoded apostrophe.
+  - book_id: phb2-dup-2
+    title: "Player's Handbook II (duplicate copy 2)"
+    file: "Player_s Handbook II.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Byte-identical duplicate of Player's Handbook II.pdf.
+  - book_id: phb2-dup-1
+    title: "Player's Handbook II (duplicate copy 1)"
+    file: "Player's Handbook II-1.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: phb2
+    title: "Player's Handbook II"
+    file: "Player's Handbook II.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-05"
+    applies_to: null
+    scanned: false
+    preferred_over: [phb2-dup-1, phb2-dup-2]
+    exclude_reason: null
+
+  - book_id: power-of-faerun-errata
+    title: "Power of Faerûn Errata"
+    file: "Power of Faerûn - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2005-04"
+    applies_to: power-of-faerun
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: power-of-faerun
+    title: "Power of Faerûn"
+    file: "Power of Faerûn.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-01"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: psionics-handbook-errata
+    title: "Psionics Handbook Errata"
+    file: "Psionics Handbook - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2001-06"
+    applies_to: psionics-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: psionics-handbook-we
+    title: "Psionics Handbook Web Enhancement"
+    file: "Psionics Handbook - WE.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2001-06"
+    applies_to: psionics-handbook
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: Filename suggests an alternate/expanded printing of the 3.0 Psionics Handbook, but page count
+  # REVIEW: (243) differs a lot from Psionics Handbook.pdf (157), too much to confidently call it the same
+  # REVIEW: scanned book, so it is NOT marked as a duplicate here (per the batch instructions, this is a
+  # REVIEW: distinct file from the 3.5 Expanded Psionics Handbook). Please confirm whether this should
+  # REVIEW: instead be linked as a duplicate of Psionics Handbook.pdf.
+  - book_id: psionics-handbook-expanded-scan
+    title: "Psionics Handbook (expanded printing)"
+    file: "Psionics Handbook (expanded).pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-01"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: psionics-handbook
+    title: "Psionics Handbook"
+    file: "Psionics Handbook.pdf"
+    edition: "3.0"
+    kind: rulebook
+    published: "2001-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-destiny
+    title: "Races of Destiny"
+    file: "Races of Destiny - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-10"
+    applies_to: null
+    scanned: false
+    preferred_over: races-of-destiny-dup
+    exclude_reason: null
+
+  # Both copies have a text layer (201 vs 202 pages, negligible difference); the v2 copy is kept
+  # canonical following this corpus's naming convention.
+  - book_id: races-of-destiny-dup
+    title: "Races of Destiny (duplicate copy)"
+    file: "Races Of Destiny.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-eberron
+    title: "Races of Eberron"
+    file: "Races of Eberron - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-faerun
+    title: "Races of Faerûn"
+    file: "Races of Faerûn.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-stone
+    title: "Races of Stone"
+    file: "Races of Stone - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-the-dragon
+    title: "Races of the Dragon"
+    file: "Races of the Dragon - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-04"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: races-of-the-wild
+    title: "Races of the Wild"
+    file: "Races Of The Wild.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # REVIEW: no publisher/book attribution found on page 1-2; appears to be independently published fan
+  # REVIEW: content rather than an official errata/web-enhancement, so treated as excluded rather than an
+  # REVIEW: override source.
+  - book_id: rod-wonder
+    title: "Greater Rod of Wonder Effect Generator (fan web article)"
+    file: "rod_wonder.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "fan-authored web generator/article (by Darrin Drader), not an official WotC source"
+
+  - book_id: rod-wonder-dup
+    title: "Greater Rod of Wonder Effect Generator (fan web article, duplicate copy)"
+    file: "rod_wonder(1).pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "duplicate copy of the fan-authored rod_wonder.pdf article"
+
+  - book_id: rokugan-campaign-setting
+    title: "Rokugan Campaign Setting"
+    file: "Rokugan Campaign Setting.pdf"
+    edition: "3.0"
+    kind: setting
+    published: "2001-01"
+    applies_to: null
+    scanned: true
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: rules-compendium
+    title: "Rules Compendium"
+    file: "Rules Compendium.pdf"
+    edition: "3.5"
+    kind: rulebook
+    published: "2007-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Kalamar (Kenzer & Co) regional sourcebook; legitimate D&D-rules content per copyright-page
+  # credits check, just 3.0 with no update -- out of scope by edition, not excluded.
+  - book_id: salt-and-sea-dogs
+    title: "Salt and Sea Dogs: The Pirates of Tellene"
+    file: "Salt And Sea Dogs - The Pirates Of Tellene.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: sandstorm
+    title: "Sandstorm"
+    file: "Sandstorm.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: savage-species
+    title: "Savage Species"
+    file: "Savage Species.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-02"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: secrets-of-sarlona
+    title: "Secrets of Sarlona"
+    file: "Secrets of Sarlona - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2007-06"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: secrets-of-xendrik
+    title: "Secrets of Xen'drik"
+    file: "Secrets of Xen_drik - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-09"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: serpent-kingdoms-errata
+    title: "Serpent Kingdoms Errata"
+    file: "Serpent Kingdoms - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2004-11"
+    applies_to: serpent-kingdoms
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: serpent-kingdoms-we
+    title: "Serpent Kingdoms Web Enhancement"
+    file: "Serpent Kingdoms - WE.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2004-09"
+    applies_to: serpent-kingdoms
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: serpent-kingdoms
+    title: "Serpent Kingdoms"
+    file: "Serpent Kingdoms.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: sharn-city-of-towers
+    title: "Sharn, City of Towers"
+    file: "Sharn, City of Towers.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: shining-south
+    title: "Shining South"
+    file: "Shining South.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-11"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: silver-marches
+    title: "Silver Marches"
+    file: "Silver Marches.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2002-12"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: song-and-silence-we
+    title: "Song and Silence Web Enhancement"
+    file: "Song and Silence - WE.pdf"
+    edition: "3.0"
+    kind: web_enhancement
+    published: "2001-05"
+    applies_to: song-and-silence
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: song-and-silence
+    title: "Song and Silence"
+    file: "Song and Silence.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-04"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: spartan-rulebook
+    title: "Spartan Rulebook"
+    file: "Spartan Rulebook v2 02.06.19 Official.pdf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "non-D&D (Spartan Rulebook, unrelated d20/homebrew system)"
+
+  - book_id: spell-compendium-errata
+    title: "Spell Compendium Errata"
+    file: "Spell Compendium - Errata.pdf"
+    edition: "3.5"
+    kind: errata
+    published: "2005-06"
+    applies_to: spell-compendium
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: spell-compendium
+    title: "Spell Compendium"
+    file: "Spell Compendium.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: spell-list-exalted-deeds
+    title: "Spell List: Exalted Deeds (web enhancement)"
+    file: "Spell List Exalted Deeds.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2003-12"
+    applies_to: book-of-exalted-deeds
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: spell-list-vile-darkness-35
+    title: "Spell List: Vile Darkness v3.5 (web enhancement)"
+    file: "Spell List Vile Darkness v3.5.pdf"
+    edition: "3.5"
+    kind: web_enhancement
+    published: "2003-07"
+    applies_to: book-of-vile-darkness
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: stealth-and-style
+    title: "Stealth and Style"
+    file: "Stealth And Style.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-12"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: stormwrack
+    title: "Stormwrack"
+    file: "Stormwrack - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-08"
+    applies_to: null
+    scanned: false
+    preferred_over: stormwrack-dup
+    exclude_reason: null
+
+  # Both copies have a text layer; v2 kept canonical per this corpus's naming convention (v2 also
+  # has slightly more extracted pages: 234 vs 226).
+  - book_id: stormwrack-dup
+    title: "Stormwrack (duplicate copy)"
+    file: "Stormwrack.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: stronghold-builders-guidebook
+    title: "Stronghold Builder's Guidebook"
+    file: "Stronghold Builder_s Guidebook.pdf"
+    edition: "3.0"
+    kind: guide
+    published: "2000-12"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: survival-in-soti
+    title: "Survival In Soti"
+    file: "Survival_In_Soti.rtf"
+    edition: "3.5"
+    kind: excluded
+    published: null
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: "personal file, not D&D reference material"
+
+  - book_id: sword-and-fist
+    title: "Sword and Fist"
+    file: "Sword and Fist.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2000-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: tome-and-blood
+    title: "Tome and Blood"
+    file: "Tome and Blood.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2001-01"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: tome-of-battle
+    title: "Tome of Battle: The Book of Nine Swords"
+    file: "Tome of Battle - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-08"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  # Byte-identical duplicate (same page/char counts) of Tome of Magic.pdf.
+  - book_id: tome-of-magic-dup
+    title: "Tome of Magic (duplicate copy)"
+    file: "Tome of Magic-1.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: tome-of-magic
+    title: "Tome of Magic"
+    file: "Tome of Magic.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2006-03"
+    applies_to: null
+    scanned: false
+    preferred_over: tome-of-magic-dup
+    exclude_reason: null
+
+  - book_id: unapproachable-east-errata
+    title: "Unapproachable East Errata"
+    file: "Unapproachable East - Errata.pdf"
+    edition: "3.0"
+    kind: errata
+    published: "2003-08"
+    applies_to: unapproachable-east
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: unapproachable-east
+    title: "Unapproachable East"
+    file: "Unapproachable East.pdf"
+    edition: "3.0"
+    kind: supplement
+    published: "2003-05"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: underdark
+    title: "Underdark"
+    file: "Underdark.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-10"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: unearthed-arcana
+    title: "Unearthed Arcana"
+    file: "Unearthed Arcana.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2004-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: waterdeep
+    title: "City of Splendors: Waterdeep"
+    file: "Waterdeep.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-03"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
+  - book_id: weapons-of-legacy
+    title: "Weapons of Legacy"
+    file: "Weapons of Legacy - v2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-02"
+    applies_to: null
+    scanned: false
+    preferred_over: weapons-of-legacy-dup
+    exclude_reason: null
+
+  # Both copies have a text layer (222 vs 223 pages, negligible difference); v2 kept canonical per
+  # this corpus's naming convention.
+  - book_id: weapons-of-legacy-dup
+    title: "Weapons of Legacy (duplicate copy)"
+    file: "Weapons Of Legacy.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2005-02"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+
