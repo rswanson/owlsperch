@@ -3,7 +3,7 @@
   "$id": "https://owlsperch.dev/schemas/spell.json",
   "title": "Spell fields",
   "description": "The `fields` object of a spell record, per spec 4.6.",
-  "version": 1,
+  "version": 2,
   "type": "object",
   "properties": {
     "school": {
@@ -53,27 +53,33 @@
       "x-ui": { "label": "Components", "filterable": true, "sortable": false, "group": "casting", "order": 5 }
     },
     "casting_time": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Casting time", "filterable": false, "sortable": false, "group": "casting", "order": 6 }
     },
     "range": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Range", "filterable": false, "sortable": false, "group": "casting", "order": 7 }
     },
     "target_effect_area": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Target/Effect/Area", "filterable": false, "sortable": false, "group": "casting", "order": 8 }
     },
     "duration": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Duration", "filterable": false, "sortable": false, "group": "casting", "order": 9 }
     },
     "saving_throw": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Saving throw", "filterable": false, "sortable": false, "group": "casting", "order": 10 }
     },
     "spell_resistance": {
-      "type": "string",
+      "type": ["string", "null"],
+      "default": null,
       "x-ui": { "label": "Spell resistance", "filterable": false, "sortable": false, "group": "casting", "order": 11 }
     },
     "costs": {

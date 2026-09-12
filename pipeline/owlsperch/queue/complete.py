@@ -19,12 +19,19 @@ came back fenced and were wrongly rejected before this. Three outcomes:
   instead an attempt is appended with error `"missing_record_path: <path>"`
   for each such path. Every path that passes both checks has its own
   `extraction` overwritten with the authoritative `{tier, model, segment_id,
-  timestamp}` (B5 follow-up 3 -- see `_overwrite_extraction`; `model` is
+  timestamp}` (B5 follow-up 3), and (B6 follow-up) its `pages` and
+  `book_id` overwritten with the segment's own `pages` (PDF page indices)
+  and `book_id` -- see `_overwrite_authoritative_fields`; `model` is
   whatever `owlsperch queue next` recorded on the segment at selection time,
-  not whatever placeholder the subagent wrote), then is merged into the
-  segment's `pending_records` (not `records` -- `owlsperch validate`
-  promotes a path once the record actually conforms), and `status` goes
-  back to `"pending"` so validate can run.
+  not whatever placeholder the subagent wrote. A live trial found ~10% of
+  real haiku extractions putting the printed page number in `pages` instead
+  of the PDF index despite explicit prompt instructions (which fails
+  validate's page-within-segment-span check); the pipeline already knows
+  the correct `pages`/`book_id` for every record it accepts, so it doesn't
+  need the model to get them right, exactly like `extraction`. The record
+  is then merged into the segment's `pending_records` (not `records` --
+  `owlsperch validate` promotes a path once the record actually conforms),
+  and `status` goes back to `"pending"` so validate can run.
 - Anything else (invalid JSON, not an object, missing `records`/`no_content`/
   `seg_id`, a `seg_id` that doesn't match the segment being completed, wrong
   types, an empty `no_content.reason`): malformed. An attempt with error
@@ -159,15 +166,30 @@ def _is_valid_record_path(data_dir: Path, book_id: str, record_path: str) -> boo
     return candidate is not None and candidate.is_file()
 
 
-def _overwrite_extraction(
-    data_dir: Path, record_path: str, *, tier: str, model: str, segment_id: str
+def _overwrite_authoritative_fields(
+    data_dir: Path,
+    record_path: str,
+    *,
+    tier: str,
+    model: str,
+    segment_id: str,
+    pages: list[int],
+    book_id: str,
 ) -> None:
-    """Overwrite `extraction` on an accepted claimed record file with the
-    authoritative tier/model/segment_id/timestamp (B5 follow-up 3) -- a
-    subagent's own `extraction` block is only a placeholder (see
-    `owlsperch.queue.prompt`); this is the only place those values become
-    real. Runs only for a path that already passed `_is_valid_record_path`,
-    so it's known to resolve inside `records/<book_id>/` and exist."""
+    """Overwrite `extraction`, `pages`, and `book_id` on an accepted claimed
+    record file with the segment's own authoritative values -- a subagent's
+    own values for any of these are only placeholders (see
+    `owlsperch.queue.prompt`); this is the only place they become real.
+    `extraction` gets `{tier, model, segment_id, timestamp}` (B5 follow-up
+    3); `pages` gets the segment's own `pages` list (PDF page indices) and
+    `book_id` gets the segment's own `book_id` (B6 follow-up -- a live trial
+    found ~10% of real haiku extractions putting the printed page number in
+    `pages` instead of the PDF index despite explicit prompt instructions,
+    which fails validate's page-within-segment-span check; the pipeline
+    already knows the correct values, so it doesn't need the model to get
+    them right). Runs only for a path that already passed
+    `_is_valid_record_path`, so it's known to resolve inside
+    `records/<book_id>/` and exist."""
     path = data_dir / record_path
     record: dict[str, Any] = json.loads(path.read_text())
     record["extraction"] = {
@@ -176,6 +198,8 @@ def _overwrite_extraction(
         "segment_id": segment_id,
         "timestamp": now_iso(),
     }
+    record["pages"] = pages
+    record["book_id"] = book_id
     atomic_write_text(path, json.dumps(record, indent=2) + "\n")
 
 
@@ -230,8 +254,14 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
     # (possibly placeholder) values the subagent put in its own record.
     model = segment.model if segment.model is not None else DEFAULT_MODEL
     for record_path in valid_paths:
-        _overwrite_extraction(
-            data_dir, record_path, tier=segment.tier, model=model, segment_id=segment.seg_id
+        _overwrite_authoritative_fields(
+            data_dir,
+            record_path,
+            tier=segment.tier,
+            model=model,
+            segment_id=segment.seg_id,
+            pages=segment.pages,
+            book_id=segment.book_id,
         )
 
     merged = list(segment.pending_records)

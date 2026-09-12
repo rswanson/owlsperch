@@ -100,6 +100,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List records whose schema_version is behind the current type version, and exit 0.",
     )
+    validate_parser.add_argument(
+        "--bump-compatible",
+        action="store_true",
+        help=(
+            "For every stale record that otherwise validates against the current "
+            "schema, rewrite schema_version to the current version in place."
+        ),
+    )
 
     queue_parser = subparsers.add_parser(
         "queue", help="The extraction queue used by the /extract skill."
@@ -244,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "validate":
         try:
-            return run_validate(args.book_id, json_output=args.json, stale=args.stale)
+            return run_validate(
+                args.book_id,
+                json_output=args.json,
+                stale=args.stale,
+                bump_compatible=args.bump_compatible,
+            )
         except SchemaError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

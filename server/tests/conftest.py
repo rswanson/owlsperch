@@ -105,7 +105,7 @@ def _spell_record(
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 1,
+        "schema_version": 2,
         "extraction": {
             "tier": "haiku",
             "model": "claude-haiku-test",

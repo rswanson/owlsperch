@@ -1,5 +1,5 @@
-"""Orchestration for `owlsperch validate <book_id|all> [--json] [--stale]`
-(spec 4.4, 4.5, 4.14; batch B4).
+"""Orchestration for `owlsperch validate <book_id|all> [--json] [--stale]
+[--bump-compatible]` (spec 4.4, 4.5, 4.14; batch B4).
 
 Per record file under `records/<book_id>/<type>/*.json`:
 
@@ -20,6 +20,19 @@ Per record file under `records/<book_id>/<type>/*.json`:
 `--stale` mode instead lists every record whose `schema_version` is behind
 the type's current registry version and always exits 0 -- it does not run
 the checks above or write back to segments.
+
+`--bump-compatible` mode (B6 follow-up, for a backward-compatible schema
+change like widening a field's type to also accept `null`) instead visits
+every stale record and re-checks it as if its `schema_version` already were
+the type's current version: a record with no other errors under the
+current schema differs from the current schema only by the version number,
+so its `schema_version` is rewritten in place (atomic write) to the current
+version. A record that's stale *and* still has a real error under the
+current schema (or whose type isn't registered at all) is left untouched
+and reported as not bumped, with those errors. Exits 1 if anything was left
+un-bumped, 0 otherwise. Like `--stale`, this never runs the checks above,
+writes back to segments, or touches a record that isn't stale to begin
+with.
 
 Validation writes back to the originating segment (skipped for `--stale`,
 and for a record whose segment can't be resolved at all): PASS sets the
@@ -121,6 +134,33 @@ class StaleResult:
             "type": self.type,
             "schema_version": self.schema_version,
             "current_version": self.current_version,
+        }
+
+
+@dataclass
+class BumpResult:
+    path: str
+    type: str
+    bumped: bool
+    from_version: int | None
+    to_version: int
+    #: Errors that kept a stale record from being bumped (empty when
+    #: `bumped` is True).
+    errors: list[str]
+
+    def render(self) -> str:
+        if self.bumped:
+            return f"BUMPED {self.path}: schema_version {self.from_version} -> {self.to_version}"
+        return f"NOT BUMPED {self.path}: " + "; ".join(self.errors)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "type": self.type,
+            "bumped": self.bumped,
+            "from_version": self.from_version,
+            "to_version": self.to_version,
+            "errors": self.errors,
         }
 
 
@@ -287,6 +327,67 @@ def find_stale_records(
     return stale
 
 
+def _resolve_segment_for_record(data_dir: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+    book_id = record.get("book_id") if isinstance(record.get("book_id"), str) else None
+    extraction_raw = record.get("extraction")
+    extraction: dict[str, Any] = extraction_raw if isinstance(extraction_raw, dict) else {}
+    segment_id_raw = extraction.get("segment_id")
+    segment_id = segment_id_raw if isinstance(segment_id_raw, str) else None
+    if book_id is None or segment_id is None:
+        return None
+    return load_segment(data_dir, book_id, segment_id)
+
+
+def find_bump_candidates(
+    data_dir: Path, book_id: str, compiled: CompiledSchemas
+) -> list[BumpResult]:
+    """Every stale record (per `find_stale_records`'s definition), each
+    re-checked as though its `schema_version` were already the type's
+    current registry version -- `bumped=True` iff that leaves zero errors,
+    meaning the only thing standing between this record and the current
+    schema is the version number itself. Read-only: doesn't write anything;
+    `run_validate` applies the actual bump for every `bumped=True` result.
+    """
+    results: list[BumpResult] = []
+    for path in _record_files_for(data_dir, book_id):
+        type_dir = path.parent.name
+        info = compiled.registry.types.get(type_dir)
+        if info is None:
+            continue
+        try:
+            record = load_json(path)
+        except LoadError:
+            continue
+        schema_version = record.get("schema_version")
+        version = schema_version if isinstance(schema_version, int) else None
+        if version is not None and version >= info.version:
+            continue  # not stale -- nothing to bump
+
+        segment = _resolve_segment_for_record(data_dir, record)
+        candidate = dict(record)
+        candidate["schema_version"] = info.version
+        errors = validate_record(candidate, type_dir=type_dir, compiled=compiled, segment=segment)
+
+        results.append(
+            BumpResult(
+                path=path.relative_to(data_dir).as_posix(),
+                type=type_dir,
+                bumped=not errors,
+                from_version=version,
+                to_version=info.version,
+                errors=errors,
+            )
+        )
+    return results
+
+
+def _apply_bump(data_dir: Path, result: BumpResult) -> None:
+    path = data_dir / result.path
+    record = load_json(path)
+    record["schema_version"] = result.to_version
+    atomic_write_text(path, json.dumps(record, indent=2) + "\n")
+
+
 def run_validate(
     book_id: str,
     *,
@@ -294,11 +395,32 @@ def run_validate(
     schemas_dir: Path | None = None,
     json_output: bool = False,
     stale: bool = False,
+    bump_compatible: bool = False,
     out: Any = None,
 ) -> int:
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
     compiled = CompiledSchemas.load(schemas_dir)
+
+    if bump_compatible:
+        bump_results = find_bump_candidates(data_dir, book_id, compiled)
+        for bump_result in bump_results:
+            if bump_result.bumped:
+                _apply_bump(data_dir, bump_result)
+
+        if json_output:
+            print(json.dumps([r.to_json() for r in bump_results]), file=out)
+        else:
+            for bump_result in bump_results:
+                print(bump_result.render(), file=out)
+            bumped_count = sum(1 for r in bump_results if r.bumped)
+            not_bumped_count = len(bump_results) - bumped_count
+            print(
+                f"{bumped_count} bumped, {not_bumped_count} not bumped, "
+                f"{len(bump_results)} stale total",
+                file=out,
+            )
+        return 1 if any(not r.bumped for r in bump_results) else 0
 
     if stale:
         stale_records = find_stale_records(data_dir, book_id, compiled)
@@ -312,16 +434,18 @@ def run_validate(
         return 0
 
     files = _record_files_for(data_dir, book_id)
-    results = [validate_record_file(path, data_dir=data_dir, compiled=compiled) for path in files]
-    failed = sum(1 for r in results if r.status == "FAIL")
+    record_results = [
+        validate_record_file(path, data_dir=data_dir, compiled=compiled) for path in files
+    ]
+    failed = sum(1 for r in record_results if r.status == "FAIL")
 
     if json_output:
-        print(json.dumps([r.to_json() for r in results]), file=out)
+        print(json.dumps([r.to_json() for r in record_results]), file=out)
         return 1 if failed else 0
 
-    for result in results:
+    for result in record_results:
         print(result.render(), file=out)
-    passed = len(results) - failed
-    print(f"{passed} passed, {failed} failed, {len(results)} total", file=out)
+    passed = len(record_results) - failed
+    print(f"{passed} passed, {failed} failed, {len(record_results)} total", file=out)
 
     return 1 if failed else 0

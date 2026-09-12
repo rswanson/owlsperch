@@ -73,7 +73,7 @@ def _valid_spell_record(
     pages: list[int] | None = None,
     name: str = "Fireball",
     slug: str = "fireball",
-    schema_version: int = 1,
+    schema_version: int = 2,
 ) -> dict[str, Any]:
     return {
         "id": f"spell:{book_id}:{slug}",
@@ -130,6 +130,7 @@ def _run(
     *,
     json_output: bool = False,
     stale: bool = False,
+    bump_compatible: bool = False,
 ) -> tuple[int, str]:
     out = io.StringIO()
     exit_code = run_validate(
@@ -137,6 +138,7 @@ def _run(
         data_dir=data_dir,
         schemas_dir=_repo_schemas_dir(),
         json_output=json_output,
+        bump_compatible=bump_compatible,
         stale=stale,
         out=out,
     )
@@ -365,7 +367,7 @@ def test_stale_with_json_prints_only_a_json_array(tmp_path: Path) -> None:
     assert item["path"] == record_path.relative_to(data_dir).as_posix()
     assert item["type"] == "spell"
     assert item["schema_version"] == 0
-    assert item["current_version"] == 1
+    assert item["current_version"] == 2
 
 
 def test_stale_with_json_and_nothing_stale_prints_empty_array(tmp_path: Path) -> None:
@@ -377,6 +379,82 @@ def test_stale_with_json_and_nothing_stale_prints_empty_array(tmp_path: Path) ->
 
     assert exit_code == 0
     assert json.loads(output) == []
+
+
+def test_bump_compatible_bumps_stale_but_otherwise_valid_record(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record(schema_version=1)
+    record_path = _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, output = _run(data_dir, bump_compatible=True)
+
+    assert exit_code == 0
+    rel_path = record_path.relative_to(data_dir).as_posix()
+    assert f"BUMPED {rel_path}: schema_version 1 -> 2" in output
+    assert "1 bumped, 0 not bumped, 1 stale total" in output
+
+    bumped = json.loads(record_path.read_text())
+    assert bumped["schema_version"] == 2
+
+    # A normal validate run now passes -- the version mismatch is gone and
+    # nothing else about the record changed.
+    normal_exit, normal_output = _run(data_dir)
+    assert normal_exit == 0
+    assert f"PASS {rel_path}" in normal_output
+
+
+def test_bump_compatible_leaves_record_with_real_errors_unbumped(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record(schema_version=1)
+    record["fields"]["school"] = "Not A Real School"  # violates the school enum
+    record_path = _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, output = _run(data_dir, bump_compatible=True)
+
+    assert exit_code == 1
+    rel_path = record_path.relative_to(data_dir).as_posix()
+    assert f"NOT BUMPED {rel_path}" in output
+    assert "0 bumped, 1 not bumped, 1 stale total" in output
+
+    untouched = json.loads(record_path.read_text())
+    assert untouched["schema_version"] == 1  # left exactly as it was
+
+    stale_exit, stale_output = _run(data_dir, stale=True)
+    assert stale_exit == 0
+    assert rel_path in stale_output
+
+
+def test_bump_compatible_skips_records_already_at_current_version(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())  # already v2
+
+    exit_code, output = _run(data_dir, bump_compatible=True)
+
+    assert exit_code == 0
+    assert "0 bumped, 0 not bumped, 0 stale total" in output
+
+
+def test_bump_compatible_with_json_reports_structured_results(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record_path = _write_record(
+        data_dir, "book", "spell", "fireball", _valid_spell_record(schema_version=1)
+    )
+
+    exit_code, output = _run(data_dir, bump_compatible=True, json_output=True)
+
+    assert exit_code == 0
+    parsed = json.loads(output)
+    assert len(parsed) == 1
+    item = parsed[0]
+    assert item["path"] == record_path.relative_to(data_dir).as_posix()
+    assert item["bumped"] is True
+    assert item["from_version"] == 1
+    assert item["to_version"] == 2
+    assert item["errors"] == []
 
 
 def test_missing_segment_file_fails(tmp_path: Path) -> None:

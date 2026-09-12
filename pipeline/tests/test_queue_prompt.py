@@ -354,7 +354,7 @@ def test_prompt_instructs_aliases_pages_and_unnamed_entity_rule(tmp_path: Path) 
     )
 
     assert "alternate spellings" in text
-    assert "`pages` must copy this segment's `pages` list" in text
+    assert "`pages` is set authoritatively by the pipeline" in text
     assert "Never invent a name" in text
     assert "unnamed_entity:" in text
     assert "bulleted list" in text

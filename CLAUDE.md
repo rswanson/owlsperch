@@ -30,7 +30,7 @@ uv sync                              # install deps (both workspace members)
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
-uv run owlsperch validate <book_id|all> [--json] [--stale]
+uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
 uv run owlsperch queue next <book_id> --tier haiku --limit N [--kind spell] [--model M] [--lock-timeout S] [--json]
 uv run owlsperch queue prompt <seg_id> [--model M]

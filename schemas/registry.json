@@ -4,7 +4,7 @@
       "schema": "spell.json",
       "label": "Spell",
       "plural_label": "Spells",
-      "version": 1
+      "version": 2
     }
   }
 }
