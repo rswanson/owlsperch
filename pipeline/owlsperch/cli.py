@@ -11,8 +11,10 @@ import argparse
 import sys
 
 from owlsperch.manifest import ManifestError, run_check
+from owlsperch.schemas import SchemaError, load_registry, render_schema_show
 from owlsperch.segment.runner import run_segment
 from owlsperch.text.runner import run_text
+from owlsperch.validate.runner import run_validate
 
 
 def _parse_pages(value: str) -> tuple[int, int]:
@@ -73,6 +75,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Limit segmentation to PDF page range A-B (1-based, inclusive).",
     )
 
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Check every record under records/<book_id>/ against its schema.",
+    )
+    validate_parser.add_argument("book_id", help="Manifest book_id, or 'all'.")
+    validate_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON results instead."
+    )
+    validate_parser.add_argument(
+        "--stale",
+        action="store_true",
+        help="List records whose schema_version is behind the current type version, and exit 0.",
+    )
+
+    schema_parser = subparsers.add_parser("schema", help="Inspect record type schemas.")
+    schema_parser.set_defaults(schema_parser=schema_parser)
+    schema_subparsers = schema_parser.add_subparsers(dest="schema_command")
+    schema_show_parser = schema_subparsers.add_parser(
+        "show", help="Print a type's schema path and its x-ui field table."
+    )
+    schema_show_parser.add_argument("type", help="Registered type name, e.g. 'spell'.")
+
     return parser
 
 
@@ -108,6 +132,26 @@ def main(argv: list[str] | None = None) -> int:
         except ManifestError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+
+    if args.command == "validate":
+        try:
+            return run_validate(args.book_id, json_output=args.json, stale=args.stale)
+        except SchemaError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "schema" and args.schema_command == "show":
+        try:
+            registry = load_registry()
+            print(render_schema_show(args.type, registry))
+            return 0
+        except SchemaError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "schema":
+        args.schema_parser.print_help()
+        return 0
 
     parser.print_help()
     return 0 if args.command is None else 1

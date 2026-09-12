@@ -4,14 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-`owlsperch` is a Python (uv-managed) pipeline. As of batch B3 it has: the
+`owlsperch` is a Python (uv-managed) pipeline. As of batch B4 it has: the
 `owlsperch` CLI and package (`pipeline/owlsperch/`), the curated PDF manifest
 (`pipeline/manifest.yaml`), `manifest check`, `text` (column-repaired
 per-page text extraction for text-layer books, plus a `.meta.json` sidecar
 of paragraph font-size stats), `segment` (splits a book's text into
-candidate spell/stat_block/feat/table/rules_section segments), and CI.
-Everything else is a future-batch stub (`validate`, `build-db`,
-`check-completeness`, `coverage`, `schema review`, `sample`).
+candidate spell/stat_block/feat/table/rules_section segments), the
+`schemas/` type registry (envelope + spell schema, JSON Schema draft
+2020-12) with `validate` and `schema show`, and CI. Everything else is a
+future-batch stub (`build-db`, `check-completeness`, `coverage`,
+`schema review`, `sample`).
 
 ### Commands
 
@@ -23,6 +25,8 @@ uv sync                              # install deps
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
+uv run owlsperch validate <book_id|all> [--json] [--stale]
+uv run owlsperch schema show <type>
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy pipeline
@@ -86,6 +90,25 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   `rules_section` for everything between them, split at headings);
   `runner.py` loads a book's text+meta, calls the splitter, and writes
   `segments/<book_id>/<seg_id>.json`.
+
+- `schemas/` (repo root, not under `pipeline/`) -- the single source of truth
+  for record types (spec 4.6, 4.14): `envelope.json` is the common record
+  envelope, `registry.json` lists every type (schema file, label, plural
+  label, schema version), and `<type>.json` (currently just `spell.json`)
+  defines that type's `fields`, each carrying an `x-ui` hint (label,
+  filterable, sortable, group, order). All JSON Schema draft 2020-12.
+  `pipeline/owlsperch/schemas.py` finds this directory by walking up from
+  the package to one containing `schemas/registry.json` (overridable via
+  `$OWLSPERCH_SCHEMAS`), loads the registry, and renders `schema show`.
+- `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
+  discovers record/segment files and compiles the envelope/type JSON Schema
+  validators once per run; `checks.py` holds the id/slug/type-directory/
+  schema_version consistency checks plus type-specific field checks (spell:
+  non-empty `school` and `levels`); `runner.py` orchestrates conformance +
+  consistency + the page-within-segment-span check (segment looked up by
+  `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
+  writes the outcome back to the originating segment (via the `Segment`
+  model) idempotently.
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and

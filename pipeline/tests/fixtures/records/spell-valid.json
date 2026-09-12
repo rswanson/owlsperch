@@ -1,0 +1,40 @@
+{
+  "id": "spell:testbook:glimmerfrost-ward",
+  "type": "spell",
+  "name": "Glimmerfrost Ward",
+  "slug": "glimmerfrost-ward",
+  "aliases": [],
+  "book_id": "testbook",
+  "pages": [12],
+  "citation": "Test Book p. 12",
+  "text_md": "A shimmering lattice of frost wraps the caster, chilling anything that draws near.",
+  "fields": {
+    "school": "Evocation",
+    "subschool": null,
+    "descriptors": ["Cold"],
+    "levels": [
+      { "class": "Sorcerer", "level": 2 },
+      { "class": "Wizard", "level": 2 }
+    ],
+    "components": ["V", "S"],
+    "casting_time": "1 standard action",
+    "range": "Personal",
+    "target_effect_area": "You",
+    "duration": "1 round/level",
+    "saving_throw": "None",
+    "spell_resistance": "No",
+    "costs": { "material": null, "focus": null, "xp": null }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "haiku",
+    "model": "claude-haiku-synthetic-test",
+    "segment_id": "testbook-p0012-01",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

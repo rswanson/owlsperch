@@ -47,6 +47,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import (
     ManifestEntry,
     default_manifest_path,
@@ -89,6 +90,13 @@ class Segment(BaseModel):
     tier: str = SEGMENT_TIER
     attempts: list[Any] = []
     created_at: str
+    #: Set by `owlsperch validate` (batch B4): a short outcome tag, e.g.
+    #: "validated" on a passing record, "no_content" from the extract skill
+    #: (B5).
+    outcome: str | None = None
+    #: Paths (relative to `$OWLSPERCH_DATA`) of every record validated back
+    #: to this segment. Set by `owlsperch validate` on PASS.
+    records: list[str] = []
 
 
 @dataclass
@@ -307,7 +315,7 @@ def _write_one_segment(
         text=text,
         created_at=_now_iso(),
     )
-    seg_path.write_text(segment.model_dump_json(indent=2) + "\n")
+    atomic_write_text(seg_path, segment.model_dump_json(indent=2) + "\n")
     summary.written += 1
 
 

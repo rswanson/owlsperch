@@ -153,6 +153,53 @@ directory, printing one summary line per book (counts by `kind_hint`, or
 why it was skipped) -- a book with no `text/` directory yet is skipped with
 a message pointing at `owlsperch text`.
 
+```sh
+uv run owlsperch validate <book_id|all> [--json] [--stale]
+```
+
+Checks every record under `records/<book_id>/<type>/*.json` against
+`schemas/` (JSON Schema draft 2020-12): the record envelope against
+`schemas/envelope.json`, and its `fields` against the type's own schema
+(e.g. `schemas/spell.json`), both loaded once via `schemas/registry.json`.
+On top of schema conformance it checks that the record's `type` matches
+the directory it was found in, that `slug`/`id` follow the
+`<type>:<book_id>:<slug>` convention (`slug` is the ASCII-folded
+kebab-case of `name`), that `schema_version` matches the type's current
+registry version, type-specific consistency (e.g. a spell needs a
+non-empty `school` and at least one entry in `levels`), and that every
+page the record cites falls within its originating segment's page span
+(the segment named by `extraction.segment_id`, under `segments/<book_id>/`
+-- a missing segment file is a FAIL).
+
+Prints one `PASS <path>` or `FAIL <path>: <reason>; <reason>` line per
+record plus a final pass/fail summary, and exits 1 if any record failed.
+`--json` prints a JSON array of `{path, status, errors, segment_id, type}`
+to stdout instead (nothing else on stdout), for the extract skill.
+`--stale` instead lists records whose `schema_version` is behind the
+type's current registry version and always exits 0.
+
+Validation writes back to the originating segment: PASS sets its `status`
+to `done` and `outcome` to `validated` and appends the record's path to
+its `records` list; FAIL appends `{tier, timestamp, errors}` to its
+`attempts` and leaves `status` pending. Both are idempotent -- rerunning
+does not add a duplicate record path or a duplicate identical attempt.
+
+```sh
+uv run owlsperch schema show <type>
+```
+
+Prints the type's schema file path and a table of its fields' `x-ui`
+hints (label, filterable, sortable, group, order) -- useful for humans and
+for the extract skill's prompt (a future batch).
+
+The `schemas/` directory (repo root, alongside `pipeline/`) is the single
+source of truth for record types: `schemas/envelope.json` is the common
+record envelope (spec 4.6), `schemas/registry.json` lists every type with
+its schema file, UI labels, and schema version, and `schemas/<type>.json`
+(e.g. `schemas/spell.json`) defines that type's `fields`. Its location is
+found by walking up from the `owlsperch` package to a directory containing
+`schemas/registry.json`, overridable via `$OWLSPERCH_SCHEMAS`.
+
 ## Development
 
 ```sh
