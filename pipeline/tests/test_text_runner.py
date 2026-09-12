@@ -32,15 +32,19 @@ def _words_xml(x_start: float, y_min: float, y_max: float, text: str) -> str:
     x = x_start
     for token in text.split(" "):
         x_max = x + max(len(token) * 6.0, 10.0)
-        words.append(f'<word xMin="{x}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{token}</word>')
+        words.append(
+            f'<word xMin="{x}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{token}</word>'
+        )
         x = x_max + 4.0
     return "".join(words)
 
 
 def _line_xml(x_min: float, y_min: float, x_max: float, y_max: float, text: str) -> str:
-    return f'<line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">' + _words_xml(
-        x_min, y_min, y_max, text
-    ) + "</line>"
+    return (
+        f'<line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">'
+        + _words_xml(x_min, y_min, y_max, text)
+        + "</line>"
+    )
 
 
 def _block_xml(x_min: float, y_min: float, x_max: float, lines: list[str]) -> str:
@@ -51,7 +55,8 @@ def _block_xml(x_min: float, y_min: float, x_max: float, lines: list[str]) -> st
         line_xmls.append(_line_xml(x_min, y, x_max, y + line_height, line_text))
         y += line_height + 2.0
     y_max = y - 2.0
-    return f'<block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{"".join(line_xmls)}</block>'
+    lines_xml = "".join(line_xmls)
+    return f'<block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{lines_xml}</block>'
 
 
 def _page_xml(
@@ -67,16 +72,20 @@ def _page_xml(
     blocks.append(_block_xml(300, 100, 580, right_lines))
     if footer_number is not None:
         blocks.append(_block_xml(280, 750, 330, [str(footer_number)]))
-    return f'<page width="{_PAGE_WIDTH}" height="{_PAGE_HEIGHT}"><flow>{"".join(blocks)}</flow></page>'
+    blocks_xml = "".join(blocks)
+    return f'<page width="{_PAGE_WIDTH}" height="{_PAGE_HEIGHT}"><flow>{blocks_xml}</flow></page>'
 
 
 def _doc_xml(pages: list[str]) -> str:
-    return f'<html {_NS}><body><doc>{"".join(pages)}</doc></body></html>'
+    return f"<html {_NS}><body><doc>{''.join(pages)}</doc></body></html>"
 
 
 def _fake_run_pdftotext(content: str) -> Callable[[Path, Path, int | None, int | None], None]:
     def _fake(
-        pdf_path: Path, out_html_path: Path, first_page: int | None = None, last_page: int | None = None
+        pdf_path: Path,
+        out_html_path: Path,
+        first_page: int | None = None,
+        last_page: int | None = None,
     ) -> None:
         out_html_path.write_text(content)
 
@@ -346,9 +355,7 @@ def test_override_source_is_processed_not_skipped(
     assert (data_dir / "text" / "normal-book-errata" / "p0001.txt").exists()
 
 
-def test_unknown_book_id_is_a_clear_error(
-    book_dirs: tuple[Path, Path], tmp_path: Path
-) -> None:
+def test_unknown_book_id_is_a_clear_error(book_dirs: tuple[Path, Path], tmp_path: Path) -> None:
     pdf_dir, data_dir = book_dirs
     manifest_path = _write_manifest(tmp_path, _MANIFEST_YAML)
 
@@ -371,7 +378,9 @@ def test_all_iterates_every_eligible_book_and_prints_summary(
     monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_combined_fixture()))
 
     out = io.StringIO()
-    exit_code = run_text("all", pdf_dir=pdf_dir, data_dir=data_dir, manifest_path=manifest_path, out=out)
+    exit_code = run_text(
+        "all", pdf_dir=pdf_dir, data_dir=data_dir, manifest_path=manifest_path, out=out
+    )
 
     output = out.getvalue()
     assert exit_code == 0

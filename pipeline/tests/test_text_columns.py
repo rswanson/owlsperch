@@ -29,11 +29,18 @@ def _parse_page(tmp_path: Path, name: str, body: str) -> Page:
 
 
 def _block(x_min: float, y_min: float, x_max: float, y_max: float, text: str) -> str:
+    # The block spans the full (x_min, y_min, x_max, y_max) box (this is what
+    # column clustering and the wide-block check look at), but its one line
+    # of text has a realistic (short) height -- a block this tall with a
+    # single line spanning its whole height would itself look "vertical"
+    # (line height > line width), which is not what these fixtures mean to
+    # represent.
+    line_y_max = min(y_min + 12.0, y_max)
     return f"""
     <flow>
       <block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">
-        <line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max + 1}">
-          <word xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max + 1}">{text}</word>
+        <line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{line_y_max}">
+          <word xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{line_y_max}">{text}</word>
         </line>
       </block>
     </flow>
