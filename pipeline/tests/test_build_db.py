@@ -346,3 +346,126 @@ def test_run_build_db_prints_counts_and_db_path(tmp_path: Path) -> None:
     assert "Skipped (invalid): 0" in output
     assert "Books: 2" in output
     assert str(data_dir / "db" / "owlsperch.sqlite") in output
+
+
+# ---------------------------------------------------------------------------
+# run_build_db: skipped-invalid warning + --strict exit code (batch B6
+# follow-up -- skipping is expected while extraction is in progress, so it
+# must never be silent, but must never fail the build either unless asked).
+# ---------------------------------------------------------------------------
+
+
+def _write_invalid_spell_record(data_dir: Path, book_id: str, slug: str, name: str) -> Path:
+    invalid = copy.deepcopy(_valid_spell_record(name=name, slug=slug))
+    invalid["fields"]["school"] = ""  # fails the non-empty-school check
+    return _write_record(data_dir, book_id, "spell", slug, invalid)
+
+
+def test_run_build_db_exits_0_without_strict_when_records_skipped(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_invalid_spell_record(data_dir, "book", "broken-spell", "Broken Spell")
+
+    out, err = io.StringIO(), io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    assert exit_code == 0
+    assert "Skipped (invalid): 1" in out.getvalue()
+
+
+def test_run_build_db_exits_1_with_strict_when_records_skipped(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_invalid_spell_record(data_dir, "book", "broken-spell", "Broken Spell")
+
+    out, err = io.StringIO(), io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        strict=True,
+        out=out,
+        err=err,
+    )
+
+    assert exit_code == 1
+
+
+def test_run_build_db_strict_still_exits_0_when_nothing_skipped(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        strict=True,
+        out=io.StringIO(),
+        err=io.StringIO(),
+    )
+
+    assert exit_code == 0
+
+
+def test_run_build_db_warns_on_stderr_with_count_and_first_error(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record_path = _write_invalid_spell_record(data_dir, "book", "broken-spell", "Broken Spell")
+
+    out, err = io.StringIO(), io.StringIO()
+    run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    stderr_output = err.getvalue()
+    assert "WARNING" in stderr_output
+    assert "skipped 1 invalid record" in stderr_output
+    assert record_path.relative_to(data_dir).as_posix() in stderr_output
+    assert "school" in stderr_output.lower()
+    # Nothing about the skip leaks onto stdout -- it's a warning, not part
+    # of the normal summary report.
+    assert "WARNING" not in out.getvalue()
+
+
+def test_run_build_db_warning_lists_at_most_first_5_skipped_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    for i in range(7):
+        _write_invalid_spell_record(data_dir, "book", f"broken-spell-{i}", f"Broken Spell {i}")
+
+    out, err = io.StringIO(), io.StringIO()
+    run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    stderr_output = err.getvalue()
+    assert "skipped 7 invalid record" in stderr_output
+    assert stderr_output.count("records/book/spell/broken-spell-") == 5
+
+
+def test_cli_build_db_strict_flag_is_wired_up() -> None:
+    from owlsperch.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["build-db"]).strict is False
+    assert parser.parse_args(["build-db", "--strict"]).strict is True

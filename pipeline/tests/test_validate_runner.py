@@ -437,6 +437,45 @@ def test_bump_compatible_skips_records_already_at_current_version(tmp_path: Path
     assert "0 bumped, 0 not bumped, 0 stale total" in output
 
 
+def test_bump_compatible_reports_unregistered_type_as_not_bumped(tmp_path: Path) -> None:
+    # The module docstring says a record whose type isn't registered at all
+    # is "reported as not bumped" (with its errors) -- it must not be
+    # silently dropped from the results the way an unrecognized type used
+    # to be for `find_bump_candidates` specifically.
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    record["type"] = "nonsense_type"
+    record_path = _write_record(data_dir, "book", "nonsense_type", "fireball", record)
+
+    exit_code, output = _run(data_dir, bump_compatible=True)
+
+    assert exit_code == 1
+    rel_path = record_path.relative_to(data_dir).as_posix()
+    assert f"NOT BUMPED {rel_path}" in output
+    assert "unregistered type: nonsense_type" in output
+    assert "0 bumped, 1 not bumped, 1 stale total" in output
+
+
+def test_bump_compatible_json_reports_unregistered_type_error(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    record["type"] = "nonsense_type"
+    record_path = _write_record(data_dir, "book", "nonsense_type", "fireball", record)
+
+    exit_code, output = _run(data_dir, bump_compatible=True, json_output=True)
+
+    assert exit_code == 1
+    parsed = json.loads(output)
+    assert len(parsed) == 1
+    item = parsed[0]
+    assert item["path"] == record_path.relative_to(data_dir).as_posix()
+    assert item["type"] == "nonsense_type"
+    assert item["bumped"] is False
+    assert item["errors"] == ["unregistered type: nonsense_type"]
+
+
 def test_bump_compatible_with_json_reports_structured_results(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", [10])

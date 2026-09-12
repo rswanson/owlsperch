@@ -199,9 +199,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     schema_show_parser.add_argument("type", help="Registered type name, e.g. 'spell'.")
 
-    subparsers.add_parser(
+    build_db_parser = subparsers.add_parser(
         "build-db",
         help="Build $OWLSPERCH_DATA/db/owlsperch.sqlite from validated records.",
+    )
+    build_db_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit 1 if any record was skipped as invalid (default: exit 0 and "
+            "just warn, since skips are expected while extraction is in progress)."
+        ),
     )
 
     serve_parser = subparsers.add_parser(
@@ -303,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "build-db":
-        return run_build_db()
+        return run_build_db(strict=args.strict)
 
     if args.command == "serve":
         return run_serve(host=args.host, port=args.port)

@@ -201,9 +201,23 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
 
 
 @dataclass
+class SkippedRecord:
+    """One record skipped as invalid: its path (relative to `$OWLSPERCH_DATA`)
+    and the first error that failed it -- either the load/parse error, or
+    (when it loaded fine but didn't validate) the first entry of
+    `validate_record`'s error list."""
+
+    path: str
+    error: str
+
+
+@dataclass
 class BuildResult:
     counts_by_type: dict[str, int] = field(default_factory=dict)
     skipped_invalid: int = 0
+    #: Detail for every skipped record (see `SkippedRecord`), in discovery
+    #: order. `run_build_db` prints the first few of these as a warning.
+    skipped: list[SkippedRecord] = field(default_factory=list)
     books: int = 0
     db_path: Path = field(default_factory=Path)
 
@@ -296,10 +310,12 @@ def _load_records(
     for book_id in discover_books_with_records(data_dir):
         for path in discover_record_files(data_dir, book_id):
             type_dir = path.parent.name
+            rel_path = path.relative_to(data_dir).as_posix()
             try:
                 record = load_json(path)
-            except LoadError:
+            except LoadError as exc:
                 result.skipped_invalid += 1
+                result.skipped.append(SkippedRecord(path=rel_path, error=str(exc)))
                 continue
 
             segment_id: str | None = None
@@ -312,6 +328,7 @@ def _load_records(
             errors = validate_record(record, type_dir=type_dir, compiled=compiled, segment=segment)
             if errors:
                 result.skipped_invalid += 1
+                result.skipped.append(SkippedRecord(path=rel_path, error=errors[0]))
                 continue
 
             _insert_record(conn, record)
@@ -364,9 +381,29 @@ def run_build_db(
     data_dir: Path | None = None,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
+    strict: bool = False,
     out: Any = None,
+    err: Any = None,
 ) -> int:
+    """Run `build_db` and print its summary to `out`. Skipping invalid
+    records is expected while extraction is still in progress (not every
+    segment has a validated record yet), so this is a WARNING to `err`, not
+    a failure, unless `strict` is set -- e.g. a release/CI build that must
+    catch every record before shipping."""
     out = out if out is not None else sys.stdout
+    err = err if err is not None else sys.stderr
     result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=schemas_dir)
     print(result.render(), file=out)
+
+    if result.skipped_invalid > 0:
+        print(
+            f"WARNING: skipped {result.skipped_invalid} invalid record(s) "
+            "(expected while extraction is in progress):",
+            file=err,
+        )
+        for skipped in result.skipped[:5]:
+            print(f"  {skipped.path}: {skipped.error}", file=err)
+
+    if strict and result.skipped_invalid > 0:
+        return 1
     return 0

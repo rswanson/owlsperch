@@ -351,15 +351,30 @@ def find_bump_candidates(
     results: list[BumpResult] = []
     for path in _record_files_for(data_dir, book_id):
         type_dir = path.parent.name
-        info = compiled.registry.types.get(type_dir)
-        if info is None:
-            continue
         try:
             record = load_json(path)
         except LoadError:
             continue
         schema_version = record.get("schema_version")
         version = schema_version if isinstance(schema_version, int) else None
+
+        info = compiled.registry.types.get(type_dir)
+        if info is None:
+            # Matches this module's docstring: an unregistered type is
+            # reported as not bumped (with an explanatory error), not
+            # silently dropped from the results.
+            results.append(
+                BumpResult(
+                    path=path.relative_to(data_dir).as_posix(),
+                    type=type_dir,
+                    bumped=False,
+                    from_version=version,
+                    to_version=version if version is not None else 0,
+                    errors=[f"unregistered type: {type_dir}"],
+                )
+            )
+            continue
+
         if version is not None and version >= info.version:
             continue  # not stale -- nothing to bump
 

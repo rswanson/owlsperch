@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from owlsperch_server.app import create_app
@@ -80,6 +81,34 @@ def test_search_groups_by_type_with_label(built_data_dir: Path) -> None:
 def test_search_rejects_short_query(built_data_dir: Path) -> None:
     response = _client(built_data_dir).get("/search", params={"q": "f"})
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /search: FTS5 special-syntax queries never 500 -- a bare FTS5 boolean
+# keyword (AND/OR/NOT) is a syntax error from the FTS5 query parser, and the
+# stray punctuation queries below are sanitized by `_WORD_RE` before ever
+# reaching FTS5; either way `_search`'s `except sqlite3.OperationalError`
+# fallback (or a clean tokenized query) must still answer 200, never 500.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("q", ["AND", "OR", "NOT", 'fire"bolt', "fire*", "(fire"])
+def test_search_special_syntax_queries_return_200(built_data_dir: Path, q: str) -> None:
+    response = _client(built_data_dir).get("/search", params={"q": q})
+    assert response.status_code == 200
+
+
+def test_search_prefix_query_still_uses_fts_not_just_substring_fallback(
+    built_data_dir: Path,
+) -> None:
+    # "fyre" only matches the "Fyre Ball" alias on `spell:book-a:fireball` --
+    # the substring fallback only scans `records.name` (never `aliases`), so
+    # this hit can only come from the FTS5 path over `names_fts` actually
+    # running (and finding it), not from the fallback alone.
+    response = _client(built_data_dir).get("/search", params={"q": "fyre"})
+    assert response.status_code == 200
+    hits = [h for g in response.json()["groups"] for h in g["hits"]]
+    assert any(h["slug"] == "fireball" for h in hits)
 
 
 # ---------------------------------------------------------------------------
@@ -169,3 +198,43 @@ def test_health_reports_db_false_when_missing(tmp_path: Path) -> None:
 def test_schemas_available_even_when_db_missing(tmp_path: Path) -> None:
     response = _client(tmp_path / "empty-data").get("/schemas")
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Corrupt (present but unreadable) DB file -> 503 with a distinct detail
+# (except /health and /schemas, which never touch the database). Unlike the
+# "missing" case above, `sqlite3.connect` on a garbage file succeeds --
+# SQLite only validates the header lazily, on the first real read -- so this
+# exercises the `_query_db` wrapper's `sqlite3.DatabaseError` handling, not
+# `_require_db`'s file-existence check.
+# ---------------------------------------------------------------------------
+
+
+def _corrupt_data_dir(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "corrupt-data"
+    db_path = data_dir / "db" / "owlsperch.sqlite"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(b"not a real sqlite database, just garbage bytes")
+    return data_dir
+
+
+def test_search_503_when_db_corrupt(tmp_path: Path) -> None:
+    response = _client(_corrupt_data_dir(tmp_path)).get("/search", params={"q": "fireball"})
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "database unreadable; rebuild with: uv run owlsperch build-db"
+    }
+
+
+def test_record_detail_503_when_db_corrupt(tmp_path: Path) -> None:
+    response = _client(_corrupt_data_dir(tmp_path)).get("/records/spell/fireball")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "database unreadable; rebuild with: uv run owlsperch build-db"
+    }
+
+
+def test_health_and_schemas_unaffected_by_corrupt_db(tmp_path: Path) -> None:
+    client = _client(_corrupt_data_dir(tmp_path))
+    assert client.get("/health").json() == {"status": "ok", "db": True}
+    assert client.get("/schemas").status_code == 200

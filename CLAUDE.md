@@ -37,7 +37,7 @@ uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
-uv run owlsperch build-db            # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
+uv run owlsperch build-db [--strict] # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
 uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
 uv run ruff check .
 uv run ruff format --check .
@@ -172,7 +172,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   row), `record_pages`, and `names_fts` (FTS5 over name/aliases,
   `content='records'`/`content_rowid='rowid'`). Every record is
   `canonical = 1` and `macro_eligible = 0` in this batch -- precedence
-  (B11) and macro eligibility (B22) are future work.
+  (B11) and macro eligibility (B22) are future work. Skipping is expected
+  while extraction is still in progress, so `run_build_db` always exits 0
+  regardless of `skipped_invalid` unless `--strict` is passed (then exit 1
+  on any skip); either way, a nonzero `skipped_invalid` always prints a
+  WARNING to stderr naming the count and the first 5 skipped paths with
+  each one's first error, so a skip is never silent.
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be
@@ -194,9 +199,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `owlsperch.schemas`), and `/health`. The database is opened read-only
   (`mode=ro` URI) once per request, not pooled (spec D1: single-user,
   localhost only). A missing database makes `/search` and
-  `/records/{type}/{slug}` answer 503 naming `owlsperch build-db`;
-  `/health` and `/schemas` don't touch the database and always answer
-  normally.
+  `/records/{type}/{slug}` answer 503 naming `owlsperch build-db`; a
+  present but corrupt database file (one `sqlite3.connect` opens fine but
+  that raises `sqlite3.DatabaseError` on the first real read, since SQLite
+  only validates the file header lazily) answers 503 with a distinct
+  "database unreadable" detail naming the same rebuild command, via the
+  `_query_db` helper both endpoints route their DB work through; `/health`
+  and `/schemas` don't touch the database and always answer normally.
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and

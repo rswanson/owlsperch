@@ -260,7 +260,7 @@ uv run owlsperch queue reset <seg_id>...
   timeout is a future batch (B8).
 
 ```sh
-uv run owlsperch build-db
+uv run owlsperch build-db [--strict]
 ```
 
 Builds `$OWLSPERCH_DATA/db/owlsperch.sqlite` from every record under
@@ -273,6 +273,14 @@ type, how many were skipped as invalid, how many books, and the DB path.
 Every record is `canonical: true` and `macro_eligible: false` in this batch
 -- precedence (duplicate-copy resolution across books) and macro
 eligibility are future batches.
+
+Skipping invalid records is expected while extraction is still in
+progress, so by default `build-db` still exits 0 even when
+`Skipped (invalid)` is nonzero -- but it prints a `WARNING` to stderr
+naming the count and the first 5 skipped paths with each one's first
+error, so a skip is never silent. Pass `--strict` (e.g. for a release
+build that must not ship with any skipped record) to make that same
+situation exit 1 instead.
 
 Tables (spec 4.8): `books` (one row per manifest entry, regardless of
 whether it has records yet); `records` (id, type, name, slug, book_id,

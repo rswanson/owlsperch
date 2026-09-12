@@ -9,6 +9,14 @@ data-serving endpoint (`/search`, `/records/{type}/{slug}`) answer 503 with
 a JSON body naming the build command; `/health` and `/schemas` don't touch
 the database at all (schemas come from the `schemas/` files, not the DB) and
 always answer normally.
+
+A *present but corrupt* database file is a different failure mode:
+`sqlite3.connect` alone never validates the file (SQLite only checks the
+header lazily, on the first real read), so a garbage file opens fine and
+only raises `sqlite3.DatabaseError` once a query actually runs. Every data
+endpoint routes its DB work through `_query_db`, which catches that and
+answers 503 with a distinct "database unreadable" detail instead of letting
+it surface as an unhandled 500.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +42,7 @@ _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 50
 
 _DB_MISSING_DETAIL = "database not built; run: uv run owlsperch build-db"
+_DB_UNREADABLE_DETAIL = "database unreadable; rebuild with: uv run owlsperch build-db"
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -64,11 +74,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         clamped_limit = max(1, min(limit, _MAX_LIMIT))
         type_filter = [t.strip() for t in types.split(",") if t.strip()] if types else None
 
-        conn = _require_db(app.state.data_dir)
-        try:
-            hits = _search(conn, q, type_filter, clamped_limit)
-        finally:
-            conn.close()
+        hits = _query_db(
+            app.state.data_dir, lambda conn: _search(conn, q, type_filter, clamped_limit)
+        )
         return {"groups": _group_hits(hits)}
 
     @app.get("/records/{type_name}/{slug}")
@@ -77,11 +85,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if type_name not in registry.types:
             raise HTTPException(status_code=404, detail="unknown type")
 
-        conn = _require_db(app.state.data_dir)
-        try:
-            detail = _record_detail(conn, type_name, slug)
-        finally:
-            conn.close()
+        detail = _query_db(app.state.data_dir, lambda conn: _record_detail(conn, type_name, slug))
         if detail is None:
             raise HTTPException(status_code=404, detail="unknown slug")
         return detail
@@ -99,6 +103,23 @@ def _require_db(data_dir: Path) -> sqlite3.Connection:
         raise HTTPException(status_code=503, detail=_DB_MISSING_DETAIL) from exc
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _query_db[T](data_dir: Path, fn: Callable[[sqlite3.Connection], T]) -> T:
+    """Open a connection via `_require_db` (a missing DB raises 503 there,
+    before `fn` ever runs), run `fn` against it, and always close it
+    afterwards. A corrupt DB file can't be caught at `connect()` time --
+    SQLite only validates the file header lazily, on the first real read --
+    so `fn` raising `sqlite3.DatabaseError` here (rather than during
+    `_require_db`) becomes a 503 naming the rebuild command too, instead of
+    an unhandled 500."""
+    conn = _require_db(data_dir)
+    try:
+        return fn(conn)
+    except sqlite3.DatabaseError as exc:
+        raise HTTPException(status_code=503, detail=_DB_UNREADABLE_DETAIL) from exc
+    finally:
+        conn.close()
 
 
 def _escape_like(value: str) -> str:
