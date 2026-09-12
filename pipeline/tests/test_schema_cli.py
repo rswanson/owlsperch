@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,22 @@ def test_render_schema_show_prints_path_and_field_table() -> None:
     assert "school" in output
     assert "levels" in output
     assert "School" in output  # the x-ui label
+
+
+def test_render_schema_show_column_widths_have_two_space_separation() -> None:
+    registry = load_registry(_repo_schemas_dir())
+    output = render_schema_show("spell", registry)
+
+    rows = [line for line in output.splitlines() if "classification" in line]
+    assert rows, "expected a table row whose 'group' column is 'classification'"
+    row = rows[0]
+
+    # At least two spaces separate the preceding column's value from
+    # "classification", and at least two spaces separate "classification"
+    # from the following column's value -- not true of a fixed-width
+    # column exactly as wide as "classification" itself (14 chars).
+    assert re.search(r"\S {2,}classification", row)
+    assert re.search(r"classification {2,}\S", row)
 
 
 def test_render_schema_show_unknown_type_raises() -> None:

@@ -38,7 +38,7 @@
         "type": "object",
         "properties": {
           "class": { "type": "string" },
-          "level": { "type": "integer", "minimum": 0 }
+          "level": { "type": "integer", "minimum": 0, "maximum": 9 }
         },
         "required": ["class", "level"],
         "additionalProperties": false

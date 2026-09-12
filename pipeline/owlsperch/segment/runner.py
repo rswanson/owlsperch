@@ -47,6 +47,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import (
     ManifestEntry,
     default_manifest_path,
@@ -314,7 +315,7 @@ def _write_one_segment(
         text=text,
         created_at=_now_iso(),
     )
-    seg_path.write_text(segment.model_dump_json(indent=2) + "\n")
+    atomic_write_text(seg_path, segment.model_dump_json(indent=2) + "\n")
     summary.written += 1
 
 

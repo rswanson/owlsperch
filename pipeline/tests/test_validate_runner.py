@@ -225,6 +225,19 @@ def test_wrong_school_type_fails(tmp_path: Path) -> None:
     assert "FAIL records/book/spell/fireball.json" in output
 
 
+def test_level_above_9_fails(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    record["fields"]["levels"] = [{"class": "Wizard", "level": 15}]
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 1
+    assert "FAIL records/book/spell/fireball.json" in output
+
+
 def test_page_outside_segment_span_fails(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", [10, 11])
@@ -253,6 +266,36 @@ def test_stale_schema_version_fails_normally_and_listed_by_stale(tmp_path: Path)
     assert record_path.relative_to(data_dir).as_posix() in stale_output
 
 
+def test_stale_with_json_prints_only_a_json_array(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record(schema_version=0)
+    record_path = _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, output = _run(data_dir, stale=True, json_output=True)
+
+    assert exit_code == 0
+    parsed = json.loads(output)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    item = parsed[0]
+    assert item["path"] == record_path.relative_to(data_dir).as_posix()
+    assert item["type"] == "spell"
+    assert item["schema_version"] == 0
+    assert item["current_version"] == 1
+
+
+def test_stale_with_json_and_nothing_stale_prints_empty_array(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code, output = _run(data_dir, stale=True, json_output=True)
+
+    assert exit_code == 0
+    assert json.loads(output) == []
+
+
 def test_missing_segment_file_fails(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     # No segment file written for book-p0010-01 at all.
@@ -276,6 +319,20 @@ def test_slug_id_mismatch_fails(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "slug" in output.lower() or "id" in output.lower()
+
+
+def test_unknown_top_level_key_fails(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    record["unexpected_extra_field"] = "surprise"
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 1
+    assert "FAIL records/book/spell/fireball.json" in output
+    assert "unexpected_extra_field" in output or "additional" in output.lower()
 
 
 def test_unknown_type_dir_fails(tmp_path: Path) -> None:

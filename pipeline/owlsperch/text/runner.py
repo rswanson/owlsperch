@@ -50,6 +50,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import (
     ManifestEntry,
     default_manifest_path,
@@ -318,7 +319,7 @@ def _process_pages(
         rendered = [(unit, text) for unit, text in rendered if text]
         paragraphs = [text for _, text in rendered]
         content = "\n\n".join(paragraphs)
-        out_path.write_text(content + "\n" if content else "")
+        atomic_write_text(out_path, content + "\n" if content else "")
         meta = [
             {
                 "kind": unit.kind,
@@ -328,7 +329,7 @@ def _process_pages(
             }
             for unit, _ in rendered
         ]
-        meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+        atomic_write_text(meta_path, json.dumps(meta, indent=2) + "\n")
         summary.pages_written += 1
 
     summary.page_numbers_found = len(page_numbers)
@@ -345,7 +346,7 @@ def _merge_pages_json(out_dir: Path, page_numbers: dict[int, int]) -> None:
         existing = json.loads(pages_json_path.read_text())
     existing.update({str(pdf_index): number for pdf_index, number in page_numbers.items()})
     ordered = {k: existing[k] for k in sorted(existing, key=int)}
-    pages_json_path.write_text(json.dumps(ordered, indent=2) + "\n")
+    atomic_write_text(pages_json_path, json.dumps(ordered, indent=2) + "\n")
 
 
 def _process_one(

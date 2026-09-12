@@ -40,6 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from owlsperch.fsutil import atomic_write_text
 from owlsperch.segment.runner import Segment
 from owlsperch.text.runner import default_data_dir
 from owlsperch.validate.checks import (
@@ -108,6 +109,14 @@ class StaleResult:
             f"< current {self.current_version} ({self.type})"
         )
 
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "type": self.type,
+            "schema_version": self.schema_version,
+            "current_version": self.current_version,
+        }
+
 
 def _record_files_for(data_dir: Path, book_id: str) -> list[Path]:
     if book_id == "all":
@@ -125,7 +134,7 @@ def _write_back_pass(data_dir: Path, book_id: str, segment_id: str, record_rel_p
     segment_model.outcome = "validated"
     if record_rel_path not in segment_model.records:
         segment_model.records = [*segment_model.records, record_rel_path]
-    path.write_text(segment_model.model_dump_json(indent=2) + "\n")
+    atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
 
 
 def _write_back_fail(
@@ -139,7 +148,7 @@ def _write_back_fail(
     if not already_recorded:
         attempts = [*attempts, {"tier": tier, "timestamp": _now_iso(), "errors": errors}]
     segment_model.attempts = attempts
-    path.write_text(segment_model.model_dump_json(indent=2) + "\n")
+    atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
 
 
 def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchemas) -> RecordResult:
@@ -244,6 +253,9 @@ def run_validate(
 
     if stale:
         stale_records = find_stale_records(data_dir, book_id, compiled)
+        if json_output:
+            print(json.dumps([r.to_json() for r in stale_records]), file=out)
+            return 0
         for record in stale_records:
             print(record.render(), file=out)
         if not stale_records:

@@ -104,15 +104,13 @@ def load_registry(schemas_dir: Path | None = None) -> Registry:
     return Registry(schemas_dir=schemas_dir, types=types, envelope_schema=envelope_schema)
 
 
-#: Column widths for `render_schema_show`'s field table.
-_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
-    ("field", 24),
-    ("label", 24),
-    ("filterable", 12),
-    ("sortable", 10),
-    ("group", 14),
-    ("order", 6),
-)
+#: Column order for `render_schema_show`'s field table (header text; widths
+#: are computed from actual content, see `render_schema_show`).
+_TABLE_HEADERS: tuple[str, ...] = ("field", "label", "filterable", "sortable", "group", "order")
+
+#: Padding added after the longest cell (header or value) in each column, so
+#: columns stay visually separated instead of butting up against each other.
+_COLUMN_PADDING = 2
 
 
 def render_schema_show(type_name: str, registry: Registry) -> str:
@@ -126,18 +124,29 @@ def render_schema_show(type_name: str, registry: Registry) -> str:
     schema = registry.load_type_schema(type_name)
     path = registry.type_schema_path(type_name)
 
-    lines = [f"{path} (label: {info.label}, version {schema.get('version')})", ""]
-    lines.append("".join(header.ljust(width) for header, width in _TABLE_COLUMNS))
+    rows: list[dict[str, str]] = []
     for field_name, prop in schema.get("properties", {}).items():
         x_ui = prop.get("x-ui", {})
-        row = {
-            "field": field_name,
-            "label": str(x_ui.get("label", "")),
-            "filterable": str(x_ui.get("filterable", "")),
-            "sortable": str(x_ui.get("sortable", "")),
-            "group": str(x_ui.get("group", "")),
-            "order": str(x_ui.get("order", "")),
-        }
-        lines.append("".join(row[key].ljust(width) for key, width in _TABLE_COLUMNS))
+        rows.append(
+            {
+                "field": field_name,
+                "label": str(x_ui.get("label", "")),
+                "filterable": str(x_ui.get("filterable", "")),
+                "sortable": str(x_ui.get("sortable", "")),
+                "group": str(x_ui.get("group", "")),
+                "order": str(x_ui.get("order", "")),
+            }
+        )
+
+    widths = {
+        header: max(len(header), max((len(row[header]) for row in rows), default=0))
+        + _COLUMN_PADDING
+        for header in _TABLE_HEADERS
+    }
+
+    lines = [f"{path} (label: {info.label}, version {schema.get('version')})", ""]
+    lines.append("".join(header.ljust(widths[header]) for header in _TABLE_HEADERS))
+    for row in rows:
+        lines.append("".join(row[header].ljust(widths[header]) for header in _TABLE_HEADERS))
 
     return "\n".join(lines)
