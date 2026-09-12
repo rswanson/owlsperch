@@ -61,7 +61,7 @@ cd web && npm run lint          # eslint (typescript-eslint, react-hooks)
 cd web && npm run typecheck     # tsc --noEmit
 cd web && npm test -- --run     # vitest
 cd web && npx vitest run src/components/__tests__/SearchBox.test.tsx -t "debounces"  # single test
-cd web && npm run e2e           # Playwright, one smoke test against a fixture DB
+cd web && npm run e2e           # Playwright: desktop flow A + a 400px project, against a fixture DB
 cd web && npx playwright test e2e/smoke.spec.ts  # single Playwright test (there's only the one)
 ```
 
