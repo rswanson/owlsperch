@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -272,8 +273,6 @@ def check(pdf_dir: Path | None = None, manifest_path: Path | None = None) -> Che
 def run_check(
     pdf_dir: Path | None = None, manifest_path: Path | None = None, out: Any = None
 ) -> int:
-    import sys
-
     out = out if out is not None else sys.stdout
     result = check(pdf_dir=pdf_dir, manifest_path=manifest_path)
     print(result.render(), file=out)

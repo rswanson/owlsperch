@@ -525,7 +525,7 @@ entries:
     exclude_reason: null
 
   - book_id: index-feats-1
-    title: "DnD 3.5 Index: Feats Index (Part 1)"
+    title: "DnD 3.5 Index: Feats Index"
     file: "DnD3.5Index-Feats-1.pdf"
     edition: "3.5"
     kind: index
@@ -535,8 +535,10 @@ entries:
     preferred_over: null
     exclude_reason: null
 
+  # Byte-identical copy of DnD3.5Index-Feats-1.pdf (same md5); kept as a separate
+  # entry since it's a distinct file in the PDF directory.
   - book_id: index-feats-2
-    title: "DnD 3.5 Index: Feats Index (Part 2)"
+    title: "DnD 3.5 Index: Feats Index"
     file: "DnD3.5Index-Feats-2.pdf"
     edition: "3.5"
     kind: index
