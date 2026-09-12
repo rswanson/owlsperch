@@ -89,6 +89,13 @@ class Segment(BaseModel):
     tier: str = SEGMENT_TIER
     attempts: list[Any] = []
     created_at: str
+    #: Set by `owlsperch validate` (batch B4): a short outcome tag, e.g.
+    #: "validated" on a passing record, "no_content" from the extract skill
+    #: (B5).
+    outcome: str | None = None
+    #: Paths (relative to `$OWLSPERCH_DATA`) of every record validated back
+    #: to this segment. Set by `owlsperch validate` on PASS.
+    records: list[str] = []
 
 
 @dataclass

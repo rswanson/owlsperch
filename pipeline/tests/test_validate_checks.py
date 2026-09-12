@@ -93,12 +93,16 @@ def test_check_spell_fields_requires_nonempty_levels() -> None:
 
 
 def test_check_spell_fields_requires_nonempty_school() -> None:
-    errors = check_spell_fields({"fields": {"school": "", "levels": [{"class": "Wizard", "level": 3}]}})
+    errors = check_spell_fields(
+        {"fields": {"school": "", "levels": [{"class": "Wizard", "level": 3}]}}
+    )
     assert any("school" in e for e in errors)
 
 
 def test_check_spell_fields_rejects_wrong_type_school() -> None:
-    errors = check_spell_fields({"fields": {"school": 3, "levels": [{"class": "Wizard", "level": 3}]}})
+    errors = check_spell_fields(
+        {"fields": {"school": 3, "levels": [{"class": "Wizard", "level": 3}]}}
+    )
     assert any("school" in e for e in errors)
 
 

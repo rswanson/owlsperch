@@ -59,7 +59,9 @@ def _write_segment(
 
 
 def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
-    return json.loads((data_dir / "segments" / book_id / f"{seg_id}.json").read_text())
+    path = data_dir / "segments" / book_id / f"{seg_id}.json"
+    raw: dict[str, Any] = json.loads(path.read_text())
+    return raw
 
 
 def _valid_spell_record(
@@ -110,7 +112,9 @@ def _valid_spell_record(
     }
 
 
-def _write_record(data_dir: Path, book_id: str, type_dir: str, slug: str, record: dict[str, Any]) -> Path:
+def _write_record(
+    data_dir: Path, book_id: str, type_dir: str, slug: str, record: dict[str, Any]
+) -> Path:
     out_dir = data_dir / "records" / book_id / type_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{slug}.json"
@@ -336,10 +340,16 @@ def test_all_iterates_books_with_records_dir(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book-a", "book-a-p0010-01", [10])
     _write_record(
-        data_dir, "book-a", "spell", "fireball", _valid_spell_record(book_id="book-a", seg_id="book-a-p0010-01")
+        data_dir,
+        "book-a",
+        "spell",
+        "fireball",
+        _valid_spell_record(book_id="book-a", seg_id="book-a-p0010-01"),
     )
     _write_segment(data_dir, "book-b", "book-b-p0020-01", [20])
-    bad = _valid_spell_record(book_id="book-b", seg_id="book-b-p0020-01", name="Icy Bolt", slug="icy-bolt")
+    bad = _valid_spell_record(
+        book_id="book-b", seg_id="book-b-p0020-01", name="Icy Bolt", slug="icy-bolt"
+    )
     bad["fields"]["levels"] = []
     _write_record(data_dir, "book-b", "spell", "icy-bolt", bad)
 
