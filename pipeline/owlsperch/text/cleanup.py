@@ -25,11 +25,24 @@ elsewhere in the book's own text (collected over the whole run) or in the
 bundled word list (`wordlist.txt`); otherwise the hyphen is kept and the two
 fragments are still joined with no space ("com-posite"). Either way the two
 physical lines become one -- a literal line break at a hyphenated word is
-never left in the output.
+never left in the output. The known-word lookup strips any punctuation
+attached to the continuation word (e.g. the trailing comma in "bow,") first,
+since `known_words` itself holds punctuation-stripped words; the joined
+output word still carries that punctuation ("crossbow,"), it is just not
+part of the lookup key.
+
+**Running-header/footer threshold caveat.** The 30% frequency rule above
+assumes a run of many pages. Over a short `--pages` window (fewer than 20
+pages), 30% of the window can be as low as one page, which would treat any
+line that merely happens to repeat once as a running header/footer. To
+avoid that, a window of fewer than 20 pages instead requires a line to
+recur on at least `MIN_RUNNING_PAGE_COUNT` (3) pages, regardless of what
+30% of the window works out to.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -47,11 +60,37 @@ BAND_FRACTION = 0.08
 #: pages is treated as a running header/footer.
 RUNNING_LINE_THRESHOLD = 0.30
 
+#: Below this many pages in a run, the frequency rule alone is too easily
+#: tripped by coincidence (see the module docstring's threshold caveat) --
+#: a minimum absolute recurrence is required instead.
+SHORT_WINDOW_PAGE_COUNT = 20
+
+#: Minimum number of pages a line must recur on to count as a running
+#: header/footer when the run is shorter than `SHORT_WINDOW_PAGE_COUNT`.
+MIN_RUNNING_PAGE_COUNT = 3
+
 _DIGIT_RE = re.compile(r"\d")
 _WHITESPACE_RE = re.compile(r"\s+")
 _STANDALONE_INTEGER_RE = re.compile(r"^\d+$")
+_WORD_PUNCT_RE = re.compile(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$")
 
 _WORDLIST_PATH = Path(__file__).resolve().parent / "wordlist.txt"
+
+
+def strip_word_punctuation(word: str) -> str:
+    """Strip leading/trailing non-alphanumeric characters (punctuation
+    attached to a word by the PDF's word segmentation), keeping internal
+    characters like a mid-word hyphen or apostrophe."""
+    return _WORD_PUNCT_RE.sub("", word)
+
+
+def _running_threshold(page_count: int) -> float:
+    """Minimum recurrence count for a (band, text) key to be treated as a
+    running header/footer, given a run of `page_count` pages (see the
+    module docstring's threshold caveat)."""
+    if page_count < SHORT_WINDOW_PAGE_COUNT:
+        return max(MIN_RUNNING_PAGE_COUNT, math.ceil(RUNNING_LINE_THRESHOLD * page_count))
+    return RUNNING_LINE_THRESHOLD * page_count
 
 
 def normalize_for_repetition(text: str) -> str:
@@ -109,7 +148,7 @@ def find_running_keys(banded_lines: list[BandedLine], page_count: int) -> set[tu
         seen_per_page.add(key)
         counts[(line.band, normalize_for_repetition(line.text))] += 1
 
-    threshold = page_count * RUNNING_LINE_THRESHOLD
+    threshold = _running_threshold(page_count)
     return {key for key, count in counts.items() if count >= threshold}
 
 
@@ -136,7 +175,14 @@ def dehyphenate_lines(lines: list[str], known_words: set[str]) -> str:
         if words and len(words[-1]) > 1 and words[-1].endswith("-"):
             fragment = words[-1][:-1]
             continuation = line_words[0]
-            joined = (fragment + continuation).lower()
+            # `known_words` holds punctuation-stripped words (see
+            # `owlsperch.text.runner._tokenize_words`), so the lookup must
+            # strip punctuation from the continuation too (e.g. "bow," ->
+            # "bow") or a known word broken across a hyphen and followed by
+            # punctuation would never match. The un-stripped `continuation`
+            # is still used below to build the output, so its punctuation
+            # (a trailing comma, say) is preserved either way.
+            joined = (fragment + strip_word_punctuation(continuation)).lower()
             if joined in known_words:
                 words[-1] = fragment + continuation
             else:

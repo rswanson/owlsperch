@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from owlsperch.text.bbox import Page, parse_bbox_xhtml
-from owlsperch.text.columns import is_vertical_block, order_blocks
+from owlsperch.text.bbox import Block, Page, parse_bbox_xhtml
+from owlsperch.text.columns import TableGroup, is_vertical_block, order_blocks
 
 _NS = 'xmlns="http://www.w3.org/1999/xhtml"'
+
+
+def _block_text(item: Block | TableGroup) -> str:
+    assert isinstance(item, Block)
+    return item.lines[0].text
 
 
 def _parse_page(tmp_path: Path, name: str, body: str) -> Page:
@@ -56,7 +61,7 @@ def test_two_column_page_with_wide_heading_block(tmp_path: Path) -> None:
 
     ordered = order_blocks(page)
 
-    texts = [b.lines[0].text for b in ordered]
+    texts = [_block_text(b) for b in ordered]
     assert texts == ["HEADING", "LEFT", "RIGHT"]
 
 
@@ -69,7 +74,7 @@ def test_single_column_page_orders_top_to_bottom(tmp_path: Path) -> None:
 
     ordered = order_blocks(page)
 
-    texts = [b.lines[0].text for b in ordered]
+    texts = [_block_text(b) for b in ordered]
     assert texts == ["FIRST", "SECOND", "THIRD"]
 
 
@@ -88,7 +93,7 @@ def test_multiple_wide_blocks_act_as_column_breaks(tmp_path: Path) -> None:
 
     ordered = order_blocks(page)
 
-    texts = [b.lines[0].text for b in ordered]
+    texts = [_block_text(b) for b in ordered]
     assert texts == ["HEAD1", "LEFT1", "RIGHT1", "TABLE", "LEFT2", "RIGHT2"]
 
 
@@ -108,6 +113,74 @@ def test_vertical_block_is_excluded_from_reading_order(tmp_path: Path) -> None:
 
     assert is_vertical_block(page.blocks[1]) is True
     ordered = order_blocks(page)
-    texts = [b.lines[0].text for b in ordered]
+    texts = [_block_text(b) for b in ordered]
     assert texts == ["BODY"]
     assert "CHAPTER 7:" not in texts
+
+
+def _table_column_block(x_min: float, x_max: float, y_min: float, cell_texts: list[str]) -> str:
+    # One narrow block containing one line per row, at the same y positions
+    # across every column of a table -- the shape `pdftotext` emits for a
+    # multi-column table like the PHB weapon table.
+    row_height = 20.0
+    lines = []
+    y = y_min
+    for text in cell_texts:
+        line_y_max = y + 12.0
+        lines.append(
+            f"""
+            <line xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{line_y_max}">
+              <word xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{line_y_max}">{text}</word>
+            </line>
+            """
+        )
+        y += row_height
+    y_max = y - row_height + 12.0
+    return f"""
+    <flow>
+      <block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">
+        {"".join(lines)}
+      </block>
+    </flow>
+    """
+
+
+def test_table_group_of_five_columns_is_emitted_row_wise(tmp_path: Path) -> None:
+    # 5 narrow blocks side by side, each one column of a 4-row table --
+    # `pdftotext`'s typical column-per-block table shape.
+    columns = [
+        (34.0, 100.0, ["Name", "Falchion", "Longsword", "Dagger"]),
+        (110.0, 180.0, ["Cost", "75 gp", "15 gp", "2 gp"]),
+        (190.0, 260.0, ["Dmg", "2d4", "1d8", "1d4"]),
+        (270.0, 340.0, ["Crit", "18-20/x2", "19-20/x2", "19-20/x2"]),
+        (350.0, 420.0, ["Type", "Slashing", "Slashing", "Piercing"]),
+    ]
+    blocks_xml = "".join(
+        _table_column_block(x_min, x_max, 100.0, texts) for x_min, x_max, texts in columns
+    )
+    page = _parse_page(tmp_path, "table.html", blocks_xml)
+
+    ordered = order_blocks(page)
+
+    assert len(ordered) == 1
+    group = ordered[0]
+    assert isinstance(group, TableGroup)
+    assert len(group.rows) == 4
+    assert group.rows[0].text == "Name\tCost\tDmg\tCrit\tType"
+    assert group.rows[1].text == "Falchion\t75 gp\t2d4\t18-20/x2\tSlashing"
+    assert group.rows[2].text == "Longsword\t15 gp\t1d8\t19-20/x2\tSlashing"
+    assert group.rows[3].text == "Dagger\t2 gp\t1d4\t19-20/x2\tPiercing"
+
+
+def test_two_column_prose_page_is_not_a_table_group(tmp_path: Path) -> None:
+    # Only 2 blocks, tall, not overlapping in x -- an ordinary two-column
+    # prose layout, not a table (a table group requires >= 3 blocks).
+    left = _block(34, 80, 290, 400, "LEFT")
+    right = _block(300, 80, 580, 400, "RIGHT")
+    page = _parse_page(tmp_path, "two_col_prose.html", left + right)
+
+    ordered = order_blocks(page)
+
+    assert len(ordered) == 2
+    assert all(isinstance(b, Block) for b in ordered)
+    assert not any(isinstance(b, TableGroup) for b in ordered)

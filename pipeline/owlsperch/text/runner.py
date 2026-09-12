@@ -11,14 +11,23 @@ Per book:
 2. Run `pdftotext -bbox-layout` (poppler) over the whole PDF, or the
    `--pages A-B` range, into a temporary XHTML file, and parse it
    (`owlsperch.text.bbox`).
-3. Order each page's blocks into reading order (`owlsperch.text.columns`).
+3. Order each page's blocks into reading order (`owlsperch.text.columns`),
+   which also detects table groups (a table's columns, each emitted by
+   `pdftotext` as its own narrow block) and pulls them out to be rendered
+   row-wise. Vertical/rotated blocks dropped by that step (chapter tabs,
+   but also incidentally image credits) are counted, not just discarded,
+   so the loss shows up in the summary line (`vertical_blocks_excluded`).
 4. Across every page processed this run, find the running headers/footers
    and the printed page numbers, and dehyphenate line-wrapped words
    (`owlsperch.text.cleanup`) using a word set built from the book's own
-   (header/footer-stripped) text plus the bundled word list.
-5. Write one `text/<book_id>/p{NNNN}.txt` per page (blocks joined with a
-   blank line as the paragraph break), skipping pages whose file already
-   exists unless `--force`, and merge the printed page numbers found into
+   (header/footer-stripped) text plus the bundled word list. Table-group
+   rows are never dehyphenated (their cells are single lines already) but
+   do contribute their words to that word set.
+5. Write one `text/<book_id>/p{NNNN}.txt` per page: each block becomes one
+   paragraph (dehyphenated, word-joined) and each table group becomes one
+   paragraph of tab-separated rows (one row per line), all separated by a
+   blank line. Pages whose file already exists are skipped unless
+   `--force`, and the printed page numbers found are merged into
    `text/<book_id>/pages.json` (a page missing a detected number is simply
    absent from the map).
 """
@@ -27,11 +36,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -51,13 +60,20 @@ from owlsperch.text.cleanup import (
     load_wordlist,
     normalize_for_repetition,
     standalone_page_number,
+    strip_word_punctuation,
 )
-from owlsperch.text.columns import order_blocks
+from owlsperch.text.columns import TableGroup, is_vertical_block, order_blocks
 
 #: The batch that will add OCR support for scanned books.
 OCR_BATCH = "B15"
 
-_WORD_PUNCT_RE = re.compile(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$")
+#: Homebrew's poppler package provides the `pdftotext` binary this pipeline
+#: shells out to.
+_PDFTOTEXT_INSTALL_HINT = (
+    "pdftotext (poppler) is not installed or not on PATH -- "
+    "install it with `brew install poppler` (Homebrew) or your platform's "
+    "poppler-utils package"
+)
 
 
 class TextExtractionError(Exception):
@@ -66,13 +82,6 @@ class TextExtractionError(Exception):
 
 def default_data_dir() -> Path:
     return Path(os.environ.get("OWLSPERCH_DATA", str(Path.home() / "owlsperch-data")))
-
-
-def strip_word_punctuation(word: str) -> str:
-    """Strip leading/trailing non-alphanumeric characters (punctuation
-    attached to a word by the PDF's word segmentation), keeping internal
-    characters like a mid-word hyphen or apostrophe."""
-    return _WORD_PUNCT_RE.sub("", word)
 
 
 def run_pdftotext(
@@ -87,11 +96,24 @@ def run_pdftotext(
     if last_page is not None:
         cmd += ["-l", str(last_page)]
     cmd += [str(pdf_path), str(out_html_path)]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise TextExtractionError(_PDFTOTEXT_INSTALL_HINT) from exc
     if result.returncode != 0:
         raise TextExtractionError(
             f"pdftotext failed (exit {result.returncode}) for {pdf_path}: {result.stderr.strip()}"
         )
+
+
+class Outcome(Enum):
+    """The structured result of processing one book, so exit-code logic
+    doesn't need to pattern-match message text (see MINOR 8 in review)."""
+
+    OK = "ok"
+    SKIPPED = "skipped"
+    REFUSED = "refused"
+    ERROR = "error"
 
 
 @dataclass
@@ -101,12 +123,9 @@ class BookSummary:
     pages_skipped: int = 0
     headers_removed: int = 0
     page_numbers_found: int = 0
+    vertical_blocks_excluded: int = 0
     note: str = ""
-    hard_error: bool = False
-
-    @property
-    def is_scanned_refusal(self) -> bool:
-        return self.note.startswith("refused:")
+    outcome: Outcome = Outcome.OK
 
     def render(self) -> str:
         if self.note:
@@ -115,7 +134,8 @@ class BookSummary:
             f"{self.book_id}: {self.pages_written} pages written, "
             f"{self.pages_skipped} pages skipped, "
             f"{self.headers_removed} headers removed, "
-            f"{self.page_numbers_found} page numbers found"
+            f"{self.page_numbers_found} page numbers found, "
+            f"{self.vertical_blocks_excluded} vertical blocks excluded"
         )
 
 
@@ -153,6 +173,17 @@ def extract_book(
     )
 
 
+@dataclass
+class _PageUnit:
+    """One output paragraph unit for a page: either `kind="prose"` (a
+    block's kept lines, to be dehyphenated and joined into one paragraph),
+    or `kind="table"` (a `TableGroup`'s already-composed row texts, one per
+    output line, joined with newlines but never dehyphenated across cells)."""
+
+    kind: str
+    lines: list[str] = field(default_factory=list)
+
+
 def _process_pages(
     pages: list[Page],
     *,
@@ -161,13 +192,20 @@ def _process_pages(
     force: bool,
     summary: BookSummary,
 ) -> BookSummary:
-    ordered_blocks_per_page: list[list[Block]] = [order_blocks(page) for page in pages]
+    ordered_blocks_per_page: list[list[Block | TableGroup]] = [order_blocks(page) for page in pages]
+
+    for page in pages:
+        summary.vertical_blocks_excluded += sum(
+            1 for block in page.blocks if is_vertical_block(block)
+        )
 
     banded_lines: list[BandedLine] = []
     for offset, (page, ordered) in enumerate(zip(pages, ordered_blocks_per_page, strict=True)):
         pdf_index = start_index + offset
-        for block in ordered:
-            for line in block.lines:
+        for item in ordered:
+            if isinstance(item, TableGroup):
+                continue
+            for line in item.lines:
                 if not line.text.strip():
                     continue
                 band = band_for_line(line, page.height)
@@ -185,41 +223,59 @@ def _process_pages(
 
     wordlist_words = load_wordlist()
     book_words: set[str] = set()
-    filtered_blocks_per_page: list[list[list[str]]] = []
+    units_per_page: list[list[_PageUnit]] = []
 
-    for offset, (page, ordered) in enumerate(zip(pages, ordered_blocks_per_page, strict=True)):
-        pdf_index = start_index + offset
-        page_blocks: list[list[str]] = []
-        for block in ordered:
+    for page, ordered in zip(pages, ordered_blocks_per_page, strict=True):
+        page_units: list[_PageUnit] = []
+        for item in ordered:
+            if isinstance(item, TableGroup):
+                row_texts = [row.text for row in item.rows if row.text.strip()]
+                for row in item.rows:
+                    for cell in row.cells:
+                        book_words.update(_tokenize_words(cell))
+                if row_texts:
+                    page_units.append(_PageUnit(kind="table", lines=row_texts))
+                continue
+
             kept_lines: list[str] = []
-            for line in block.lines:
+            for line in item.lines:
                 text = line.text
                 if not text.strip():
                     continue
                 band = band_for_line(line, page.height)
                 if band is not None:
+                    # A bare page number is always dropped as a page number,
+                    # checked before the running-header/footer rule -- its
+                    # digits-stripped normalization is the empty string, so
+                    # it would otherwise also match the running-line key
+                    # that most digit-only footers share and get miscounted
+                    # as a removed *header*, not a page number.
+                    if standalone_page_number(text) is not None:
+                        continue
                     key = (band, normalize_for_repetition(text))
                     if key in running_keys:
                         summary.headers_removed += 1
                         continue
-                    if standalone_page_number(text) is not None:
-                        continue
                 kept_lines.append(text)
                 book_words.update(_tokenize_words(text))
             if kept_lines:
-                page_blocks.append(kept_lines)
-        filtered_blocks_per_page.append(page_blocks)
-        _ = pdf_index  # only needed for symmetry/debugging
+                page_units.append(_PageUnit(kind="prose", lines=kept_lines))
+        units_per_page.append(page_units)
 
     known_words = book_words | wordlist_words
 
-    for offset, page_blocks in enumerate(filtered_blocks_per_page):
+    for offset, page_units in enumerate(units_per_page):
         pdf_index = start_index + offset
         out_path = out_dir / f"p{pdf_index:04d}.txt"
         if out_path.exists() and not force:
             summary.pages_skipped += 1
             continue
-        paragraphs = [dehyphenate_lines(lines, known_words) for lines in page_blocks]
+        paragraphs = [
+            "\n".join(unit.lines)
+            if unit.kind == "table"
+            else dehyphenate_lines(unit.lines, known_words)
+            for unit in page_units
+        ]
         paragraphs = [p for p in paragraphs if p]
         content = "\n\n".join(paragraphs)
         out_path.write_text(content + "\n" if content else "")
@@ -253,19 +309,19 @@ def _process_one(
 ) -> BookSummary:
     status = status_for(entry, entries)
     if status not in ("in_scope", "override"):
-        return BookSummary(entry.book_id, note=f"skipped ({status})")
+        return BookSummary(entry.book_id, note=f"skipped ({status})", outcome=Outcome.SKIPPED)
     if entry.scanned:
         return BookSummary(
             entry.book_id,
             note=f"refused: scanned book -- OCR support arrives in batch {OCR_BATCH}",
-            hard_error=True,
+            outcome=Outcome.REFUSED,
         )
     try:
         return extract_book(
             entry, pdf_dir=pdf_dir, data_dir=data_dir, force=force, page_range=page_range
         )
     except TextExtractionError as exc:
-        return BookSummary(entry.book_id, note=f"error: {exc}", hard_error=True)
+        return BookSummary(entry.book_id, note=f"error: {exc}", outcome=Outcome.ERROR)
 
 
 def run_text(
@@ -298,7 +354,7 @@ def run_text(
                 page_range=page_range,
             )
             print(summary.render(), file=out)
-            if summary.hard_error and not summary.is_scanned_refusal:
+            if summary.outcome is Outcome.ERROR:
                 exit_code = 1
         return exit_code
 
@@ -316,4 +372,4 @@ def run_text(
         page_range=page_range,
     )
     print(summary.render(), file=out)
-    return 1 if summary.hard_error else 0
+    return 1 if summary.outcome in (Outcome.REFUSED, Outcome.ERROR) else 0

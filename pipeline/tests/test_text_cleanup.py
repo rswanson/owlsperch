@@ -84,7 +84,42 @@ def test_dehyphenate_preserves_multiple_lines_without_hyphenation() -> None:
     assert result == "Line one text Line two text"
 
 
+def test_dehyphenate_strips_continuation_punctuation_for_known_word_lookup() -> None:
+    # "cross-" + "bow," must match "crossbow" in known_words even though the
+    # continuation carries a trailing comma -- known_words itself holds
+    # punctuation-stripped words, so the lookup key must be stripped too.
+    # The comma is still preserved in the joined output.
+    known = {"crossbow"}
+    result = dehyphenate_lines(["a cross-", "bow, ready"], known)
+    assert result == "a crossbow, ready"
+
+
 def test_wordlist_is_bundled_and_nonempty() -> None:
     words = load_wordlist()
     assert len(words) > 500
     assert all(w == w.lower() for w in words)
+
+
+def test_wordlist_has_at_least_4000_common_words() -> None:
+    words = load_wordlist()
+    assert len(words) >= 4000
+    assert "anybody" in words
+    assert "therefore" in words
+
+
+def test_find_running_keys_short_window_requires_minimum_three_pages() -> None:
+    # A 5-page window: 30% of 5 is 1.5, so the raw percentage rule alone
+    # would treat a line recurring on just 2 pages as a running
+    # header/footer. The short-window floor (>= 3 pages) must prevent that.
+    two_pages = [
+        BandedLine(1, "footer", "Repeat"),
+        BandedLine(2, "footer", "Repeat"),
+    ]
+    assert ("footer", "repeat") not in find_running_keys(two_pages, page_count=5)
+
+    three_pages = [
+        BandedLine(1, "footer", "Repeat"),
+        BandedLine(2, "footer", "Repeat"),
+        BandedLine(3, "footer", "Repeat"),
+    ]
+    assert ("footer", "repeat") in find_running_keys(three_pages, page_count=5)

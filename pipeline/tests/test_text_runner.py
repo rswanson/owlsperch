@@ -13,6 +13,7 @@ idempotency/--force, and scanned/non-in-scope handling via a temp manifest.
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -355,7 +356,9 @@ def test_override_source_is_processed_not_skipped(
     assert (data_dir / "text" / "normal-book-errata" / "p0001.txt").exists()
 
 
-def test_unknown_book_id_is_a_clear_error(book_dirs: tuple[Path, Path], tmp_path: Path) -> None:
+def test_unknown_book_id_is_a_clear_error(
+    book_dirs: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     pdf_dir, data_dir = book_dirs
     manifest_path = _write_manifest(tmp_path, _MANIFEST_YAML)
 
@@ -364,6 +367,8 @@ def test_unknown_book_id_is_a_clear_error(book_dirs: tuple[Path, Path], tmp_path
     )
 
     assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "does-not-exist" in captured.err
 
 
 def test_all_iterates_every_eligible_book_and_prints_summary(
@@ -388,6 +393,121 @@ def test_all_iterates_every_eligible_book_and_prints_summary(
     assert "out-of-scope-book" in output and "skipped" in output
     assert "normal-book:" in output
     assert "normal-book-errata:" in output
+
+
+# ---------------------------------------------------------------------------
+# (MINOR 4) vertical-block exclusion is counted, not just silently discarded
+# ---------------------------------------------------------------------------
+
+
+def test_vertical_blocks_excluded_are_counted_in_summary(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path]
+) -> None:
+    pdf_dir, data_dir = book_dirs
+    (pdf_dir / "book.pdf").write_text("stub")
+
+    # A narrow, tall single-line block: a rotated page-edge chapter tab (the
+    # same shape image credits like "Illus. by ..." take, per the module
+    # docstring -- excluded from reading order, but the loss should now be
+    # visible in the summary).
+    vertical_tab = (
+        '<block xMin="587.7" yMin="145.4" xMax="599.5" yMax="210.8">'
+        '<line xMin="587.7" yMin="145.4" xMax="599.5" yMax="210.8">'
+        '<word xMin="587.7" yMin="145.4" xMax="599.5" yMax="210.8">CHAPTER 7:</word>'
+        "</line></block>"
+    )
+    body_block = _block_xml(34, 100, 580, ["Some body text here."])
+    page_xml = (
+        f'<page width="{_PAGE_WIDTH}" height="{_PAGE_HEIGHT}">'
+        f"<flow>{body_block}{vertical_tab}</flow></page>"
+    )
+    monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_doc_xml([page_xml])))
+
+    entry = _manifest_entry_for("book")
+    summary = extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+
+    assert summary.vertical_blocks_excluded == 1
+    assert "1 vertical blocks excluded" in summary.render()
+    text = (data_dir / "text" / "book" / "p0001.txt").read_text()
+    assert "CHAPTER 7" not in text
+
+
+# ---------------------------------------------------------------------------
+# (MINOR 5) a digit-only footer line is counted as a page number, never as a
+# removed running header/footer.
+# ---------------------------------------------------------------------------
+
+
+def test_page_numbers_are_not_counted_as_headers_removed(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path]
+) -> None:
+    pdf_dir, data_dir = book_dirs
+    (pdf_dir / "book.pdf").write_text("stub")
+
+    # No running header/footer text anywhere -- only a footer page number on
+    # every page. Its digits-stripped normalization is the empty string, so
+    # the (band, "") key recurs on every page just like a real running
+    # footer would; only the page-number check should claim these lines.
+    pages = [
+        _page_xml(None, 100 + i, [f"Left column page {i}."], [f"Right column page {i}."])
+        for i in range(5)
+    ]
+    monkeypatch.setattr(runner_mod, "run_pdftotext", _fake_run_pdftotext(_doc_xml(pages)))
+
+    entry = _manifest_entry_for("book")
+    summary = extract_book(entry, pdf_dir=pdf_dir, data_dir=data_dir)
+
+    assert summary.headers_removed == 0
+    assert summary.page_numbers_found == 5
+
+
+# ---------------------------------------------------------------------------
+# (MINOR 6) a missing `pdftotext` binary is a clear, structured error.
+# ---------------------------------------------------------------------------
+
+
+def _raise_file_not_found(*args: object, **kwargs: object) -> None:
+    raise FileNotFoundError("pdftotext")
+
+
+def test_missing_pdftotext_binary_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", _raise_file_not_found)
+
+    with pytest.raises(runner_mod.TextExtractionError) as exc_info:
+        runner_mod.run_pdftotext(Path("book.pdf"), Path("out.html"))
+
+    message = str(exc_info.value)
+    assert "pdftotext" in message
+    assert "brew install poppler" in message
+
+
+def test_missing_pdftotext_binary_all_continues_and_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, book_dirs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    import io
+
+    pdf_dir, data_dir = book_dirs
+    manifest_path = _write_manifest(tmp_path, _MANIFEST_YAML)
+    for name in ("scanned-book", "out-of-scope-book", "normal-book", "normal-book-errata"):
+        (pdf_dir / f"{name}.pdf").write_text("stub")
+
+    monkeypatch.setattr(subprocess, "run", _raise_file_not_found)
+
+    out = io.StringIO()
+    exit_code = run_text(
+        "all", pdf_dir=pdf_dir, data_dir=data_dir, manifest_path=manifest_path, out=out
+    )
+
+    output = out.getvalue()
+    assert exit_code == 1
+    # Both eligible real books were attempted (the run did not stop after
+    # the first failure) and both reported the clear installation hint.
+    assert "normal-book:" in output
+    assert "normal-book-errata:" in output
+    assert output.count("brew install poppler") == 2
+    # The scanned book is still refused on its own terms, not blamed on the
+    # missing binary (its manifest status is checked before extraction).
+    assert "scanned-book" in output and "B15" in output
 
 
 # ---------------------------------------------------------------------------
