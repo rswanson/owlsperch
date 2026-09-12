@@ -1,0 +1,10 @@
+{
+  "types": {
+    "spell": {
+      "schema": "spell.json",
+      "label": "Spell",
+      "plural_label": "Spells",
+      "version": 1
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/spell.json",
+  "title": "Spell fields",
+  "description": "The `fields` object of a spell record, per spec 4.6.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "school": {
+      "type": "string",
+      "enum": [
+        "Abjuration",
+        "Conjuration",
+        "Divination",
+        "Enchantment",
+        "Evocation",
+        "Illusion",
+        "Necromancy",
+        "Transmutation",
+        "Universal"
+      ],
+      "x-ui": { "label": "School", "filterable": true, "sortable": false, "group": "classification", "order": 1 }
+    },
+    "subschool": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Subschool", "filterable": true, "sortable": false, "group": "classification", "order": 2 }
+    },
+    "descriptors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "x-ui": { "label": "Descriptors", "filterable": true, "sortable": false, "group": "classification", "order": 3 }
+    },
+    "levels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": { "type": "string" },
+          "level": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["class", "level"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "x-ui": { "label": "Levels", "filterable": true, "sortable": false, "group": "classification", "order": 4 }
+    },
+    "components": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["V", "S", "M", "F", "DF", "XP"] },
+      "default": [],
+      "x-ui": { "label": "Components", "filterable": true, "sortable": false, "group": "casting", "order": 5 }
+    },
+    "casting_time": {
+      "type": "string",
+      "x-ui": { "label": "Casting time", "filterable": false, "sortable": false, "group": "casting", "order": 6 }
+    },
+    "range": {
+      "type": "string",
+      "x-ui": { "label": "Range", "filterable": false, "sortable": false, "group": "casting", "order": 7 }
+    },
+    "target_effect_area": {
+      "type": "string",
+      "x-ui": { "label": "Target/Effect/Area", "filterable": false, "sortable": false, "group": "casting", "order": 8 }
+    },
+    "duration": {
+      "type": "string",
+      "x-ui": { "label": "Duration", "filterable": false, "sortable": false, "group": "casting", "order": 9 }
+    },
+    "saving_throw": {
+      "type": "string",
+      "x-ui": { "label": "Saving throw", "filterable": false, "sortable": false, "group": "casting", "order": 10 }
+    },
+    "spell_resistance": {
+      "type": "string",
+      "x-ui": { "label": "Spell resistance", "filterable": false, "sortable": false, "group": "casting", "order": 11 }
+    },
+    "costs": {
+      "type": "object",
+      "properties": {
+        "material": { "type": ["string", "null"], "default": null },
+        "focus": { "type": ["string", "null"], "default": null },
+        "xp": { "type": ["integer", "null"], "default": null }
+      },
+      "additionalProperties": false,
+      "x-ui": { "label": "Costs", "filterable": false, "sortable": false, "group": "casting", "order": 12 }
+    }
+  },
+  "required": ["school", "levels"],
+  "additionalProperties": false
+}

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/envelope.json",
+  "title": "Record envelope",
+  "description": "Common fields on every record, per spec 4.6. Type-specific fields live under `fields` and are validated separately against the type's own schema (e.g. spell.json).",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "`<type>:<book_id>:<slug>`.",
+      "x-ui": { "label": "ID", "filterable": false, "sortable": false, "group": "core", "order": 1 }
+    },
+    "type": {
+      "type": "string",
+      "x-ui": { "label": "Type", "filterable": true, "sortable": false, "group": "core", "order": 2 }
+    },
+    "name": {
+      "type": "string",
+      "x-ui": { "label": "Name", "filterable": false, "sortable": true, "group": "core", "order": 3 }
+    },
+    "slug": {
+      "type": "string",
+      "description": "ASCII-folded kebab-case of `name`.",
+      "x-ui": { "label": "Slug", "filterable": false, "sortable": false, "group": "core", "order": 4 }
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "x-ui": { "label": "Aliases", "filterable": false, "sortable": false, "group": "core", "order": 5 }
+    },
+    "book_id": {
+      "type": "string",
+      "x-ui": { "label": "Book", "filterable": true, "sortable": false, "group": "source", "order": 6 }
+    },
+    "pages": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 1,
+      "x-ui": { "label": "Pages", "filterable": false, "sortable": false, "group": "source", "order": 7 }
+    },
+    "citation": {
+      "type": "string",
+      "description": "e.g. \"PHB p. 120\".",
+      "x-ui": { "label": "Citation", "filterable": false, "sortable": false, "group": "source", "order": 8 }
+    },
+    "text_md": {
+      "type": "string",
+      "description": "Rule text as Markdown.",
+      "x-ui": { "label": "Text", "filterable": false, "sortable": false, "group": "core", "order": 9 }
+    },
+    "fields": {
+      "type": "object",
+      "description": "Type-specific fields; validated against the type's own schema from the registry.",
+      "x-ui": { "label": "Fields", "filterable": false, "sortable": false, "group": "core", "order": 10 }
+    },
+    "tables": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Table record ids referenced by this record.",
+      "x-ui": { "label": "Tables", "filterable": false, "sortable": false, "group": "core", "order": 11 }
+    },
+    "canonical": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set at build time (spec 4.7); optional at extraction time.",
+      "x-ui": { "label": "Canonical", "filterable": true, "sortable": false, "group": "build", "order": 12 }
+    },
+    "variant_of": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Set at build time (spec 4.7); optional at extraction time.",
+      "x-ui": { "label": "Variant of", "filterable": false, "sortable": false, "group": "build", "order": 13 }
+    },
+    "applied_overrides": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Errata and update entry ids applied to this record.",
+      "x-ui": { "label": "Applied overrides", "filterable": false, "sortable": false, "group": "build", "order": 14 }
+    },
+    "macro_eligible": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set at build time (spec 4.11); optional at extraction time.",
+      "x-ui": { "label": "Macro eligible", "filterable": true, "sortable": false, "group": "build", "order": 15 }
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "x-ui": { "label": "Schema version", "filterable": false, "sortable": false, "group": "meta", "order": 16 }
+    },
+    "extraction": {
+      "type": "object",
+      "properties": {
+        "tier": { "type": "string", "enum": ["haiku", "sonnet", "opus"] },
+        "model": { "type": "string" },
+        "segment_id": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["tier", "model", "segment_id", "timestamp"],
+      "additionalProperties": false,
+      "x-ui": { "label": "Extraction", "filterable": false, "sortable": false, "group": "meta", "order": 17 }
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "name",
+    "slug",
+    "book_id",
+    "pages",
+    "citation",
+    "text_md",
+    "fields",
+    "schema_version",
+    "extraction"
+  ],
+  "additionalProperties": false
+}
