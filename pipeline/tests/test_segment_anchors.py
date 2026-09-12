@@ -44,6 +44,34 @@ def test_non_school_line_does_not_trigger_spell() -> None:
     assert find_triggers(paragraphs, body_median=10.0) == []
 
 
+def test_spell_school_merged_with_stat_block_still_triggers() -> None:
+    # Real-world column repair often merges the school line together with
+    # the spell's Level/Components/... lines into one multi-line paragraph
+    # instead of keeping it alone -- as long as it starts with a school and
+    # contains a "Level:" cue, it should still count.
+    paragraphs = [
+        _para("Antipathy"),
+        _para(
+            "Divination (Scrying) Level: Sor/Wiz 4 Components: V, S, M Casting Time: 1 hour",
+            line_count=9,
+        ),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["spell"]
+    assert triggers[0].heading == "Antipathy"
+
+
+def test_ordinary_sentence_starting_with_universal_is_not_a_school_line() -> None:
+    # "Universal" is the one school name that is also a plain English word;
+    # without a "Level:" cue, a merged multi-line paragraph starting with it
+    # should not be mistaken for a spell's school line.
+    paragraphs = [
+        _para("Special Rule"),
+        _para("Universal rules apply to every creature in the game world.", line_count=3),
+    ]
+    assert find_triggers(paragraphs, body_median=10.0) == []
+
+
 def test_feat_anchor_name_then_prerequisite_within_lookahead() -> None:
     paragraphs = [
         _para("Power Attack [General]"),

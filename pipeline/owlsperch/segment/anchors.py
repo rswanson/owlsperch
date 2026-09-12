@@ -42,8 +42,9 @@ Kind = Literal["spell", "stat_block", "feat", "table"]
 
 _SCHOOL_RE = re.compile(
     r"^(?:Abjuration|Conjuration|Divination|Enchantment|Evocation|Illusion"
-    r"|Necromancy|Transmutation|Universal)(?:\s*(?:\([^)]*\)|\[[^\]]*\]))*\s*$"
+    r"|Necromancy|Transmutation|Universal)(?:\s*(?:\([^)]*\)|\[[^\]]*\]))*(?=\s|$)"
 )
+_LEVEL_CUE_RE = re.compile(r"\bLevel\s*:")
 _STAT_BLOCK_RE = re.compile(r"^(Size/Type|Hit Dice)\s*:", re.IGNORECASE)
 _PREREQ_RE = re.compile(r"^(Prerequisite|Benefit)\b", re.IGNORECASE)
 _TABLE_CAPTION_RE = re.compile(r"^Table\s+\d+[–-]\d+\s*:")
@@ -86,11 +87,21 @@ def _is_short_line(paragraph: Paragraph) -> bool:
 
 
 def _is_school_line(paragraph: Paragraph) -> bool:
-    return (
-        paragraph.kind == "prose"
-        and paragraph.line_count == 1
-        and bool(_SCHOOL_RE.match(paragraph.text.strip()))
-    )
+    """Whether `paragraph` opens with a school pattern (see module
+    docstring's **spell** rule). Checked as a *prefix*, not a whole-paragraph
+    match: a real book's column repair frequently merges the school line
+    together with the spell's Level/Components/... stat-block lines into one
+    multi-line paragraph rather than keeping it alone. A single-line
+    paragraph that is only the school pattern is unambiguous; a longer one
+    must also show a "Level:" cue somewhere, so an ordinary sentence that
+    merely starts with a school-shaped word (only "Universal" is a real
+    English word) is not mistaken for a spell header."""
+    if paragraph.kind != "prose":
+        return False
+    text = paragraph.text.strip()
+    if not _SCHOOL_RE.match(text):
+        return False
+    return paragraph.line_count == 1 or bool(_LEVEL_CUE_RE.search(text))
 
 
 def _table_extent(paragraphs: list[Paragraph], start: int) -> int:
