@@ -24,14 +24,30 @@ Algorithm (per page):
     (justified body text runs edge to edge). A table cell block -- short,
     ragged, few-word lines -- fails this test and remains eligible.
 
+1b. **Exclude stat-block-like blocks from table grouping.** Two (or more)
+    spell or monster stat blocks that happen to sit side by side with a
+    shared y-range (e.g. two adjacent spell descriptions' "Level:"/
+    "Casting Time:"/"Saving Throw:" blocks in the PHB's 3-column spell
+    chapter) satisfy step 2's pairwise table-column test just as well as
+    real table columns do, and are not prose-like either (their lines are
+    short, not justified running text) -- so they slip past 1a. To catch
+    this instead: a block is **label:value-like** -- and, like a
+    prose-like block, never eligible to join a table group -- when at
+    least `LABEL_VALUE_LINE_FRACTION` (50%) of its (non-blank) lines match
+    `^[A-Z][A-Za-z' /()]{1,30}:\\s` (e.g. "Level: Sor/Wiz 3", "Casting
+    Time: 1 standard action", "Saving Throw: None"). A genuine table
+    column's cells (a name, a cost, a die code) essentially never take
+    this "Label: value" shape.
+
 2. **Detect table groups.** `pdftotext` frequently emits each column of a
    multi-column table (e.g. a weapon table: name, cost, damage, critical,
    type) as its own narrow block rather than one block per row. Left to
    step 3's column clustering, these narrow blocks would each become their
    own "column" and get emitted one after another -- i.e. column-major
    (every name, then every cost, then every damage) instead of row-major.
-   To detect this: among the remaining non-vertical, non-prose-like blocks
-   with at least `TABLE_CANDIDATE_MIN_LINES` (2) non-blank lines -- a
+   To detect this: among the remaining non-vertical, non-prose-like,
+   non-label:value-like blocks with at least `TABLE_CANDIDATE_MIN_LINES`
+   (2) non-blank lines -- a
    one-line block is a heading or caption, never a table column, however
    its y-range happens to sit -- find every pair whose vertical extents
    overlap by at least `TABLE_OVERLAP_FRACTION` (70%) of the *shorter*
@@ -149,6 +165,7 @@ prose.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from owlsperch.text.bbox import Block, Line, Page, Word
@@ -200,6 +217,15 @@ PROSE_LINE_SPAN_FRACTION = 0.75
 #: ...and at least this fraction of a block's (non-blank) lines must span
 #: it this way for the block to count as prose-like (see step 1a).
 PROSE_SPANNING_LINE_FRACTION = 0.60
+
+#: A block's line matching this shape ("Label: value...", e.g. "Level:
+#: Sor/Wiz 3", "Casting Time: 1 standard action") is evidence of a spell or
+#: monster stat block rather than a table cell (see step 1b).
+_LABEL_VALUE_LINE_RE = re.compile(r"^[A-Z][A-Za-z' /()]{1,30}:\s")
+
+#: A block needs at least this fraction of its (non-blank) lines to match
+#: `_LABEL_VALUE_LINE_RE` to count as label:value-like (see step 1b).
+LABEL_VALUE_LINE_FRACTION = 0.50
 
 #: Within a table group, lines whose y-centers are within this fraction of
 #: the median line height of each other belong to the same row (see the
@@ -265,6 +291,20 @@ def _is_prose_like_block(block: Block) -> bool:
         return False
     spanning = sum(1 for line in lines if line.width >= PROSE_LINE_SPAN_FRACTION * block_width)
     return spanning / len(lines) >= PROSE_SPANNING_LINE_FRACTION
+
+
+def _is_label_value_block(block: Block) -> bool:
+    """Whether `block` looks like a spell's or monster's own stat block --
+    mostly "Label: value" lines -- as opposed to a genuine table column's
+    cells (see module docstring, step 1b). Like a prose-like block,
+    label:value-like blocks are excluded from table grouping entirely
+    (step 2): two adjacent stat blocks sharing a y-range otherwise satisfy
+    the pairwise table-column test just as well as real table columns do."""
+    lines = [line for line in block.lines if line.text.strip()]
+    if not lines:
+        return False
+    matching = sum(1 for line in lines if _LABEL_VALUE_LINE_RE.match(line.text))
+    return matching / len(lines) >= LABEL_VALUE_LINE_FRACTION
 
 
 @dataclass(frozen=True)
@@ -339,6 +379,35 @@ def _is_table_pair(a: Block, b: Block) -> bool:
     )
 
 
+def _cluster_1d[T](items: list[tuple[float, T]], tolerance: float) -> list[list[T]]:
+    """Single-pass 1-D clustering shared by `_cluster_lines_into_rows` and
+    `_confirmed_gap_splits`: `items` (each a `(key, payload)` pair) are
+    visited in ascending `key` order, and a payload joins the current
+    cluster when its key is within `tolerance` of that cluster's
+    running-average key so far -- otherwise it starts a new cluster. Every
+    item before the current one in sorted order has a key no greater than
+    it, so the running average is always <= the current key, making a
+    plain (rather than absolute) difference equivalent here.
+
+    This is *not* what `_cluster_columns` does for column clustering (a
+    different, extent-based test: a block joins a column while its `xMin`
+    is close to that column's *rightmost extent so far*, not the average
+    key of its members) -- the two are only superficially similar."""
+    ordered = sorted(items, key=lambda item: item[0])
+    clusters: list[list[T]] = []
+    key_sums: list[float] = []
+    for key, payload in ordered:
+        if clusters:
+            running_avg = key_sums[-1] / len(clusters[-1])
+            if key - running_avg <= tolerance:
+                clusters[-1].append(payload)
+                key_sums[-1] += key
+                continue
+        clusters.append([payload])
+        key_sums.append(key)
+    return clusters
+
+
 def _cluster_lines_into_rows(lines: list[Line]) -> list[list[Line]]:
     """Group `lines` into rows by y-center, top to bottom: lines whose
     y-centers are within `TABLE_ROW_FRACTION` of the median line height of
@@ -349,20 +418,8 @@ def _cluster_lines_into_rows(lines: list[Line]) -> list[list[Line]]:
     median_height = heights[len(heights) // 2] if heights[len(heights) // 2] > 0 else 1.0
     row_threshold = median_height * TABLE_ROW_FRACTION
 
-    sorted_lines = sorted(lines, key=lambda ln: (ln.y_min + ln.y_max) / 2)
-    row_clusters: list[list[Line]] = []
-    row_center_sums: list[float] = []
-    for line in sorted_lines:
-        center = (line.y_min + line.y_max) / 2
-        if row_clusters:
-            last_avg = row_center_sums[-1] / len(row_clusters[-1])
-            if abs(center - last_avg) <= row_threshold:
-                row_clusters[-1].append(line)
-                row_center_sums[-1] += center
-                continue
-        row_clusters.append([line])
-        row_center_sums.append(center)
-    return row_clusters
+    items = [((ln.y_min + ln.y_max) / 2, ln) for ln in lines]
+    return _cluster_1d(items, row_threshold)
 
 
 def _build_table_group(member_blocks: list[Block]) -> TableGroup:
@@ -422,22 +479,17 @@ def _confirmed_gap_splits(
     gappy_row_indices: list[int],
     cluster_tolerance: float,
 ) -> list[float]:
-    """Cluster the gappy rows' large-gap midpoints (single-pass, by
-    running average, like `_cluster_columns`) and return the x-position of
-    every cluster hit by at least `TABLE_GAP_CLUSTER_FRACTION` of the
-    gappy rows -- the confirmed column splits (see step 2a)."""
-    entries = sorted((mid, i) for i in gappy_row_indices for mid in row_gap_midpoints[i])
-    clusters: list[list[tuple[float, int]]] = []
-    cluster_sums: list[float] = []
-    for mid, row_index in entries:
-        if clusters:
-            running_avg = cluster_sums[-1] / len(clusters[-1])
-            if mid - running_avg <= cluster_tolerance:
-                clusters[-1].append((mid, row_index))
-                cluster_sums[-1] += mid
-                continue
-        clusters.append([(mid, row_index)])
-        cluster_sums.append(mid)
+    """Cluster the gappy rows' large-gap midpoints with `_cluster_1d` (the
+    same single-pass, running-average algorithm `_cluster_lines_into_rows`
+    uses) and return the x-position of every cluster hit by at least
+    `TABLE_GAP_CLUSTER_FRACTION` of the gappy rows -- the confirmed column
+    splits (see step 2a)."""
+    items = [
+        (mid, (mid, row_index))
+        for row_index in gappy_row_indices
+        for mid in row_gap_midpoints[row_index]
+    ]
+    clusters = _cluster_1d(items, cluster_tolerance)
 
     n_gappy = len(gappy_row_indices)
     return sorted(
@@ -509,17 +561,15 @@ def _build_prose_sub_blocks(lines: list[Line], splits: list[float]) -> list[Bloc
     return sub_blocks
 
 
-def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] | None:
-    """If `block`'s own lines look like a table flattened into one block
-    (see step 2a in the module docstring), return the `TableGroup` it
-    represents. If they instead look like two (or more) prose columns
-    merged into one block -- the same consistent-gap shape, but with
-    sentence-like cells -- return the `Block`s to split it into. Otherwise
-    `None`."""
-    lines = [line for line in block.lines if line.words]
-    if not lines:
-        return None
-
+def _single_block_table_candidate(
+    lines: list[Line],
+) -> tuple[list[list[Word]], float, float] | None:
+    """Step 1 of single-block table detection (see step 2a in the module
+    docstring): bucket `lines` into rows the same way a table group's rows
+    are (see "Emitting a table group"), then compute the block's "large
+    gap" threshold from its own word spacing. Returns `(rows_words,
+    threshold, median_height)`, or `None` if the block has no words to
+    measure at all."""
     row_clusters = _cluster_lines_into_rows(lines)
     rows_words = [_row_words(cluster) for cluster in row_clusters]
 
@@ -540,7 +590,15 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] |
     ]
     median_gap = _median(intra_line_gaps, default=0.0)
     threshold = max(TABLE_GAP_MEDIAN_FACTOR * median_gap, TABLE_GAP_HEIGHT_FACTOR * median_height)
+    return rows_words, threshold, median_height
 
+
+def _gappy_rows(
+    rows_words: list[list[Word]], threshold: float
+) -> tuple[list[list[float]], list[int]] | None:
+    """Step 2: each row's large-gap midpoints, and which rows are "gappy"
+    (see `TABLE_MIN_GAPS_PER_ROW`, step 2a). Returns `None` if fewer than
+    `TABLE_MIN_GAPPY_ROWS` rows qualify -- too few to be a table at all."""
     row_gap_midpoints = [
         [mid for gap, mid in _word_gaps(row) if gap > threshold] for row in rows_words
     ]
@@ -551,16 +609,25 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] |
     ]
     if len(gappy_row_indices) < TABLE_MIN_GAPPY_ROWS:
         return None
+    return row_gap_midpoints, gappy_row_indices
 
-    confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
-    if not confirmed_splits:
-        return None
 
+def _build_single_block_table_or_prose_split(
+    block: Block,
+    lines: list[Line],
+    rows_words: list[list[Word]],
+    confirmed_splits: list[float],
+    gappy_row_indices: list[int],
+    median_height: float,
+) -> TableGroup | list[Block]:
+    """Step 3: given confirmed column splits, decide whether the gappy
+    rows' cells are table cells (build the `TableGroup`) or full sentences
+    -- two prose columns `pdftotext` merged into one block (see step 2a's
+    addendum in the module docstring) -- and split into separate column
+    `Block`s instead."""
     # A table cell is short -- a name, a number, a die code. If the
     # confirmed splits' cells are, on the whole, full sentences instead,
-    # this is two prose columns `pdftotext` merged into one block, not a
-    # table (see step 2a's addendum in the module docstring): split the
-    # block into separate column blocks instead of reading it row-wise.
+    # this is two prose columns merged into one block, not a table.
     gappy_cell_word_counts = [
         float(len(cell_words))
         for i in gappy_row_indices
@@ -577,12 +644,46 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] |
         else TableRow(cells=[" ".join(w.text for w in words)])
         for i, words in enumerate(rows_words)
     ]
+    all_words = [word for row in rows_words for word in row]
     max_height = max(w.y_max - w.y_min for w in all_words)
     return TableGroup(
         rows=rows,
         y_min=block.y_min,
         median_word_height=median_height,
         max_word_height=max_height,
+    )
+
+
+def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] | None:
+    """If `block`'s own lines look like a table flattened into one block
+    (see step 2a in the module docstring), return the `TableGroup` it
+    represents. If they instead look like two (or more) prose columns
+    merged into one block -- the same consistent-gap shape, but with
+    sentence-like cells -- return the `Block`s to split it into. Otherwise
+    `None`. Done in three steps: `_single_block_table_candidate` (row
+    bucketing and gap threshold), `_gappy_rows` (which rows qualify), and
+    `_build_single_block_table_or_prose_split` (the final table-vs-prose
+    decision and result)."""
+    lines = [line for line in block.lines if line.words]
+    if not lines:
+        return None
+
+    candidate = _single_block_table_candidate(lines)
+    if candidate is None:
+        return None
+    rows_words, threshold, median_height = candidate
+
+    gappy = _gappy_rows(rows_words, threshold)
+    if gappy is None:
+        return None
+    row_gap_midpoints, gappy_row_indices = gappy
+
+    confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
+    if not confirmed_splits:
+        return None
+
+    return _build_single_block_table_or_prose_split(
+        block, lines, rows_words, confirmed_splits, gappy_row_indices, median_height
     )
 
 
@@ -634,7 +735,9 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
     candidate_indices = [
         i
         for i in range(n)
-        if not _is_prose_like_block(blocks[i]) and _has_min_lines_for_table_candidacy(blocks[i])
+        if not _is_prose_like_block(blocks[i])
+        and not _is_label_value_block(blocks[i])
+        and _has_min_lines_for_table_candidacy(blocks[i])
     ]
 
     adjacency: list[set[int]] = [set() for _ in range(n)]

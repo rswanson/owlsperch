@@ -523,6 +523,56 @@ def test_short_block_covering_only_20_percent_of_neighbors_height_is_not_a_table
     assert len(ordered) == 3
 
 
+def _label_value_block(x_min: float, x_max: float, y_min: float, labels: list[str]) -> str:
+    """One block whose lines each read a whole "Label: value" string (e.g.
+    "Level: Sor/Wiz 3") -- shaped like a spell's or monster's own stat
+    block, not a table column's cells."""
+    row_height = 14.0
+    lines = []
+    y = y_min
+    for text in labels:
+        line_y_max = y + 11.0
+        lines.append(
+            f'<line xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{line_y_max}">'
+            f'<word xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{line_y_max}">{text}</word>'
+            f"</line>"
+        )
+        y += row_height
+    y_max = y - row_height + 11.0
+    return (
+        f'<flow><block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" '
+        f'yMax="{y_max}">{"".join(lines)}</block></flow>'
+    )
+
+
+def test_three_adjacent_stat_blocks_do_not_merge_into_a_table_group(tmp_path: Path) -> None:
+    # Real-corpus false positive (B3 follow-up, PHB pp. 254/272 "Mind Fog",
+    # "Repel Wood"): three adjacent spell stat blocks of equal height,
+    # side by side, mutually satisfy the same "no x-overlap, shared
+    # y-range" pairwise test real table columns do -- but their lines are
+    # "Label: value" shaped, not table cells, so they must never merge
+    # into one TableGroup.
+    labels = [
+        "Level: Sor/Wiz 5",
+        "Components: V, S",
+        "Casting Time: 1 standard action",
+        "Range: Long (400 ft. + 40 ft./level)",
+        "Duration: Instantaneous",
+        "Saving Throw: Will negates",
+    ]
+    col1 = _label_value_block(34.0, 140.0, 100.0, labels)
+    col2 = _label_value_block(160.0, 266.0, 100.0, labels)
+    col3 = _label_value_block(286.0, 392.0, 100.0, labels)
+    page = _parse_page(tmp_path, "three_stat_blocks.html", col1 + col2 + col3)
+
+    ordered = order_blocks(page)
+
+    assert not any(isinstance(item, TableGroup) for item in ordered)
+    assert len(ordered) == 3
+    all_lines_text = [line.text for item in ordered for line in item.lines]  # type: ignore[union-attr]
+    assert "\t" not in "\n".join(all_lines_text)
+
+
 def test_transitive_but_not_mutual_overlap_is_not_one_table_group(tmp_path: Path) -> None:
     # A pairwise-overlaps-B and B pairwise-overlaps-C (each qualifying on
     # its own as a table-column pair: >= 70% vertical overlap, no
