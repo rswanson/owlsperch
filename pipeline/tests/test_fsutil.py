@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -46,3 +47,26 @@ def test_atomic_write_text_no_leftover_temp_file_on_success(tmp_path: Path) -> N
     path = tmp_path / "out.txt"
     atomic_write_text(path, "content\n")
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_atomic_write_text_preserves_existing_permission_bits(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "out.txt"
+    path.write_text("old\n")
+    path.chmod(0o640)
+
+    atomic_write_text(path, "new\n")
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    assert path.read_text() == "new\n"
+
+
+def test_atomic_write_text_sequential_writes_leave_no_temp_files(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "out.txt"
+    atomic_write_text(path, "first\n")
+    atomic_write_text(path, "second\n")
+    assert list(tmp_path.iterdir()) == [path]
+    assert path.read_text() == "second\n"
