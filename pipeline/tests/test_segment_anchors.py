@@ -91,6 +91,38 @@ def test_feat_anchor_benefit_directly_after_name() -> None:
     assert [t.kind for t in triggers] == ["feat"]
 
 
+def test_feat_anchor_benefit_mid_paragraph_after_lead_sentence() -> None:
+    # Realistic column-repair shape (PHB p.101 "Shield Proficiency"): a
+    # lead-in sentence shares the paragraph with "Benefit:", which no longer
+    # starts it. Must still trigger a feat anchor.
+    paragraphs = [
+        _para("SHIELD PROFICIENCY [GENERAL]"),
+        _para(
+            "You are proficient with bucklers, small shields, and large shields. "
+            "Benefit: You can use a shield and take only the standard penalties.",
+            line_count=3,
+        ),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["feat"]
+    assert triggers[0].start == 0
+    assert triggers[0].heading == "SHIELD PROFICIENCY [GENERAL]"
+
+
+def test_feat_anchor_prerequisite_mid_paragraph_after_lead_sentence() -> None:
+    paragraphs = [
+        _para("Improved Shield Bash [General]"),
+        _para(
+            "You can bash with a shield while retaining its shield bonus to your "
+            "Armor Class. Prerequisite: Shield Proficiency.",
+            line_count=3,
+        ),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0)
+    assert [t.kind for t in triggers] == ["feat"]
+    assert triggers[0].heading == "Improved Shield Bash [General]"
+
+
 def test_feat_lookahead_too_far_does_not_trigger() -> None:
     paragraphs = [
         _para("Toughness"),

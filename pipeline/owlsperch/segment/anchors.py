@@ -15,9 +15,13 @@ self-terminating extent runs to.
   is backdated to the nearest preceding heading or short line (the
   monster's name), scanning back at most `STAT_BLOCK_LOOKBACK` paragraphs;
   if none is found, the stat-block line itself is used as a last resort.
-- **feat**: a short name line (optionally with a bracketed type, e.g.
-  "Power Attack [General]") followed within `FEAT_LOOKAHEAD` (2) paragraphs
-  by a line starting "Prerequisite" or "Benefit".
+- **feat**: a short (<= 8 words) name line, optionally ending in a bracketed
+  type (e.g. "Power Attack [General]"), whose name portion is all-caps or
+  Title Case, followed within `FEAT_LOOKAHEAD` (2) paragraphs by a paragraph
+  that *contains* "Prerequisite:"/"Prerequisites:"/"Benefit:" anywhere --
+  not necessarily at its start, since a book's column repair often keeps a
+  lead-in sentence in the same paragraph as the cue (e.g. "You are
+  proficient with bucklers... Benefit: You can use a shield...").
 - **table**: a line matching `Table <N>-<M>:`. Its extent runs forward
   while the following paragraphs are table-kind or prose paragraphs
   starting with a digit (a footnote), stopping at the first paragraph that
@@ -46,8 +50,17 @@ _SCHOOL_RE = re.compile(
 )
 _LEVEL_CUE_RE = re.compile(r"\bLevel\s*:")
 _STAT_BLOCK_RE = re.compile(r"^(Size/Type|Hit Dice)\s*:", re.IGNORECASE)
-_PREREQ_RE = re.compile(r"^(Prerequisite|Benefit)\b", re.IGNORECASE)
+#: A feat's "Prerequisite:"/"Benefit:" cue, searched *anywhere* in a
+#: paragraph -- not just at its start. A real book's column repair often
+#: merges a lead-in sentence together with "Benefit:" (or "Prerequisite:")
+#: into one paragraph, e.g. "You are proficient with bucklers... Benefit:
+#: You can use a shield..." (see `_is_feat_name_line`/the **feat** rule in
+#: the module docstring).
+_PREREQ_RE = re.compile(r"\b(Prerequisites?|Benefit):", re.IGNORECASE)
 _TABLE_CAPTION_RE = re.compile(r"^Table\s+\d+[–-]\d+\s*:")
+#: A feat name line's optional trailing bracketed type, e.g. "[General]" or
+#: "[Fighter]" (see `_is_feat_name_line`).
+_BRACKET_SUFFIX_RE = re.compile(r"\s*\[[^\]]*\]$")
 
 #: A name/heading line candidate has at most this many words.
 SHORT_LINE_MAX_WORDS = 8
@@ -84,6 +97,40 @@ def _is_short_line(paragraph: Paragraph) -> bool:
     if _STAT_BLOCK_RE.match(text) or _PREREQ_RE.match(text) or _TABLE_CAPTION_RE.match(text):
         return False
     return True
+
+
+def _is_title_case_or_upper(text: str) -> bool:
+    """Whether every word in `text` is capitalized (Title Case), or `text`
+    is entirely uppercase -- the case shapes a feat's own name line takes
+    (see `_is_feat_name_line`). Punctuation-only "words" (e.g. a lone "&")
+    are ignored either way."""
+    if not text:
+        return False
+    if text.upper() == text:
+        return True
+    for word in text.split():
+        letters = [c for c in word if c.isalpha()]
+        if letters and letters[0] != letters[0].upper():
+            return False
+    return True
+
+
+def _is_feat_name_line(paragraph: Paragraph) -> bool:
+    """Whether `paragraph` is a feat's own name line (see module docstring's
+    **feat** rule): a short (<= `SHORT_LINE_MAX_WORDS`) single-line prose
+    paragraph, optionally ending in a bracketed type (e.g. "[General]" or
+    "[Fighter]"), whose name portion is either all-caps or Title Case. This
+    is stricter than `_is_short_line` (which allows any case) specifically
+    so that loosening the "Prerequisite:"/"Benefit:" lookahead check to
+    search anywhere in a paragraph (not just its start) doesn't turn
+    ordinary short sentences into false feat anchors."""
+    if not _is_short_line(paragraph):
+        return False
+    text = paragraph.text.strip()
+    name = _BRACKET_SUFFIX_RE.sub("", text).strip()
+    if not name:
+        return False
+    return _is_title_case_or_upper(name)
 
 
 def _is_school_line(paragraph: Paragraph) -> bool:
@@ -156,13 +203,16 @@ def find_triggers(paragraphs: list[Paragraph], body_median: float) -> list[Trigg
         if _is_short_line(paragraphs[i]) and _is_school_line(paragraphs[i + 1]):
             found[i] = Trigger(start=i, kind="spell", heading=paragraphs[i].text.strip())
 
-    # Feat: short name line, "Prerequisite"/"Benefit" within FEAT_LOOKAHEAD.
+    # Feat: short name line, "Prerequisite:"/"Benefit:" anywhere within the
+    # next FEAT_LOOKAHEAD paragraphs (not necessarily at their start -- a
+    # real book's column repair often keeps a lead-in sentence in the same
+    # paragraph as the cue).
     for i in range(n):
-        if i in found or not _is_short_line(paragraphs[i]):
+        if i in found or not _is_feat_name_line(paragraphs[i]):
             continue
         for j in range(i + 1, min(i + 1 + FEAT_LOOKAHEAD, n)):
             candidate = paragraphs[j]
-            if candidate.kind == "prose" and _PREREQ_RE.match(candidate.text.strip()):
+            if candidate.kind == "prose" and _PREREQ_RE.search(candidate.text):
                 found[i] = Trigger(start=i, kind="feat", heading=paragraphs[i].text.strip())
                 break
 
