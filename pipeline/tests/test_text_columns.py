@@ -402,6 +402,60 @@ def test_table_beside_prose_column_only_table_becomes_a_group(tmp_path: Path) ->
     assert not any("\t" in line.text for line in prose_blocks[0].lines)
 
 
+def test_single_block_merged_prose_columns_are_split_not_tabular(tmp_path: Path) -> None:
+    # Prose columns (like the PHB's own 3-column spell-chapter layout the
+    # module docstring's step 1a describes) that `pdftotext` merged into
+    # ONE block instead of separate ones -- the B3 follow-up real-corpus
+    # failure mode (PHB pp. 197, 204: two adjacent spell entries' stat
+    # blocks read as one tab-joined table row). Each line has 3 runs of 6
+    # words each (sentence-like "cells", not table cells) separated by
+    # large, consistent gaps -- the same shape a genuine single-block
+    # table has (TABLE_MIN_GAPS_PER_ROW needs >= 2 large gaps per row, so
+    # a bare two-run/one-gap merge can never even reach detection; three
+    # runs is the minimal faithful reproduction) -- but each "cell" is a
+    # run of prose words, not a table cell, so the block must be split at
+    # the gaps into separate prose columns, not read row-wise.
+    word_width = 18.0
+    small_gap = 4.0
+    big_gap = 90.0
+    words_per_run = 6
+
+    def _run(x0: float, row_idx: int, label: str) -> list[tuple[float, float, str]]:
+        words: list[tuple[float, float, str]] = []
+        x = x0
+        for word_idx in range(words_per_run):
+            text = label if row_idx == 0 and word_idx == 0 else f"w{row_idx}_{word_idx}"
+            words.append((x, x + word_width, text))
+            x += word_width + small_gap
+        return words
+
+    rows: list[list[tuple[float, float, str]]] = []
+    for row_idx in range(5):
+        left = _run(34.0, row_idx, "LEFT")
+        mid = _run(left[-1][1] + big_gap, row_idx, "MID")
+        right = _run(mid[-1][1] + big_gap, row_idx, "RIGHT")
+        rows.append(left + mid + right)
+
+    block_xml = _wide_block_of_rows(rows, y_start=100.0)
+    page = _parse_page(tmp_path, "single_block_merged_prose_cols.html", block_xml)
+
+    ordered = order_blocks(page)
+
+    assert len(ordered) == 3
+    for item in ordered:
+        assert isinstance(item, Block)
+
+    all_lines_text: list[str] = []
+    first_words: list[str] = []
+    for item in ordered:
+        assert isinstance(item, Block)
+        all_lines_text.extend(line.text for line in item.lines)
+        first_words.append(item.lines[0].words[0].text)
+
+    assert "\t" not in "\n".join(all_lines_text)
+    assert first_words == ["LEFT", "MID", "RIGHT"]
+
+
 def test_transitive_but_not_mutual_overlap_is_not_one_table_group(tmp_path: Path) -> None:
     # A pairwise-overlaps-B and B pairwise-overlaps-C (each qualifying on
     # its own as a table-column pair: >= 70% vertical overlap, no

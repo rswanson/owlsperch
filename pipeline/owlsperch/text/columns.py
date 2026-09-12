@@ -73,6 +73,21 @@ Algorithm (per page):
     cluster is a confirmed column split only if it is hit by at least
     `TABLE_GAP_CLUSTER_FRACTION` (60%) of the gappy rows.
 
+    Before committing to a table, one more check guards against a
+    different false positive: two adjacent prose columns (e.g. two spell
+    entries side by side) that `pdftotext` happened to keep as one block.
+    These have the same consistent-large-gap shape a table does -- the
+    gap is the column gutter -- but each "cell" is a run of prose words,
+    not a table cell. So the confirmed splits' cells (across the gappy
+    rows) are measured for their median word count; a median of
+    `TABLE_CELL_MAX_MEDIAN_WORDS` (4) or fewer confirms a table, but a
+    higher median means these are sentences, not cells, and the block is
+    instead split at the confirmed x-positions into that many ordinary
+    `Block`s (one per column, each keeping every original line's words
+    that fall on its side of the split) and handed back to be ordered as
+    prose columns like any other block (step 3 onward) -- not as a table
+    at all.
+
     A confirmed single-block table becomes a table group exactly like
     step 2's: each gappy row is split into cells at the confirmed
     x-splits; every other row (a caption, a category sub-heading, an
@@ -184,6 +199,13 @@ TABLE_MIN_GAPS_PER_ROW = 2
 #: A single block needs at least this many gappy rows to be a table (see
 #: step 2a) -- fewer is an ordinary two-cell layout, not a table.
 TABLE_MIN_GAPPY_ROWS = 3
+
+#: A single-block table's gappy-row cells (split at the confirmed gap
+#: x-positions) must have a median word count no higher than this many
+#: to still be a table (see step 2a) -- a higher median means the "cells"
+#: are full sentences, i.e. two prose columns `pdftotext` merged into one
+#: block, not table cells.
+TABLE_CELL_MAX_MEDIAN_WORDS = 4
 
 #: A cluster of gappy rows' large-gap midpoints is a confirmed column
 #: split only if at least this fraction of the gappy rows land in it (see
@@ -386,22 +408,75 @@ def _confirmed_gap_splits(
     )
 
 
-def _split_words_at(words: list[Word], splits: list[float]) -> list[str]:
-    """Bucket `words` (x-sorted) into `len(splits) + 1` cells at the given
-    x-positions, space-joining each cell's words."""
-    buckets: list[list[str]] = [[] for _ in range(len(splits) + 1)]
+def _bucket_words_at(words: list[Word], splits: list[float]) -> list[list[Word]]:
+    """Bucket `words` (x-sorted) into `len(splits) + 1` groups at the given
+    x-positions, left to right."""
+    buckets: list[list[Word]] = [[] for _ in range(len(splits) + 1)]
     for word in words:
         index = 0
         while index < len(splits) and word.x_min > splits[index]:
             index += 1
-        buckets[index].append(word.text)
-    return [" ".join(bucket) for bucket in buckets]
+        buckets[index].append(word)
+    return buckets
 
 
-def _detect_single_block_table_group(block: Block) -> TableGroup | None:
+def _split_words_at(words: list[Word], splits: list[float]) -> list[str]:
+    """Bucket `words` (x-sorted) into `len(splits) + 1` cells at the given
+    x-positions, space-joining each cell's words."""
+    return [" ".join(w.text for w in bucket) for bucket in _bucket_words_at(words, splits)]
+
+
+def _build_prose_sub_blocks(lines: list[Line], splits: list[float]) -> list[Block]:
+    """Split a single block's own `lines` into `len(splits) + 1` ordinary
+    `Block`s at the given x-positions -- used when a block that looked
+    like a single-block table (see step 2a) turns out to be two or more
+    prose columns `pdftotext` merged into one block instead. Each original
+    line's words are bucketed by x-position into the new column they fall
+    in; a line entirely on one side of every split contributes only to
+    that column, just as if `pdftotext` had kept it separate to begin
+    with. The result is meant to be treated as ordinary blocks by the
+    existing column ordering (step 3 onward), not re-checked for
+    tabularity."""
+    n_buckets = len(splits) + 1
+    bucket_lines: list[list[Line]] = [[] for _ in range(n_buckets)]
+    for line in sorted(lines, key=lambda ln: ln.y_min):
+        word_buckets = _bucket_words_at(sorted(line.words, key=lambda w: w.x_min), splits)
+        for index, words in enumerate(word_buckets):
+            if not words:
+                continue
+            bucket_lines[index].append(
+                Line(
+                    x_min=min(w.x_min for w in words),
+                    y_min=min(w.y_min for w in words),
+                    x_max=max(w.x_max for w in words),
+                    y_max=max(w.y_max for w in words),
+                    words=words,
+                )
+            )
+
+    sub_blocks: list[Block] = []
+    for column_lines in bucket_lines:
+        if not column_lines:
+            continue
+        sub_blocks.append(
+            Block(
+                x_min=min(ln.x_min for ln in column_lines),
+                y_min=min(ln.y_min for ln in column_lines),
+                x_max=max(ln.x_max for ln in column_lines),
+                y_max=max(ln.y_max for ln in column_lines),
+                lines=column_lines,
+            )
+        )
+    return sub_blocks
+
+
+def _detect_single_block_table_group(block: Block) -> TableGroup | list[Block] | None:
     """If `block`'s own lines look like a table flattened into one block
     (see step 2a in the module docstring), return the `TableGroup` it
-    represents; otherwise `None`."""
+    represents. If they instead look like two (or more) prose columns
+    merged into one block -- the same consistent-gap shape, but with
+    sentence-like cells -- return the `Block`s to split it into. Otherwise
+    `None`."""
     lines = [line for line in block.lines if line.words]
     if not lines:
         return None
@@ -441,6 +516,20 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
     confirmed_splits = _confirmed_gap_splits(row_gap_midpoints, gappy_row_indices, median_height)
     if not confirmed_splits:
         return None
+
+    # A table cell is short -- a name, a number, a die code. If the
+    # confirmed splits' cells are, on the whole, full sentences instead,
+    # this is two prose columns `pdftotext` merged into one block, not a
+    # table (see step 2a's addendum in the module docstring): split the
+    # block into separate column blocks instead of reading it row-wise.
+    gappy_cell_word_counts = [
+        float(len(cell_words))
+        for i in gappy_row_indices
+        for cell_words in _bucket_words_at(rows_words[i], confirmed_splits)
+    ]
+    median_words_per_cell = _median(gappy_cell_word_counts, default=0.0)
+    if median_words_per_cell > TABLE_CELL_MAX_MEDIAN_WORDS:
+        return _build_prose_sub_blocks(lines, confirmed_splits)
 
     gappy = set(gappy_row_indices)
     rows = [
@@ -585,8 +674,10 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
     other_blocks: list[Block] = []
     for block in remaining_blocks:
         detected = _detect_single_block_table_group(block)
-        if detected is not None:
+        if isinstance(detected, TableGroup):
             single_block_tables.append(detected)
+        elif detected is not None:
+            other_blocks.extend(detected)
         else:
             other_blocks.append(block)
 

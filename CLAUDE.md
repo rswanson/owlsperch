@@ -57,6 +57,18 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   `kind`/`median_word_height`/`max_word_height`/`line_count`, for
   `segment`'s heading detection) + `pages.json` under `$OWLSPERCH_DATA`.
   `wordlist.txt` is the bundled fallback word list used by dehyphenation.
+  Table detection excludes prose-like blocks from grouping, requires
+  mutual (not merely transitive) vertical overlap among a candidate
+  group's blocks, and -- for a single block whose gappy rows split into
+  long, sentence-like cells (median > 4 words/cell) rather than short
+  table cells -- splits that block into separate column blocks at the
+  gap instead of reading it row-wise. Known remaining real-corpus
+  limitation (see `pipeline/tests/test_segment_runner.py`'s corpus test
+  docstring): the mutual-overlap heuristic still false-positives on some
+  pages where a short, single-line block (e.g. a heading) sits fully
+  nested inside a taller neighboring block's y-range, satisfying the
+  overlap check by degenerate coincidence rather than real row alignment
+  (e.g. PHB pp. 197, 204) -- not fixed as part of this B3 follow-up.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size
@@ -65,11 +77,7 @@ Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
   the stream once to produce the final segment spans (anchors, plus
   `rules_section` for everything between them, split at headings);
   `runner.py` loads a book's text+meta, calls the splitter, and writes
-  `segments/<book_id>/<seg_id>.json`. Known real-corpus limitation (see
-  `pipeline/tests/test_segment_runner.py`'s corpus test docstring): a
-  pre-existing B2 table-detection quirk mis-splits some dense/multi-column
-  real pages, suppressing anchor counts well below a clean scan -- not
-  fixed as part of B3.
+  `segments/<book_id>/<seg_id>.json`.
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and
