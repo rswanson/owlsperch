@@ -261,6 +261,38 @@ describe("SearchBox", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/r/spell/fireball");
   });
 
+  it("Enter awaits an in-flight debounced request for the same query instead of re-fetching", async () => {
+    let resolveSearch: ((response: api.SearchResponse) => void) | undefined;
+    const searchSpy = vi.spyOn(api, "search").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSearch = resolve;
+        }),
+    );
+
+    renderSearchBoxWithLocation();
+    const input = screen.getByRole("combobox");
+
+    fireEvent.change(input, { target: { value: "fireb" } });
+    // Past the debounce window: the request is now in flight, but hasn't
+    // resolved yet, so `resultsQuery` hasn't been updated -- this is the
+    // "stale by the resultsQuery check, but actually already requested"
+    // window Enter needs to recognize.
+    await tick(150);
+    expect(searchSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await act(async () => {
+      resolveSearch?.(GROUPS_RESPONSE);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(searchSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("location")).toHaveTextContent("/r/spell/fireball");
+  });
+
   it("Escape clears the query and results", async () => {
     vi.spyOn(api, "search").mockResolvedValue(GROUPS_RESPONSE);
     renderSearchBox();

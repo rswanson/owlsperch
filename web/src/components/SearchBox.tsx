@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, search, type SearchGroup, type SearchHit } from "../api";
 import { optionId, ResultGroup } from "./ResultGroup";
@@ -27,6 +27,13 @@ export function SearchBox() {
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The most recently issued fetch that hasn't settled yet, keyed by the
+  // (trimmed) query it was issued for -- lets Enter recognize "the debounce
+  // already fired for exactly what's in the box right now" and await that
+  // request instead of issuing a redundant duplicate one (finding 2).
+  const inFlightRef = useRef<{ query: string; promise: Promise<SearchGroup[] | undefined> } | null>(
+    null,
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -34,6 +41,55 @@ export function SearchBox() {
   }, []);
 
   const flatHits = useMemo<SearchHit[]>(() => groups.flatMap((group) => group.hits), [groups]);
+
+  const navigateToHit = useCallback(
+    (hit: SearchHit) => {
+      navigate(`/r/${hit.type}/${hit.slug}`);
+    },
+    [navigate],
+  );
+
+  // Shared by the debounced fetch and Enter's stale-results immediate fetch
+  // (finding 1): issues `rawQuery`, applies the response (or error) to state,
+  // and -- when `navigateFirstHit` is set -- navigates to the first resulting
+  // hit once the response lands. Also recorded on `inFlightRef` so a later
+  // Enter press for the same `trimmedQuery` can await this exact request
+  // rather than starting another one.
+  const runSearch = useCallback(
+    (
+      rawQuery: string,
+      trimmedQuery: string,
+      { navigateFirstHit = false }: { navigateFirstHit?: boolean } = {},
+    ): Promise<SearchGroup[] | undefined> => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setStatus("loading");
+      const promise = search(rawQuery, controller.signal)
+        .then((response) => {
+          if (inFlightRef.current?.promise === promise) inFlightRef.current = null;
+          setGroups(response.groups);
+          setStatus("ok");
+          setActiveIndex(-1);
+          setResultsQuery(trimmedQuery);
+          if (navigateFirstHit) {
+            const hit = response.groups.flatMap((group) => group.hits)[0];
+            if (hit) navigateToHit(hit);
+          }
+          return response.groups;
+        })
+        .catch((err: unknown) => {
+          if (inFlightRef.current?.promise === promise) inFlightRef.current = null;
+          if (err instanceof DOMException && err.name === "AbortError") return undefined;
+          setGroups([]);
+          setStatus("error");
+          setErrorMessage(err instanceof ApiError ? err.message : "Search failed.");
+          return undefined;
+        });
+      inFlightRef.current = { query: trimmedQuery, promise };
+      return promise;
+    },
+    [navigateToHit],
+  );
 
   useEffect(() => {
     if (timerRef.current !== undefined) clearTimeout(timerRef.current);
@@ -49,32 +105,13 @@ export function SearchBox() {
     }
 
     timerRef.current = setTimeout(() => {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setStatus("loading");
-      search(query, controller.signal)
-        .then((response) => {
-          setGroups(response.groups);
-          setStatus("ok");
-          setActiveIndex(-1);
-          setResultsQuery(trimmed);
-        })
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return;
-          setGroups([]);
-          setStatus("error");
-          setErrorMessage(err instanceof ApiError ? err.message : "Search failed.");
-        });
+      runSearch(query, trimmed);
     }, SEARCH_DEBOUNCE_MS);
 
     return () => {
       if (timerRef.current !== undefined) clearTimeout(timerRef.current);
     };
-  }, [query]);
-
-  function navigateToHit(hit: SearchHit) {
-    navigate(`/r/${hit.type}/${hit.slug}`);
-  }
+  }, [query, runSearch]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -97,29 +134,25 @@ export function SearchBox() {
       }
 
       // The rendered results (if any) belong to a previous, superseded
-      // query -- don't navigate from them. Cancel the pending debounce and
-      // any in-flight request, fetch for the current input right away, and
-      // navigate to that response's first hit once it lands.
+      // query -- don't navigate from them.
+      if (inFlightRef.current?.query === trimmed) {
+        // The debounce already fired for exactly this query and its request
+        // is still in flight (its response just hasn't landed yet) -- await
+        // that request instead of firing a redundant duplicate one.
+        inFlightRef.current.promise.then((resultGroups) => {
+          const hit = resultGroups?.flatMap((group) => group.hits)[0];
+          if (hit) navigateToHit(hit);
+        });
+        return;
+      }
+
+      // No matching request in flight -- cancel the pending debounce and any
+      // in-flight request for a different query, then fetch for the current
+      // input right away, navigating to the response's first hit once it
+      // lands.
       if (timerRef.current !== undefined) clearTimeout(timerRef.current);
       abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setStatus("loading");
-      search(query, controller.signal)
-        .then((response) => {
-          setGroups(response.groups);
-          setStatus("ok");
-          setActiveIndex(-1);
-          setResultsQuery(trimmed);
-          const hit = response.groups.flatMap((group) => group.hits)[0];
-          if (hit) navigateToHit(hit);
-        })
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return;
-          setGroups([]);
-          setStatus("error");
-          setErrorMessage(err instanceof ApiError ? err.message : "Search failed.");
-        });
+      runSearch(query, trimmed, { navigateFirstHit: true });
     } else if (event.key === "Escape") {
       event.preventDefault();
       setQuery("");
