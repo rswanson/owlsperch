@@ -9,12 +9,38 @@
 [tool.uv.workspace]
 members = ["pipeline"]
 
-# Mirrors pipeline/pyproject.toml's pytest config so that `uv run pytest`
-# from the repo root (with no explicit path) finds the tests and registers
-# the same markers, instead of silently using this file as an unconfigured
-# pytest rootdir.
+# This root pyproject.toml is the single source of truth for all tool
+# configuration (pytest, ruff, mypy). pipeline/pyproject.toml holds only the
+# package definition (project metadata, build system, console script, dev
+# dependency group) and no [tool.*] sections of its own.
+#
+# This matters in practice for mypy: mypy's config discovery only checks the
+# current *working directory* for a pyproject.toml (unlike ruff, which walks
+# up the tree). Since every documented command (`uv run mypy pipeline`, CI,
+# README, CLAUDE.md) is invoked from the repo root, a [tool.mypy] section in
+# pipeline/pyproject.toml would be silently ignored -- mypy would fall back
+# to non-strict defaults with no warning. Keeping the config here instead
+# means the documented command actually enforces strict mode.
 [tool.pytest.ini_options]
 testpaths = ["pipeline/tests"]
 markers = [
     "corpus: requires the real PDF corpus ($OWLSPERCH_PDFS or ~/D_D) to be present on disk; skipped otherwise",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Ruff's default first-party source roots are [<this file's dir>, <this file's
+# dir>/src]; since this config now lives at the repo root but the actual
+# `owlsperch` package lives under pipeline/, it must be pointed at pipeline/
+# explicitly so `owlsperch` imports are still classified as first-party by
+# the isort rules (I001) rather than third-party.
+src = ["pipeline"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["pipeline/owlsperch", "pipeline/tests"]

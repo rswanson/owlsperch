@@ -62,7 +62,7 @@ class ManifestEntry(BaseModel):
     published: str | None = None
     applies_to: str | None = None
     scanned: bool = False
-    preferred_over: str | None = None
+    preferred_over: list[str] | None = None
     exclude_reason: str | None = None
 
     @field_validator("published")
@@ -70,6 +70,17 @@ class ManifestEntry(BaseModel):
     def _validate_published(cls, value: str | None) -> str | None:
         if value is not None and not _PUBLISHED_RE.match(value):
             raise ValueError(f"published must be YYYY-MM, got {value!r}")
+        return value
+
+    @field_validator("preferred_over", mode="before")
+    @classmethod
+    def _normalize_preferred_over(cls, value: object) -> object:
+        """Accept a single book_id string as a convenience for the common
+        one-duplicate case, normalizing it to a one-element list. A book with
+        more than one duplicate copy lists them all: `preferred_over: [a, b]`.
+        """
+        if isinstance(value, str):
+            return [value]
         return value
 
 
@@ -140,11 +151,13 @@ def _validate_cross_references(entries: list[ManifestEntry]) -> None:
             raise ManifestError(
                 f"manifest entry '{entry.book_id}': kind 'excluded' requires exclude_reason"
             )
-        if entry.preferred_over is not None and entry.preferred_over not in known_ids:
-            raise ManifestError(
-                f"manifest entry '{entry.book_id}': preferred_over "
-                f"'{entry.preferred_over}' is not a known book_id"
-            )
+        if entry.preferred_over is not None:
+            for target in entry.preferred_over:
+                if target not in known_ids:
+                    raise ManifestError(
+                        f"manifest entry '{entry.book_id}': preferred_over "
+                        f"'{target}' is not a known book_id"
+                    )
 
 
 def in_scope(entry: ManifestEntry, entries: list[ManifestEntry]) -> bool:
@@ -163,8 +176,22 @@ def in_scope(entry: ManifestEntry, entries: list[ManifestEntry]) -> bool:
     return entry.book_id in update_targets
 
 
+def _superseded_book_ids(entries: list[ManifestEntry]) -> set[str]:
+    """book_ids named in any entry's `preferred_over` -- i.e. shadowed duplicate
+    copies of some other, preferred entry."""
+    return {target for e in entries if e.preferred_over for target in e.preferred_over}
+
+
 def status_for(entry: ManifestEntry, entries: list[ManifestEntry]) -> str:
-    """One of 'in_scope', 'override', 'index', 'excluded', 'out_of_scope'."""
+    """One of 'in_scope', 'override', 'index', 'excluded', 'duplicate', 'out_of_scope'.
+
+    'duplicate' takes priority over every other status: any entry named in
+    another entry's `preferred_over` is a superseded copy, never counted as
+    an independent in-scope book (or override/index/excluded entry) of its
+    own.
+    """
+    if entry.book_id in _superseded_book_ids(entries):
+        return "duplicate"
     if entry.kind in OVERRIDE_KINDS:
         return "override"
     if entry.kind == "index":

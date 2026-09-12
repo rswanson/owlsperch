@@ -38,7 +38,11 @@ uv run owlsperch manifest check
 
 Validates `pipeline/manifest.yaml` against the files in `$OWLSPERCH_PDFS`
 (default `~/D_D`) and prints counts by kind and by in-scope status (in-scope /
-override / index / excluded). Exits non-zero and lists any file present in
+override / index / excluded / duplicate). An entry named in another entry's
+`preferred_over` (a shadowed duplicate copy -- `preferred_over` accepts either
+a single book_id or a list, for a book with more than one duplicate) is
+reported as `duplicate` rather than as an independent in-scope book. Exits
+non-zero and lists any file present in
 the PDF directory but missing from the manifest, or any manifest entry whose
 file is missing from the directory.
 

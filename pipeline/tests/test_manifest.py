@@ -339,6 +339,120 @@ entries:
 
 
 # ---------------------------------------------------------------------------
+# preferred_over / duplicate status
+# ---------------------------------------------------------------------------
+
+
+def test_preferred_over_accepts_single_string_for_convenience(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+entries:
+  - book_id: solo
+    title: "Solo Book"
+    file: "solo.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: solo-dup
+    exclude_reason: null
+  - book_id: solo-dup
+    title: "Solo Book (duplicate)"
+    file: "solo-dup.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+""",
+    )
+    entries = load_manifest(manifest_path)
+    by_id = {e.book_id: e for e in entries}
+    assert by_id["solo"].preferred_over == ["solo-dup"]
+
+
+def test_preferred_over_list_marks_every_duplicate(tmp_path: Path) -> None:
+    """A book with THREE copies (one preferred, two duplicates): preferred_over
+    is a list naming both duplicates, and each duplicate is reported with
+    status 'duplicate' rather than 'in_scope'."""
+    pdf_dir = tmp_path / "pdfs"
+    _touch(pdf_dir, "book.pdf", "book-dup-1.pdf", "book-dup-2.pdf")
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+entries:
+  - book_id: book
+    title: "Book"
+    file: "book.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: [book-dup-1, book-dup-2]
+    exclude_reason: null
+  - book_id: book-dup-1
+    title: "Book (duplicate copy 1)"
+    file: "book-dup-1.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+  - book_id: book-dup-2
+    title: "Book (duplicate copy 2)"
+    file: "book-dup-2.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: null
+    exclude_reason: null
+""",
+    )
+    entries = load_manifest(manifest_path)
+    by_id = {e.book_id: e for e in entries}
+    assert by_id["book"].preferred_over == ["book-dup-1", "book-dup-2"]
+
+    result = check(pdf_dir=pdf_dir, manifest_path=manifest_path)
+    assert result.exit_code == 0
+    assert result.counts_by_status["in_scope"] == 1  # only "book" itself
+    assert result.counts_by_status["duplicate"] == 2  # both dup copies shadowed
+    assert result.counts_by_status.get("out_of_scope", 0) == 0
+
+
+def test_preferred_over_unknown_book_id_fails(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+entries:
+  - book_id: book
+    title: "Book"
+    file: "book.pdf"
+    edition: "3.5"
+    kind: supplement
+    published: "2003-07"
+    applies_to: null
+    scanned: false
+    preferred_over: [no-such-book]
+    exclude_reason: null
+""",
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(manifest_path)
+    message = str(exc_info.value)
+    assert "book" in message
+    assert "no-such-book" in message
+
+
+# ---------------------------------------------------------------------------
 # Schema validation (acceptance criterion 4)
 # ---------------------------------------------------------------------------
 
