@@ -5,20 +5,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Current state
 
 `owlsperch` is a Python (uv-managed) pipeline plus, as of batch B6, a
-FastAPI server. It has: the `owlsperch` CLI and package
-(`pipeline/owlsperch/`), the curated PDF manifest
-(`pipeline/manifest.yaml`), `manifest check`, `text` (column-repaired
-per-page text extraction for text-layer books, plus a `.meta.json` sidecar
-of paragraph font-size stats), `segment` (splits a book's text into
-candidate spell/stat_block/feat/table/rules_section segments), the
-`schemas/` type registry (envelope + spell schema, JSON Schema draft
-2020-12) with `validate` and `schema show`, the `queue` extraction-queue CLI
-plus the `/extract` Claude Code skill (haiku tier only; see "Extraction" and
-"Architecture" below), `build-db` (builds `db/owlsperch.sqlite` from
-validated records), `serve` (starts the `owlsperch_server` FastAPI app --
-`/search`, `/records/{type}/{slug}`, `/schemas`, `/health`), and CI.
-Everything else is a future-batch stub (`check-completeness`, `coverage`,
-`schema review`, `sample`).
+FastAPI server, plus, as of batch B7, a Vite/React/TypeScript web frontend.
+It has: the `owlsperch` CLI and package (`pipeline/owlsperch/`), the curated
+PDF manifest (`pipeline/manifest.yaml`), `manifest check`, `text`
+(column-repaired per-page text extraction for text-layer books, plus a
+`.meta.json` sidecar of paragraph font-size stats), `segment` (splits a
+book's text into candidate spell/stat_block/feat/table/rules_section
+segments), the `schemas/` type registry (envelope + spell schema, JSON
+Schema draft 2020-12) with `validate` and `schema show`, the `queue`
+extraction-queue CLI plus the `/extract` Claude Code skill (haiku tier only;
+see "Extraction" and "Architecture" below), `build-db` (builds
+`db/owlsperch.sqlite` from validated records), `serve` (starts the
+`owlsperch_server` FastAPI app -- `/search`, `/records/{type}/{slug}`,
+`/schemas`, `/health`, `/stats`), `dev` (runs `serve` and `web/`'s Vite dev
+server together), `fixture-db <dir>` (builds a small synthetic database for
+local UI/e2e testing), and `web/` (the search-box + record-page frontend).
+CI. Everything else is a future-batch stub (`check-completeness`,
+`coverage`, `schema review`, `sample`, and `web/`'s own `/browse`,
+`/tools/*` routes from spec 4.10).
 
 ### Commands
 
@@ -39,12 +43,34 @@ uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
 uv run owlsperch build-db [--strict] # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
 uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
+uv run owlsperch dev                  # serve + `npm run dev` in web/, together (Ctrl-C stops both)
+uv run owlsperch fixture-db <dir>     # small synthetic DB into <dir>, for local UI/e2e testing
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy pipeline server
 uv run pytest pipeline/tests server/tests   # run all tests
 uv run pytest pipeline/tests/test_manifest.py::test_35_book_is_in_scope  # single test
 ```
+
+`web/` (batch B7, spec 4.10): the frontend, at `http://localhost:5173` once
+`uv run owlsperch dev` (or `make dev`) is running.
+
+```sh
+cd web && npm install
+cd web && npm run lint          # eslint (typescript-eslint, react-hooks)
+cd web && npm run typecheck     # tsc --noEmit
+cd web && npm test -- --run     # vitest
+cd web && npx vitest run src/components/__tests__/SearchBox.test.tsx -t "debounces"  # single test
+cd web && npm run e2e           # Playwright, one smoke test against a fixture DB
+cd web && npx playwright test e2e/smoke.spec.ts  # single Playwright test (there's only the one)
+```
+
+`web/vite.config.ts`'s dev server proxies `/api/*` to the FastAPI server on
+`127.0.0.1:8000`, stripping the `/api` prefix -- `web/src/api.ts` always
+calls `/api/...`, so the same frontend code works dev or (behind a future
+reverse proxy) in production, as long as whatever's in front of it honors
+the same convention. `make dev`/`make test`/`make lint` at the repo root are
+thin wrappers combining the Python and `web/` commands above.
 
 Some tests are marked `@pytest.mark.corpus`: they run `manifest check`,
 `text`, and `segment` on page ranges of the real Player's Handbook (book_id
@@ -183,10 +209,10 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `run_serve`) so importing `owlsperch.cli` never requires either to be
   installed, then runs uvicorn on 127.0.0.1:8000 by default.
 - `server/` -- a second uv workspace member, the `owlsperch_server` package
-  (spec 4.9, batch B6): FastAPI + uvicorn, depending on the `owlsperch`
-  pipeline package (via `[tool.uv.sources]` workspace = true) for
-  schema/registry loading and data-dir resolution -- not the other way
-  around, so `pipeline` has no formal dependency on `server` even though
+  (spec 4.9, batch B6, plus `/stats` from B7): FastAPI + uvicorn, depending
+  on the `owlsperch` pipeline package (via `[tool.uv.sources]` workspace =
+  true) for schema/registry loading and data-dir resolution -- not the other
+  way around, so `pipeline` has no formal dependency on `server` even though
   `owlsperch serve` imports it (both are installed into the one shared
   workspace virtual environment by `uv sync`). `app.py`'s `create_app()`
   serves `/search` (an FTS5 prefix query per word, falling back to a
@@ -196,16 +222,53 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   other canonical records sharing type+slug across books, picking the
   latest-published book's as the main response -- and placeholder `links`/
   `referenced_by`/`tables` for later batches), `/schemas` (reusing
-  `owlsperch.schemas`), and `/health`. The database is opened read-only
+  `owlsperch.schemas`), `/stats` (canonical record counts by type, for the
+  web UI's home-page hint), and `/health`. The database is opened read-only
   (`mode=ro` URI) once per request, not pooled (spec D1: single-user,
-  localhost only). A missing database makes `/search` and
-  `/records/{type}/{slug}` answer 503 naming `owlsperch build-db`; a
-  present but corrupt database file (one `sqlite3.connect` opens fine but
-  that raises `sqlite3.DatabaseError` on the first real read, since SQLite
-  only validates the file header lazily) answers 503 with a distinct
-  "database unreadable" detail naming the same rebuild command, via the
-  `_query_db` helper both endpoints route their DB work through; `/health`
-  and `/schemas` don't touch the database and always answer normally.
+  localhost only). A missing database makes `/search`,
+  `/records/{type}/{slug}`, and `/stats` answer 503 naming `owlsperch
+  build-db`; a present but corrupt database file (one `sqlite3.connect`
+  opens fine but that raises `sqlite3.DatabaseError` on the first real
+  read, since SQLite only validates the file header lazily) answers 503
+  with a distinct "database unreadable" detail naming the same rebuild
+  command, via the `_query_db` helper every data endpoint routes its DB
+  work through; `/health` and `/schemas` don't touch the database and
+  always answer normally.
+- `pipeline/owlsperch/dev.py` -- the `dev` subcommand (spec 4.10, batch B7):
+  `build_dev_commands` decides what to run (`python -m owlsperch serve`,
+  then `npm run dev` in `web/`) and where; `run_dev` spawns both as child
+  processes, threads their stdout to this process's stdout with
+  `[api]`/`[web]` prefixes, and shuts both down on Ctrl-C (SIGINT, handled
+  by Python's default `KeyboardInterrupt` behavior) or `SIGTERM` (remapped
+  to the same `KeyboardInterrupt` path explicitly, since its default
+  disposition would otherwise skip the child-process cleanup).
+- `pipeline/owlsperch/fixture_db.py` -- `owlsperch fixture-db <dir>` (spec
+  4.10, batch B7): a pytest-free equivalent of
+  `server/tests/conftest.py`'s `built_data_dir` fixture -- writes a small
+  synthetic, schema-valid manifest/segment/record set into `<dir>` and
+  builds `<dir>/db/owlsperch.sqlite` from it via
+  `owlsperch.build_db.runner.build_db`. Used by `web/e2e/serve-fixture.py`
+  (the Playwright smoke test's backend) and usable standalone for poking at
+  the UI locally without the real PDF corpus.
+- `web/` -- the frontend (spec 4.10, batch B7): Vite + React 18 +
+  TypeScript, React Router for `/` (search) and `/r/:type/:slug` (record
+  detail). `src/api.ts` has typed wrappers for every server endpoint;
+  `src/components/SearchBox.tsx` is the debounced (150ms), cancellable
+  (`AbortController`), keyboard-navigable (arrows/Enter/Escape) typeahead;
+  `src/components/FieldGroups.tsx` renders a record's `fields` grouped and
+  ordered by `/schemas`'s `x-ui` hints (`buildFieldGroups`/
+  `formatFieldValue` are plain functions, unit tested separately from the
+  component); `src/pages/RecordPage.tsx` renders `text_md` with
+  `react-markdown` + `remark-gfm` (no raw HTML). `vite.config.ts`'s dev
+  server proxies `/api/*` to the FastAPI server on 127.0.0.1:8000 (path
+  rewrite strips `/api`) and binds `127.0.0.1` explicitly (Node's default
+  `"localhost"` host can resolve to the IPv6 loopback only on some systems,
+  which breaks anything that probes `127.0.0.1` directly, e.g. Playwright's
+  `webServer.url` check). `web/e2e/` has one Playwright smoke test
+  (`smoke.spec.ts`, flow A: type a prefix, Enter, land on the record page)
+  run by `playwright.config.ts`'s `webServer` against two freshly started
+  servers: `e2e/serve-fixture.py` (the fixture DB + FastAPI, see
+  `fixture_db.py` above) and `npm run dev` (Vite, which proxies to it).
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and

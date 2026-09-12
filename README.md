@@ -336,6 +336,33 @@ A missing (not yet built) database makes `/search` and
 run: uv run owlsperch build-db"}`; `/health` and `/schemas` don't touch the
 database and always answer normally (`/health`'s `db` field is `false`).
 
+## Running the site
+
+`web/` is a Vite + React + TypeScript app (spec 4.10, batch B7): `/` is a
+search box, `/r/:type/:slug` is a spell's record page.
+
+```sh
+uv run owlsperch dev
+```
+
+Starts both halves of local development together: the FastAPI server
+(`uv run owlsperch serve`, on `127.0.0.1:8000`) and the Vite dev server
+(`npm run dev` in `web/`, on `127.0.0.1:5173`), as child processes -- their
+output is streamed to this one terminal with `[api]`/`[web]` prefixes, and
+Ctrl-C stops both. `make dev` is a thin wrapper around the same command.
+Open <http://localhost:5173>.
+
+The Vite dev server proxies `/api/*` to the FastAPI server, stripping the
+`/api` prefix (see `web/vite.config.ts`'s `server.proxy`) -- so the frontend
+always calls e.g. `/api/search?q=...`, and that becomes `GET
+127.0.0.1:8000/search?q=...`. This means the same frontend code works
+whether it's served by Vite in dev or (in a future batch) built and served
+behind a reverse proxy using the same `/api` convention.
+
+The database has to exist first (`uv run owlsperch build-db`, see above) --
+otherwise the home page shows an empty state naming that command instead of
+a search box.
+
 ## Development
 
 ```sh
@@ -350,6 +377,38 @@ Run a single test:
 ```sh
 uv run pytest pipeline/tests/test_manifest.py::test_35_book_is_in_scope
 ```
+
+### `web/`
+
+```sh
+cd web
+npm install
+npm run lint        # eslint (typescript-eslint, react-hooks)
+npm run typecheck   # tsc --noEmit
+npm test -- --run   # vitest (add --run to skip watch mode)
+npm run e2e         # Playwright, against a fresh fixture database
+```
+
+`make lint` and `make test` (from the repo root) run the Python and `web/`
+checks together.
+
+Run a single vitest test:
+
+```sh
+cd web && npx vitest run src/components/__tests__/SearchBox.test.tsx -t "debounces"
+```
+
+Run a single Playwright test (there's currently one spec file with one
+test):
+
+```sh
+cd web && npx playwright test e2e/smoke.spec.ts
+```
+
+The Playwright smoke test starts its own backend, from scratch, against a
+small synthetic database built by `uv run owlsperch fixture-db <dir>`
+(`web/e2e/serve-fixture.py`; see `web/playwright.config.ts`'s `webServer`) --
+it never touches `$OWLSPERCH_DATA` or the real PDF corpus.
 
 Some tests are marked `@pytest.mark.corpus` and run against the real
 `$OWLSPERCH_PDFS`/`~/D_D` directory (`manifest check`; `text phb1` over

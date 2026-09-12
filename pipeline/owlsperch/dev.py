@@ -13,12 +13,14 @@ its own.
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import FrameType
 from typing import IO
 
 #: pipeline/owlsperch/dev.py -> pipeline/owlsperch -> pipeline -> repo root.
@@ -59,9 +61,19 @@ def _stream_output(prefix: str, pipe: IO[bytes], out: IO[str]) -> None:
         print(f"[{prefix}] {line}", file=out, flush=True)
 
 
+def _raise_keyboard_interrupt(signum: int, frame: FrameType | None) -> None:
+    # SIGINT already does this by default (Python's default SIGINT handler
+    # raises KeyboardInterrupt); SIGTERM's default disposition is to just
+    # terminate the process, which would skip the `finally` cleanup below
+    # and leave the child `serve`/`npm run dev` processes running -- so
+    # SIGTERM is remapped to the same KeyboardInterrupt path explicitly.
+    raise KeyboardInterrupt
+
+
 def run_dev(*, out: IO[str] | None = None) -> int:
     out = out if out is not None else sys.stdout
     processes = build_dev_commands()
+    previous_sigterm_handler = signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
 
     popens: list[subprocess.Popen[bytes]] = []
     threads: list[threading.Thread] = []
@@ -87,6 +99,7 @@ def run_dev(*, out: IO[str] | None = None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        print("[dev] shutting down both servers...", file=out, flush=True)
         for popen in popens:
             if popen.poll() is None:
                 popen.terminate()
@@ -98,5 +111,6 @@ def run_dev(*, out: IO[str] | None = None) -> int:
                 popen.wait()
         for thread in threads:
             thread.join(timeout=2)
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
     return 0
