@@ -251,6 +251,15 @@ h1 {
   margin: 0;
 }
 
+.field-group-heading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+
 .field-row {
   display: flex;
   gap: 8px;

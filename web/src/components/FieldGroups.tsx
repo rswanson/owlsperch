@@ -93,6 +93,18 @@ export function buildFieldGroups(
     .map((group) => ({ ...group, rows: [...group.rows].sort((a, b) => a.order - b.order) }));
 }
 
+/** Turns a schema `x-ui.group` key (e.g. `"classification"`, `"casting"`,
+ * or the `"other"` fallback) into a small heading -- splitting on `_`/`-`
+ * and capitalizing each word, so a future multi-word group key (e.g.
+ * `"spell_resistance"`) reads as "Spell Resistance" rather than verbatim. */
+export function formatGroupLabel(name: string): string {
+  return name
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export function FieldGroups({ fields, schemaFields }: FieldGroupsProps) {
   const groups = useMemo(() => buildFieldGroups(fields, schemaFields), [fields, schemaFields]);
 
@@ -101,14 +113,17 @@ export function FieldGroups({ fields, schemaFields }: FieldGroupsProps) {
   return (
     <div className="field-groups">
       {groups.map((group) => (
-        <dl className="field-group" key={group.name}>
-          {group.rows.map((row) => (
-            <div className="field-row" key={row.key}>
-              <dt>{row.label}</dt>
-              <dd>{row.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="field-group" key={group.name}>
+          <h2 className="field-group-heading">{formatGroupLabel(group.name)}</h2>
+          <dl>
+            {group.rows.map((row) => (
+              <div className="field-row" key={row.key}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       ))}
     </div>
   );

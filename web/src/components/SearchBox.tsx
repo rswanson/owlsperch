@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, search, type SearchGroup, type SearchHit } from "../api";
-import { ResultGroup } from "./ResultGroup";
+import { optionId, ResultGroup } from "./ResultGroup";
 
 export const SEARCH_DEBOUNCE_MS = 150;
 export const MIN_QUERY_LENGTH = 2;
@@ -18,6 +18,11 @@ export function SearchBox() {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
+  // The (trimmed) query string `groups` was fetched for -- used to detect
+  // Enter pressed against stale results from a previous, since-superseded
+  // debounce (finding 7): if the current input no longer matches this, the
+  // rendered hits don't belong to what the user is looking at right now.
+  const [resultsQuery, setResultsQuery] = useState("");
 
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -39,6 +44,7 @@ export function SearchBox() {
       setGroups([]);
       setStatus("idle");
       setActiveIndex(-1);
+      setResultsQuery("");
       return;
     }
 
@@ -51,6 +57,7 @@ export function SearchBox() {
           setGroups(response.groups);
           setStatus("ok");
           setActiveIndex(-1);
+          setResultsQuery(trimmed);
         })
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === "AbortError") return;
@@ -65,6 +72,10 @@ export function SearchBox() {
     };
   }, [query]);
 
+  function navigateToHit(hit: SearchHit) {
+    navigate(`/r/${hit.type}/${hit.slug}`);
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -74,14 +85,48 @@ export function SearchBox() {
       if (flatHits.length > 0) setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
-      const hit = flatHits[activeIndex] ?? flatHits[0];
-      if (hit) navigate(`/r/${hit.type}/${hit.slug}`);
+      const trimmed = query.trim();
+      if (trimmed.length < MIN_QUERY_LENGTH) return;
+
+      if (trimmed === resultsQuery) {
+        // The rendered results are fresh -- honor the highlighted hit (or
+        // the first one, if the user hasn't arrowed).
+        const hit = flatHits[activeIndex] ?? flatHits[0];
+        if (hit) navigateToHit(hit);
+        return;
+      }
+
+      // The rendered results (if any) belong to a previous, superseded
+      // query -- don't navigate from them. Cancel the pending debounce and
+      // any in-flight request, fetch for the current input right away, and
+      // navigate to that response's first hit once it lands.
+      if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setStatus("loading");
+      search(query, controller.signal)
+        .then((response) => {
+          setGroups(response.groups);
+          setStatus("ok");
+          setActiveIndex(-1);
+          setResultsQuery(trimmed);
+          const hit = response.groups.flatMap((group) => group.hits)[0];
+          if (hit) navigateToHit(hit);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setGroups([]);
+          setStatus("error");
+          setErrorMessage(err instanceof ApiError ? err.message : "Search failed.");
+        });
     } else if (event.key === "Escape") {
       event.preventDefault();
       setQuery("");
       setGroups([]);
       setStatus("idle");
       setActiveIndex(-1);
+      setResultsQuery("");
     }
   }
 
@@ -105,6 +150,7 @@ export function SearchBox() {
         role="combobox"
         aria-expanded={groups.length > 0}
         aria-controls="search-results"
+        aria-activedescendant={activeHit ? optionId(activeHit) : undefined}
       />
       <div aria-live="polite">
         {status === "loading" && <p className="search-status">Searching…</p>}

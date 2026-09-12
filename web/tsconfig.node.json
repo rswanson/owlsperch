@@ -2,7 +2,10 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "target": "es2023",
-    "lib": ["ES2023"],
+    // "DOM" is needed here (not just in tsconfig.app.json) because
+    // `page.evaluate(() => document...)` callbacks in e2e/*.spec.ts type-check
+    // against this project's lib even though they run in the browser.
+    "lib": ["ES2023", "DOM"],
     "types": ["node"],
     "skipLibCheck": true,
 

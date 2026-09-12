@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { SchemaField } from "../../api";
-import { buildFieldGroups, FieldGroups, formatFieldValue } from "../FieldGroups";
+import { buildFieldGroups, FieldGroups, formatFieldValue, formatGroupLabel } from "../FieldGroups";
 
 const SCHEMA_FIELDS: SchemaField[] = [
   {
@@ -56,6 +56,18 @@ describe("formatFieldValue", () => {
   });
 });
 
+describe("formatGroupLabel", () => {
+  it("capitalizes a single-word group key", () => {
+    expect(formatGroupLabel("classification")).toBe("Classification");
+    expect(formatGroupLabel("casting")).toBe("Casting");
+    expect(formatGroupLabel("other")).toBe("Other");
+  });
+
+  it("capitalizes each word of a multi-word group key", () => {
+    expect(formatGroupLabel("spell_resistance")).toBe("Spell Resistance");
+  });
+});
+
 describe("buildFieldGroups", () => {
   it("groups fields by x-ui.group, ordered by group then field order", () => {
     const groups = buildFieldGroups(
@@ -107,6 +119,11 @@ describe("FieldGroups component", () => {
     expect(screen.getByText("Levels")).toBeInTheDocument();
     expect(screen.getByText("Sorcerer 3")).toBeInTheDocument();
     expect(screen.queryByText("Subschool")).not.toBeInTheDocument();
+
+    // Each group renders a heading from its key, so groups are visually
+    // distinguishable (finding 5).
+    expect(screen.getByRole("heading", { name: "Classification" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Casting" })).toBeInTheDocument();
   });
 
   it("renders nothing when every field is hidden", () => {

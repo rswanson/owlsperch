@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import { SearchBox } from "../SearchBox";
@@ -10,6 +10,24 @@ function renderSearchBox() {
       <Routes>
         <Route path="/" element={<SearchBox />} />
         <Route path="/r/:type/:slug" element={<div>RECORD PAGE</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+/** Like `renderSearchBox`, but the `/r/:type/:slug` route also surfaces the
+ * navigated-to path via a `data-testid="location"` element, so a test can
+ * assert *which* record was navigated to, not just that navigation happened. */
+function renderSearchBoxWithLocation() {
+  function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname}</div>;
+  }
+  return render(
+    <MemoryRouter initialEntries={["/"]}>
+      <Routes>
+        <Route path="/" element={<SearchBox />} />
+        <Route path="/r/:type/:slug" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -170,6 +188,77 @@ describe("SearchBox", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(screen.getByText("RECORD PAGE")).toBeInTheDocument();
+  });
+
+  it("sets aria-activedescendant to the active option's id, matching ResultGroup's option ids", async () => {
+    vi.spyOn(api, "search").mockResolvedValue(GROUPS_RESPONSE);
+    renderSearchBox();
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "fireb" } });
+    await tick(150);
+
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const firstOption = screen.getByRole("option", { name: /Fireball/ });
+    expect(firstOption).toHaveAttribute("id", "opt-spell-fireball");
+    expect(input).toHaveAttribute("aria-activedescendant", "opt-spell-fireball");
+    expect(firstOption).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const secondOption = screen.getByRole("option", { name: /Fire Storm/ });
+    expect(input).toHaveAttribute("aria-activedescendant", "opt-spell-fire-storm");
+    expect(secondOption).toHaveAttribute("aria-selected", "true");
+    expect(firstOption).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("Enter pressed inside the debounce window navigates using fresh results, not the previous query's", async () => {
+    const FI_RESPONSE: api.SearchResponse = {
+      groups: [
+        {
+          type: "spell",
+          label: "Spells",
+          hits: [
+            {
+              id: "spell:phb1:fire-shield",
+              type: "spell",
+              name: "Fire Shield",
+              slug: "fire-shield",
+              citation: "PHB p. 175",
+              book_id: "phb1",
+            },
+          ],
+        },
+      ],
+    };
+
+    vi.spyOn(api, "search").mockImplementation((q: string) => {
+      if (q === "fi") return Promise.resolve(FI_RESPONSE);
+      if (q === "fireb") return Promise.resolve(GROUPS_RESPONSE);
+      throw new Error(`unexpected query ${q}`);
+    });
+
+    renderSearchBoxWithLocation();
+    const input = screen.getByRole("combobox");
+
+    fireEvent.change(input, { target: { value: "fi" } });
+    await tick(150);
+    expect(screen.getByText("Fire Shield")).toBeInTheDocument();
+
+    // Type more, then press Enter *before* the new debounce fires -- the
+    // rendered results (Fire Shield, from "fi") are now stale for "fireb".
+    fireEvent.change(input, { target: { value: "fireb" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // Enter's immediate (non-debounced) fetch is a plain resolved promise,
+    // not scheduled via a fake timer -- flush its microtask chain directly
+    // rather than advancing fake time.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/r/spell/fireball");
   });
 
   it("Escape clears the query and results", async () => {

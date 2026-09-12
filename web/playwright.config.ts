@@ -19,7 +19,16 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testMatch: /smoke\.spec\.ts/ },
+    {
+      name: "mobile-400",
+      // Acceptance criterion 6 (400px layout, finding 3): a dedicated
+      // project running only mobile.spec.ts at a 400x800 viewport.
+      use: { ...devices["Desktop Chrome"], viewport: { width: 400, height: 800 } },
+      testMatch: /mobile\.spec\.ts/,
+    },
+  ],
   webServer: [
     {
       command: "uv run python e2e/serve-fixture.py",

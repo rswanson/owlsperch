@@ -19,4 +19,10 @@ test("search a prefix, press Enter, land on the record page", async ({ page }) =
   await expect(page).toHaveURL(/\/r\/spell\/fireball$/);
   await expect(page.getByRole("heading", { level: 1, name: "Fireball" })).toBeVisible();
   await expect(page.getByText("School")).toBeVisible();
+
+  // The record's citation renders, and its `text_md` renders as Markdown
+  // (the fixture record's body has a `**fireball**` bold span) rather than
+  // as literal asterisk text.
+  await expect(page.locator(".citation")).toHaveText("FB p. 1");
+  await expect(page.locator(".text-md strong").first()).toHaveText("fireball");
 });
