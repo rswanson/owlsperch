@@ -15,7 +15,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 ---
 
 ## B1: Repo scaffold, curated manifest, `manifest check`, CI
-- **Status:** in-progress
+- **Status:** merged
 - **Branch base:** `spec/dnd-reference-site` (carries the spec and this plan to main).
 - **User-visible outcome:** `uv run owlsperch manifest check` reports every
   file in the PDF dir as in-scope, override, index, or excluded, and exits
@@ -46,7 +46,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `README.md`, `CLAUDE.md`, `.gitignore`.
 
 ## B2: `text` for text-layer books
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `owlsperch text phb` writes one repaired text
   file per page under `text/phb/`, in reading order, without running
   headers, with a sidecar of printed page numbers.
