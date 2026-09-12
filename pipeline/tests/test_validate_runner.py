@@ -37,6 +37,7 @@ def _write_segment(
     tier: str = "haiku",
     attempts: list[dict[str, Any]] | None = None,
     status: str = "pending",
+    pending_records: list[str] | None = None,
 ) -> Path:
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,7 @@ def _write_segment(
         "tier": tier,
         "attempts": attempts or [],
         "created_at": "2026-01-01T00:00:00+00:00",
+        "pending_records": pending_records or [],
     }
     path = seg_dir / f"{seg_id}.json"
     path.write_text(json.dumps(segment, indent=2))
@@ -172,6 +174,48 @@ def test_pass_write_back_is_idempotent_no_duplicate_record_paths(tmp_path: Path)
 
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["records"] == ["records/book/spell/fireball.json"]
+
+
+# ---------------------------------------------------------------------------
+# pending_records (B5 acceptance criterion 6: the extract skill's queue
+# complete records claimed paths under pending_records; validate promotes or
+# drops them)
+# ---------------------------------------------------------------------------
+
+
+def test_pass_moves_path_from_pending_records_to_records(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(
+        data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel]
+    )
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    exit_code, _ = _run(data_dir)
+
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["records"] == [record_rel]
+    assert segment["pending_records"] == []
+
+
+def test_fail_removes_path_from_pending_records_without_promoting(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(
+        data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel]
+    )
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, _ = _run(data_dir)
+
+    assert exit_code == 1
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["records"] == []
+    assert segment["status"] == "pending"
 
 
 # ---------------------------------------------------------------------------
