@@ -162,6 +162,29 @@ def _render_candidate_schema(kind_hint: str, registry: Registry) -> tuple[list[s
     return lines, version
 
 
+def _procedure_lines(output_dir: Path) -> list[str]:
+    """The file-writing procedure, rendered verbatim near the top of the
+    prompt AND again just before the reply contract (see `render_prompt`).
+
+    This exists because a live trial found subagents that read the prompt,
+    composed a plausible `records` JSON reply, and never actually wrote the
+    file -- so the procedure is stated as explicit, numbered steps (not
+    folded into prose) and repeated immediately before the "How to respond"
+    section, where a rushed reader is most likely to jump straight to
+    composing the reply."""
+    return [
+        "STEP 1: Create each record file with your file-writing tool (Write)",
+        f"at the absolute path shown below: {output_dir}",
+        "STEP 2: Read the file back to confirm it exists and is valid JSON.",
+        "STEP 3: Only then reply. A reply that names a file which does not",
+        "exist is treated as a failure and the segment is retried on a more",
+        "expensive model.",
+        "",
+        "Do not describe the record in your reply; the reply is only the",
+        "JSON object.",
+    ]
+
+
 def _load_example_record(kind_hint: str, registry: Registry) -> dict[str, Any] | None:
     """The invented, schema-valid `schemas/examples/<kind_hint>.json` fixture
     for `kind_hint`, if one exists (only `spell` has one this batch)."""
@@ -229,6 +252,10 @@ def render_prompt(
         "of already-extracted rulebook text, so it can be validated against a",
         "JSON Schema and stored as a queryable record. Follow this procedure",
         "exactly.",
+        "",
+        "## Procedure (read this first)",
+        "",
+        *_procedure_lines(output_dir),
         "",
         "## Book",
         "",
@@ -349,6 +376,10 @@ def render_prompt(
         "  reject unknown properties (`additionalProperties: false`). Omit a",
         "  field (or use its documented default) if the text does not support",
         "  a value for it, rather than guessing.",
+        "",
+        "## Procedure (repeated -- do this before you reply)",
+        "",
+        *_procedure_lines(output_dir),
         "",
         "## How to respond",
         "",

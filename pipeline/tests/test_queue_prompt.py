@@ -415,6 +415,40 @@ def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
     assert "authoritatively" in text.lower() or "overwrites" in text.lower()
 
 
+def test_prompt_procedure_section_instructs_write_then_read_back(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    expected_dir = (data_dir / "records" / "phb1" / "spell").resolve()
+
+    # Rendered near the top, before the segment text / schemas, so a reader
+    # cannot miss it.
+    procedure_index = text.index("## Procedure")
+    book_index = text.index("## Book")
+    assert procedure_index < book_index
+
+    procedure_section = text[procedure_index:book_index]
+    assert "Read the file back" in procedure_section
+    assert str(expected_dir) in procedure_section
+    assert "STEP 1" in procedure_section and "STEP 2" in procedure_section
+    assert "STEP 3" in procedure_section
+    assert "retried on a more" in procedure_section
+    assert "Do not describe the record in your reply" in procedure_section
+
+    # Repeated again immediately before the reply contract.
+    respond_index = text.index("## How to respond")
+    second_procedure_index = text.rindex("## Procedure", 0, respond_index)
+    second_procedure_section = text[second_procedure_index:respond_index]
+    assert "Read the file back" in second_procedure_section
+    assert str(expected_dir) in second_procedure_section
+    assert second_procedure_index > procedure_index
+
+
 def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
     segment = _segment(kind_hint="rules_section")
     manifest_path = _write_manifest(tmp_path)
