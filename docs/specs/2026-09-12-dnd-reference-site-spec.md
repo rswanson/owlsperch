@@ -1,6 +1,6 @@
 # D&D 3.5e reference site — spec
 
-Status: DRAFT
+Status: APPROVED
 Date: 2026-09-12
 
 ## Context
