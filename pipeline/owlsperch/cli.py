@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from owlsperch.build_db.runner import run_build_db
+from owlsperch.dev import run_dev
+from owlsperch.fixture_db import run_fixture_db
 from owlsperch.manifest import ManifestError, run_check
 from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.queue.runner import (
@@ -222,6 +225,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=DEFAULT_PORT, help=f"Port to bind (default: {DEFAULT_PORT})."
     )
 
+    subparsers.add_parser(
+        "dev",
+        help="Run the FastAPI server and the Vite dev server together (spec 4.10).",
+    )
+
+    fixture_db_parser = subparsers.add_parser(
+        "fixture-db",
+        help="Build a small synthetic SQLite database into <dir>, for local UI/e2e testing.",
+    )
+    fixture_db_parser.add_argument(
+        "dir", type=Path, help="Directory to write the fixture $OWLSPERCH_DATA-shaped tree into."
+    )
+
     return parser
 
 
@@ -315,6 +331,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return run_serve(host=args.host, port=args.port)
+
+    if args.command == "dev":
+        return run_dev()
+
+    if args.command == "fixture-db":
+        return run_fixture_db(args.dir)
 
     parser.print_help()
     return 0 if args.command is None else 1

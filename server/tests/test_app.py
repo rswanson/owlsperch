@@ -175,6 +175,34 @@ def test_health_reports_db_true_when_built(built_data_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /stats (batch B7, spec 4.10): canonical record counts by type, for the web
+# UI home page's "N Spells" hint.
+# ---------------------------------------------------------------------------
+
+
+def test_stats_counts_canonical_records_by_type(built_data_dir: Path) -> None:
+    response = _client(built_data_dir).get("/stats")
+    assert response.status_code == 200
+    # built_data_dir (conftest.py) writes 6 spell records: fireball,
+    # acid-fog x2 (book-a and book-b), test-spell-{one,two,three}.
+    assert response.json() == {"counts": {"spell": 6}}
+
+
+def test_stats_503_when_db_missing(tmp_path: Path) -> None:
+    response = _client(tmp_path / "empty-data").get("/stats")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "database not built; run: uv run owlsperch build-db"}
+
+
+def test_stats_503_when_db_corrupt(tmp_path: Path) -> None:
+    response = _client(_corrupt_data_dir(tmp_path)).get("/stats")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "database unreadable; rebuild with: uv run owlsperch build-db"
+    }
+
+
+# ---------------------------------------------------------------------------
 # Missing DB -> 503 (except /health and /schemas)
 # ---------------------------------------------------------------------------
 

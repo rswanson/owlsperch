@@ -1,6 +1,8 @@
 """The `owlsperch_server` FastAPI app (spec 4.9, batch B6): `/search`,
-`/records/{type}/{slug}`, `/schemas`, `/health`, reading the SQLite database
-`owlsperch build-db` produces (`owlsperch.build_db.runner`).
+`/records/{type}/{slug}`, `/schemas`, `/health`, plus `/stats` (batch B7,
+spec 4.10 -- canonical record counts by type, for the web UI's home-page
+hint), reading the SQLite database `owlsperch build-db` produces
+(`owlsperch.build_db.runner`).
 
 The DB is opened read-only (`mode=ro` URI) once per request and closed
 again -- this is a single-user localhost app (spec D1), so a connection pool
@@ -78,6 +80,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             app.state.data_dir, lambda conn: _search(conn, q, type_filter, clamped_limit)
         )
         return {"groups": _group_hits(hits)}
+
+    @app.get("/stats")
+    def stats() -> dict[str, Any]:
+        counts = _query_db(app.state.data_dir, _record_counts_by_type)
+        return {"counts": counts}
 
     @app.get("/records/{type_name}/{slug}")
     def record_detail(type_name: str, slug: str) -> dict[str, Any]:
@@ -198,6 +205,13 @@ def _group_hits(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         label = info.plural_label if info is not None else type_name
         groups.append({"type": type_name, "label": label, "hits": grouped[type_name]})
     return groups
+
+
+def _record_counts_by_type(conn: sqlite3.Connection) -> dict[str, int]:
+    """Counts by type for `GET /stats` (spec 4.10, batch B7): canonical
+    records only, matching what `/search` and browse would ever return."""
+    rows = conn.execute("SELECT type, COUNT(*) AS n FROM records WHERE canonical = 1 GROUP BY type")
+    return {row["type"]: row["n"] for row in rows}
 
 
 def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[str, Any] | None:

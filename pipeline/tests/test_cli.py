@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +29,30 @@ def test_help_lists_manifest_command() -> None:
     )
     assert result.returncode == 0
     assert "manifest" in result.stdout
+
+
+def test_help_lists_dev_and_fixture_db_commands() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "owlsperch", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "dev" in result.stdout
+    assert "fixture-db" in result.stdout
+
+
+def test_fixture_db_subcommand_builds_a_database(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    result = subprocess.run(
+        [sys.executable, "-m", "owlsperch", "fixture-db", str(data_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "spell: 2" in result.stdout
 
 
 def test_console_script_help_lists_manifest_command() -> None:
