@@ -150,7 +150,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `.claude/skills/extract/`, `pipeline/owlsperch/queue/`, tests.
 
 ## B6: `build-db` and API search + detail
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `owlsperch build-db` produces `db/owlsperch.sqlite`
   from records; `uv run owlsperch serve` starts FastAPI; curl returns
   typeahead results and a full record.
@@ -173,7 +173,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/build_db/`, `server/`, tests.
 
 ## B7: Web UI: search box and record page
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** open `localhost:5173`, type in the search box,
   pick a hit, read the spell on its record page.
 - **Acceptance criteria:**
