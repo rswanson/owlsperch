@@ -535,43 +535,16 @@ def test_seg_ids_stable_across_reruns(tmp_path: Path) -> None:
 
 @pytest.mark.corpus
 def test_phb1_real_corpus_spell_segments() -> None:
-    """Segments a real page range of the Player's Handbook and asserts spell
-    anchors are found there.
+    """Segments a real page range of the Player's Handbook (pdf pages
+    200-239, the spell-description chapter, chosen to contain Fireball) and
+    asserts spell anchors are found there.
 
-    NOTE on scope, reported in full to the user: this does not assert
-    ">= 30 spell segments" / a "Fireball" heading as originally specified.
-    Diagnosis (against this repo's real `~/D_D/phb1` PDF): `pdftotext
-    -bbox-layout`, for this book's dense spell-description pages, frequently
-    puts an entire multi-column region of running text (sometimes several
-    unrelated spells' columns at once) into very few `<block>`s. Two
-    independent, pre-existing (batch B2) effects then both suppress
-    anchors far below what a clean scan would find:
-
-    1. `owlsperch.text.columns._extract_table_groups` groups blocks into a
-       table by transitive reachability (a chain of pairwise "70% vertical
-       overlap, no horizontal overlap" edges), not mutual overlap -- so an
-       ordinary two-column prose page with several same-height blocks
-       (section headings, paragraphs) can chain into one bogus multi-block
-       "table" group. Confirmed directly: PHB pdf page 180 (plain running
-       text, no real table) is emitted as a mix of `table`-kind paragraphs
-       for exactly this reason.
-    2. Where a real multi-column *table* group's rows genuinely interleave
-       unrelated columns' lines by y-position (observed on the actual
-       Fireball entry, pdf p0232: its own name/school end up as cells
-       inside rows that also carry a different, unrelated spell's stat
-       lines), a spell's name and school line are never adjacent, isolated
-       paragraphs at all -- `owlsperch.segment.anchors` (by design; see its
-       module docstring) only looks at whole `kind == "prose"` paragraphs,
-       never inside a `table` paragraph's individual rows/cells.
-
-    Neither is a B3 regression, and fixing either is out of this batch's
-    scope (1 is a real bug needing careful new regression fixtures against
-    already-well-tested column logic; 2 would need anchor detection to
-    operate at table-row granularity, a materially larger design). This
-    test instead pins the batch's actual, verified real-corpus behavior: a
-    real page range with real spells that *do* survive extraction cleanly
-    (confirmed by hand: "Antipathy" p0201, "Arcane Sight" p0202,
-    "Disintegrate" p0223-226) segments correctly end to end.
+    Batch B3's column-grouping fix (prose-like blocks are excluded from
+    table-group detection, and a table group now requires every member to
+    mutually -- not just transitively -- overlap every other member) turns
+    this book's three-column spell-description pages from mostly bogus
+    tab-joined "table" paragraphs back into clean prose, so spell anchors
+    are found at the rate a clean scan should find them.
     """
     import shutil
     import tempfile
@@ -587,7 +560,7 @@ def test_phb1_real_corpus_spell_segments() -> None:
 
     entries = load_manifest(default_manifest_path())
     book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
-    page_range = (195, 230)
+    page_range = (200, 239)
 
     with tempfile.TemporaryDirectory() as tmp:
         data_dir = Path(tmp) / "data"
@@ -601,8 +574,8 @@ def test_phb1_real_corpus_spell_segments() -> None:
 
         segments = _segment_files(data_dir, book_id)
         spells = _by_kind(segments, "spell")
-        assert len(spells) >= 3
-        assert "Antipathy" in {s["heading"] for s in spells}
+        assert len(spells) >= 30
+        assert "Fireball" in {s["heading"] for s in spells}
 
         # Total real-page coverage still holds (acceptance criterion 5).
         covered = {page for seg in segments for page in seg["pages"]}

@@ -12,19 +12,34 @@ Algorithm (per page):
    since the same rule also discards image credits like "Illus. by ...",
    and that loss is otherwise invisible.)
 
+1a. **Exclude prose-like blocks from table grouping.** A three (or more)
+    -column prose layout (e.g. the PHB spell chapter) looks, block by
+    block, exactly like step 2's table-column shape: several blocks side
+    by side, each spanning a similar y-range. To tell them apart, a block
+    is **prose-like** -- and never eligible to join a table group -- when
+    it has at least `PROSE_MIN_LINES` (4) non-blank lines, its median
+    words-per-line is at least `PROSE_MIN_MEDIAN_WORDS_PER_LINE` (5), and
+    at least `PROSE_SPANNING_LINE_FRACTION` (60%) of its lines each span
+    at least `PROSE_LINE_SPAN_FRACTION` (75%) of the block's own width
+    (justified body text runs edge to edge). A table cell block -- short,
+    ragged, few-word lines -- fails this test and remains eligible.
+
 2. **Detect table groups.** `pdftotext` frequently emits each column of a
    multi-column table (e.g. a weapon table: name, cost, damage, critical,
    type) as its own narrow block rather than one block per row. Left to
    step 3's column clustering, these narrow blocks would each become their
    own "column" and get emitted one after another -- i.e. column-major
    (every name, then every cost, then every damage) instead of row-major.
-   To detect this: among the remaining (non-vertical) blocks, find every
-   pair whose vertical extents overlap by at least `TABLE_OVERLAP_FRACTION`
-   (70%) of the shorter block's height *and* whose x-extents do not
-   overlap at all. Blocks connected (transitively) by such pairs form a
-   group; a group of at least `TABLE_MIN_BLOCKS` (3) blocks is a **table
-   group** and is pulled out of the normal column-clustering blocks
-   entirely.
+   To detect this: among the remaining non-vertical, non-prose-like blocks,
+   find every pair whose vertical extents overlap by at least
+   `TABLE_OVERLAP_FRACTION` (70%) of the shorter block's height *and* whose
+   x-extents do not overlap at all. A **table group** is a *clique* of such
+   pairs -- every member overlaps every other member this way, not merely
+   chained transitively (A-B and B-C does not imply A-C) -- of at least
+   `TABLE_MIN_BLOCKS` (3) blocks. Where a candidate's blocks admit more than
+   one maximal clique of qualifying size (rare), the largest wins and its
+   blocks are removed from consideration by smaller, overlapping candidate
+   cliques.
 
 2a. **Detect single-block tables.** Sometimes `pdftotext` keeps a whole
     table as a *single* block instead -- e.g. a full-width table wide
@@ -78,12 +93,14 @@ Algorithm (per page):
    break 2, ... (a page with no breaks is one run).
 
 4. **Cluster each run's blocks into columns by x-position.** Within a run,
-   blocks are sorted by `xMin` and assigned to columns greedily: each
-   block joins the existing column whose running x-center average is
-   closest, if within `COLUMN_GAP_FRACTION` (25%) of the text-area width;
-   otherwise it starts a new column. This is a simple single-pass
-   clustering, not k-means -- sufficient for the typical one- or
-   two-column D&D 3.5e rulebook layouts this pipeline targets.
+   blocks are sorted by `xMin` and merged left to right: a block joins the
+   current column if its `xMin` is within `COLUMN_GAP_HEIGHT_FACTOR` (1.5)
+   times the run's median word glyph height of that column's rightmost
+   extent so far; otherwise a horizontal gap that wide is a real column
+   gutter and it starts a new column. Splitting on an absolute,
+   text-size-relative gap (rather than a fixed fraction of the text-area
+   width, which implicitly assumed two columns) means this works the same
+   whether the page actually has one, two, three, or four prose columns.
 
 5. **Emit columns left to right, each column's blocks top to bottom**
    (sorted by `yMin`), then continue with the next run after its wide
@@ -115,10 +132,11 @@ from owlsperch.text.bbox import Block, Line, Page, Word
 #: break (a full-width table or heading) rather than clustered into a column.
 WIDE_BLOCK_FRACTION = 0.6
 
-#: Greedy column-clustering threshold, as a fraction of the text-area width:
-#: a block joins the nearest existing column if its x-center is within this
-#: distance of that column's running average center.
-COLUMN_GAP_FRACTION = 0.25
+#: Column-clustering threshold, as a multiple of the run's median word
+#: glyph height: a block starts a new column when the horizontal gap from
+#: the current column's rightmost extent so far is at least this wide (see
+#: step 4).
+COLUMN_GAP_HEIGHT_FACTOR = 1.5
 
 #: Two blocks are candidate table columns if their vertical extents overlap
 #: by at least this fraction of the shorter block's height (see step 2).
@@ -128,6 +146,23 @@ TABLE_OVERLAP_FRACTION = 0.70
 #: treated as a table if it has at least this many members (see step 2) --
 #: a two-block group is an ordinary two-column prose layout.
 TABLE_MIN_BLOCKS = 3
+
+#: A block needs at least this many non-blank lines to be considered
+#: "prose-like" (see step 1a) -- fewer is too little evidence either way.
+PROSE_MIN_LINES = 4
+
+#: ...and a median words-per-line of at least this many (see step 1a) --
+#: a table cell's lines are typically a name or a single number/die code.
+PROSE_MIN_MEDIAN_WORDS_PER_LINE = 5.0
+
+#: A line "spans" its block when its own width is at least this fraction of
+#: the block's width (see step 1a) -- justified body text runs edge to
+#: edge; a table cell's line does not.
+PROSE_LINE_SPAN_FRACTION = 0.75
+
+#: ...and at least this fraction of a block's (non-blank) lines must span
+#: it this way for the block to count as prose-like (see step 1a).
+PROSE_SPANNING_LINE_FRACTION = 0.60
 
 #: Within a table group, lines whose y-centers are within this fraction of
 #: the median line height of each other belong to the same row (see the
@@ -164,6 +199,28 @@ def is_vertical_block(block: Block) -> bool:
     if not block.lines:
         return False
     return all(line.height > line.width for line in block.lines)
+
+
+def _is_prose_like_block(block: Block) -> bool:
+    """Whether `block` looks like justified running prose -- several lines
+    of several words each, most of which stretch across nearly the whole
+    block width -- as opposed to a table cell's short, ragged lines (see
+    module docstring, step 1a). Prose-like blocks are excluded from table
+    grouping entirely (step 2)."""
+    lines = [line for line in block.lines if line.words]
+    if len(lines) < PROSE_MIN_LINES:
+        return False
+
+    words_per_line = sorted(len(line.words) for line in lines)
+    median_words = words_per_line[len(words_per_line) // 2]
+    if median_words < PROSE_MIN_MEDIAN_WORDS_PER_LINE:
+        return False
+
+    block_width = block.width
+    if block_width <= 0:
+        return False
+    spanning = sum(1 for line in lines if line.width >= PROSE_LINE_SPAN_FRACTION * block_width)
+    return spanning / len(lines) >= PROSE_SPANNING_LINE_FRACTION
 
 
 @dataclass(frozen=True)
@@ -401,25 +458,36 @@ def _detect_single_block_table_group(block: Block) -> TableGroup | None:
     )
 
 
-def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
-    """Split `blocks` into (table groups, remaining non-table blocks) per
-    step 2 of the module docstring."""
-    n = len(blocks)
-    adjacency: list[set[int]] = [set() for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _is_table_pair(blocks[i], blocks[j]):
-                adjacency[i].add(j)
-                adjacency[j].add(i)
+def _maximal_cliques(nodes: set[int], adjacency: list[set[int]]) -> list[set[int]]:
+    """Every maximal clique of the subgraph induced by `nodes` (Bron-Kerbosch,
+    no pivoting) -- a page has few enough non-prose candidate blocks that the
+    naive algorithm is fine. Used so a table group requires every member to
+    mutually overlap every other member, not just be transitively connected
+    (see module docstring, step 2)."""
+    results: list[set[int]] = []
 
+    def expand(r: set[int], p: set[int], x: set[int]) -> None:
+        if not p and not x:
+            results.append(r)
+            return
+        for v in list(p):
+            neighbors = adjacency[v] & nodes
+            expand(r | {v}, p & neighbors, x & neighbors)
+            p = p - {v}
+            x = x | {v}
+
+    expand(set(), set(nodes), set())
+    return results
+
+
+def _connected_components(nodes: list[int], adjacency: list[set[int]]) -> list[set[int]]:
     visited: set[int] = set()
-    table_groups: list[TableGroup] = []
-    remaining: list[Block] = []
-    for i in range(n):
-        if i in visited:
+    components: list[set[int]] = []
+    for start in nodes:
+        if start in visited:
             continue
-        component = {i}
-        queue = [i]
+        component = {start}
+        queue = [start]
         while queue:
             current = queue.pop()
             for neighbor in adjacency[current]:
@@ -427,49 +495,77 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
                     component.add(neighbor)
                     queue.append(neighbor)
         visited |= component
-        if len(component) >= TABLE_MIN_BLOCKS:
-            table_groups.append(_build_table_group([blocks[k] for k in sorted(component)]))
-        else:
-            remaining.extend(blocks[k] for k in sorted(component))
+        components.append(component)
+    return components
+
+
+def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
+    """Split `blocks` into (table groups, remaining non-table blocks) per
+    steps 1a/2 of the module docstring."""
+    n = len(blocks)
+    candidate_indices = [i for i in range(n) if not _is_prose_like_block(blocks[i])]
+
+    adjacency: list[set[int]] = [set() for _ in range(n)]
+    for idx, i in enumerate(candidate_indices):
+        for j in candidate_indices[idx + 1 :]:
+            if _is_table_pair(blocks[i], blocks[j]):
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+
+    claimed: set[int] = set()
+    table_groups: list[TableGroup] = []
+    for component in _connected_components(candidate_indices, adjacency):
+        if len(component) < TABLE_MIN_BLOCKS:
+            continue
+        cliques = _maximal_cliques(component, adjacency)
+        for clique in sorted(cliques, key=len, reverse=True):
+            available = clique - claimed
+            if len(available) >= TABLE_MIN_BLOCKS:
+                claimed |= available
+                table_groups.append(_build_table_group([blocks[k] for k in sorted(available)]))
+
+    remaining = [blocks[i] for i in range(n) if i not in claimed]
     return table_groups, remaining
 
 
-def _cluster_columns(blocks: list[Block], text_area_width: float) -> list[Block]:
-    """Greedily cluster `blocks` into left-to-right columns (see step 4),
-    returning them concatenated column by column, top to bottom within
-    each column."""
+def _run_median_word_height(blocks: list[Block]) -> float:
+    heights = [
+        word.y_max - word.y_min
+        for block in blocks
+        for line in block.lines
+        for word in line.words
+        if word.text
+    ]
+    return _median(heights, default=1.0)
+
+
+def _cluster_columns(blocks: list[Block]) -> list[Block]:
+    """Cluster `blocks` into left-to-right columns by a gap-based split of
+    their x-extents (see step 4), returning them concatenated column by
+    column, top to bottom within each column. The split threshold is
+    relative to the run's own text size, which is what lets this handle any
+    number of columns (one, two, three, four, ...) rather than assuming
+    two."""
     if not blocks:
         return []
 
-    threshold = text_area_width * COLUMN_GAP_FRACTION
-    # Each cluster: running (sum_of_centers, count, [blocks]).
-    clusters: list[list[Block]] = []
-    cluster_center_sums: list[float] = []
+    threshold = _run_median_word_height(blocks) * COLUMN_GAP_HEIGHT_FACTOR
 
-    for block in sorted(blocks, key=lambda b: b.x_min):
-        center = block.x_center
-        best_index = None
-        best_distance = threshold
-        for i, blocks_in_cluster in enumerate(clusters):
-            cluster_center = cluster_center_sums[i] / len(blocks_in_cluster)
-            distance = abs(center - cluster_center)
-            if distance <= best_distance:
-                best_distance = distance
-                best_index = i
-        if best_index is None:
+    ordered = sorted(blocks, key=lambda b: b.x_min)
+    clusters: list[list[Block]] = [[ordered[0]]]
+    cluster_max_x: list[float] = [ordered[0].x_max]
+    for block in ordered[1:]:
+        gap = block.x_min - cluster_max_x[-1]
+        if gap >= threshold:
             clusters.append([block])
-            cluster_center_sums.append(center)
+            cluster_max_x.append(block.x_max)
         else:
-            clusters[best_index].append(block)
-            cluster_center_sums[best_index] += center
+            clusters[-1].append(block)
+            cluster_max_x[-1] = max(cluster_max_x[-1], block.x_max)
 
-    ordered_clusters = sorted(
-        range(len(clusters)),
-        key=lambda i: cluster_center_sums[i] / len(clusters[i]),
-    )
     result: list[Block] = []
-    for i in ordered_clusters:
-        result.extend(sorted(clusters[i], key=lambda b: b.y_min))
+    for cluster in clusters:
+        result.extend(sorted(cluster, key=lambda b: b.y_min))
     return result
 
 
@@ -504,14 +600,14 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
     run: list[Block] = []
     for _, item in combined:
         if isinstance(item, TableGroup):
-            result.extend(_cluster_columns(run, text_area_width))
+            result.extend(_cluster_columns(run))
             result.append(item)
             run = []
         elif item.width > wide_threshold:
-            result.extend(_cluster_columns(run, text_area_width))
+            result.extend(_cluster_columns(run))
             result.append(item)
             run = []
         else:
             run.append(item)
-    result.extend(_cluster_columns(run, text_area_width))
+    result.extend(_cluster_columns(run))
     return result
