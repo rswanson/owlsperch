@@ -62,6 +62,16 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _schema_errors(validator: Any, instance: Any, *, prefix: str) -> list[str]:
+    """Render a validator's errors as `"<prefix>.<path>: <message>"`
+    strings, in a stable (path-sorted) order."""
+    errors = sorted(validator.iter_errors(instance), key=lambda e: [str(p) for p in e.path])
+    return [
+        f"{prefix}.{'.'.join(str(p) for p in err.path) or '<root>'}: {err.message}"
+        for err in errors
+    ]
+
+
 @dataclass
 class RecordResult:
     path: str
@@ -143,25 +153,14 @@ def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchema
             path=rel_path, status="FAIL", errors=[str(exc)], segment_id=None, type=None
         )
 
-    errors: list[str] = []
-
-    for err in sorted(
-        compiled.envelope_validator().iter_errors(record), key=lambda e: [str(p) for p in e.path]
-    ):
-        location = ".".join(str(p) for p in err.path) or "<root>"
-        errors.append(f"envelope.{location}: {err.message}")
+    errors = _schema_errors(compiled.envelope_validator(), record, prefix="envelope")
 
     registry_version: int | None = None
     if type_dir in compiled.registry.types:
         registry_version = compiled.registry.types[type_dir].version
         type_validator = compiled.type_validator(type_dir)
-        fields = record.get("fields", {})
         if type_validator is not None:
-            for err in sorted(
-                type_validator.iter_errors(fields), key=lambda e: [str(p) for p in e.path]
-            ):
-                location = ".".join(str(p) for p in err.path) or "<root>"
-                errors.append(f"fields.{location}: {err.message}")
+            errors.extend(_schema_errors(type_validator, record.get("fields", {}), prefix="fields"))
     else:
         errors.append(f"unknown type directory '{type_dir}'")
 
