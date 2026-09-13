@@ -24,8 +24,8 @@ def slugify(name: str) -> str:
     into `table-38-the-druid`.
     """
     dash_normalized = "".join("-" if unicodedata.category(ch) == "Pd" else ch for ch in name)
-    folded = unicodedata.normalize("NFKD", dash_normalized).encode("ascii", "ignore").decode(
-        "ascii"
+    folded = (
+        unicodedata.normalize("NFKD", dash_normalized).encode("ascii", "ignore").decode("ascii")
     )
     folded = folded.lower()
     folded = folded.replace("'", "")
