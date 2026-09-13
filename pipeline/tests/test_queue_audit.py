@@ -319,6 +319,14 @@ def test_render_names_the_collision_claimants_and_on_disk_owner(tmp_path: Path) 
 
 def test_fix_book_soft_resets_a_done_victim_and_prunes_the_stale_path(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    prior_attempts = [
+        {
+            "tier": "haiku",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "errors": ["needs_context: which class?"],
+            "kind": "needs_context",
+        }
+    ]
     _write_segment(
         data_dir,
         "book",
@@ -326,6 +334,7 @@ def test_fix_book_soft_resets_a_done_victim_and_prunes_the_stale_path(tmp_path: 
         status="done",
         outcome="validated",
         tier="haiku",
+        attempts=prior_attempts,
         records=[
             "records/book/rules_section/class-features.json",
             "records/book/rules_section/class-skills.json",
@@ -357,6 +366,7 @@ def test_fix_book_soft_resets_a_done_victim_and_prunes_the_stale_path(tmp_path: 
     assert segment["records"] == ["records/book/rules_section/class-skills.json"]
     # Tier/attempts are left alone -- it re-extracts at the tier it reached.
     assert segment["tier"] == "haiku"
+    assert segment["attempts"] == prior_attempts
 
 
 def test_fix_book_only_prunes_a_pending_segments_stale_claim(tmp_path: Path) -> None:
@@ -445,3 +455,50 @@ def test_fix_book_is_a_noop_when_nothing_is_stale(tmp_path: Path) -> None:
     results = fix_book("book", data_dir=data_dir)
 
     assert results == []
+
+
+def test_fix_book_running_twice_is_a_noop_the_second_time(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="done",
+        outcome="validated",
+        tier="haiku",
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["needs_context: which class?"],
+                "kind": "needs_context",
+            }
+        ],
+        records=[
+            "records/book/rules_section/class-features.json",
+            "records/book/rules_section/class-skills.json",
+        ],
+    )
+    _write_record(
+        data_dir,
+        "records/book/rules_section/class-features.json",
+        segment_id="book-p0011-01",
+    )
+    _write_record(
+        data_dir,
+        "records/book/rules_section/class-skills.json",
+        segment_id="book-p0010-01",
+    )
+
+    first_results = fix_book("book", data_dir=data_dir)
+    assert len(first_results) == 1
+    after_first = _read_segment(data_dir, "book", "book-p0010-01")
+
+    # Re-running immediately, with nothing else changed, must find no more
+    # stale claims -- the pruned path is gone and the segment's own PASS
+    # left `extraction.segment_id` matching, so it's no longer a victim.
+    second_results = fix_book("book", data_dir=data_dir)
+    assert second_results == []
+
+    after_second = _read_segment(data_dir, "book", "book-p0010-01")
+    assert after_second == after_first
