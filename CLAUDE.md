@@ -16,7 +16,11 @@ rules_section schemas -- batch B10 adds the latter three -- JSON Schema
 draft 2020-12) with `validate` and `schema show`, the `queue`
 extraction-queue CLI plus the `/extract` Claude Code skill -- now (batch B8)
 with a full haiku -> sonnet -> opus escalation ladder and a `human/` inbox
-for what opus can't resolve (see "Architecture" below), `build-db` (builds
+for what opus can't resolve, `queue complete` refusing to let one segment's
+claimed record path silently overwrite a record another segment already
+owns (a B10 mandated follow-up), and `queue audit <book_id> [--fix]` to
+find and (re-)recover segments this already happened to before that guard
+existed (see "Architecture" below), `build-db` (builds
 `db/owlsperch.sqlite` from validated records), `serve` (starts the
 `owlsperch_server` FastAPI app -- `/search`, `/records/{type}/{slug}`,
 `/records/{type}` and `/facets/{type}` (batch B9 -- filtered/sorted/
@@ -49,6 +53,7 @@ uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
+uv run owlsperch queue audit <book_id> [--fix] [--json]
 uv run owlsperch queue run <book_id> --dry-run --fixtures DIR [--tier T] [--limit N] [--kind K] [--json]
 uv run owlsperch build-db [--strict] # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
 uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
@@ -182,8 +187,8 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   command) until the migration is run.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
-  `complete`, `summary`, `reset`, `run`), the Python side of the `/extract`
-  skill (spec 4.5, batches B5/B8): `ladder.py` is the pure haiku -> sonnet ->
+  `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
+  `/extract` skill (spec 4.5, batches B5/B8): `ladder.py` is the pure haiku -> sonnet ->
   opus escalation state machine (`TIERS`, `TIER_MODELS`, `STALE_AFTER` = 60
   min, `record_failure` appends `{tier, timestamp, errors, kind}` to
   `attempts` -- idempotent on an identical repeat, and never double-advances
@@ -249,9 +254,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `context_seg_ids` and retries the same tier once before escalating;
   `no_content` marks the segment done; otherwise `records` ->
   `pending_records` after checking each path resolves inside
-  `records/<book_id>/` and exists on disk -- a missing path, like a
-  malformed reply, escalates the segment via `ladder.record_failure`, moving
-  it to `human/` if already on opus; `summary.py` reports per-tier
+  `records/<book_id>/`, exists on disk, AND (B10 mandated follow-up) is not
+  already owned by a *different* segment of the same book --
+  `_record_path_owners` scans every `segments/<book_id>/*.json` and
+  `human/<book_id>/*.json` file's own `records`/`pending_records` for this,
+  since the record file's own `extraction.segment_id` is only a
+  subagent-copied placeholder by the time `queue complete` runs and would
+  already name a thief on a just-clobbered file. A missing or colliding
+  path, like a malformed reply, escalates the segment via
+  `ladder.record_failure` (both kinds folded into the one attempt for a
+  single reply), moving it to `human/` if already on opus; a colliding path
+  is left completely untouched on disk. `summary.py` reports per-tier
   pass/escalated counts (from both `segments/` and `human/`) plus
   `needs_context_retries`, `human`, and `pending_by_kind`/`pending_by_tier`
   (pending-only, so a wave can be planned without `queue next`);
@@ -263,10 +276,27 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   Agent-tool subagents; `common.py` has `find_segment_path` (now also
   searching `human/*/`), `move_segment_to_human`, and `finish_after_failure`
   (the shared write-back-or-move-to-human step `complete.py` and
-  `validate/runner.py` both call); `runner.py` wires all of it into the CLI.
-  `owlsperch validate` promotes a path from `pending_records` to `records`
-  on PASS and drops it (deleting the file too, unless it's also in
-  `records`) on FAIL. The skill itself is `.claude/skills/extract/SKILL.md`
+  `validate/runner.py` both call); `audit.py` (B10 mandated follow-up, for
+  segments a stolen-record collision already happened to before the
+  `complete.py` guard existed): `audit_book` builds the same segment-index
+  claim map as that guard and reports `collisions` (a path claimed by 2 or more
+  segments right now) plus `stale_claims` -- one entry per segment claiming
+  a path it doesn't actually own, decided this time from the record FILE's
+  own `extraction.segment_id` (the last writer's stamp, and so the
+  legitimate owner of a surviving file) rather than the segment index,
+  reason `"owned_by_other"` or (the file is gone entirely) `"missing"`;
+  `fix_book` prunes exactly the stale paths from each affected segment's
+  own `records`/`pending_records` and soft-resets a `done` victim back to
+  `pending` (clearing `outcome`/`outcome_reason`, keeping `tier`/`attempts`)
+  so it re-extracts under the new guard and under B10-mand1's
+  name-qualification prompt rule -- a `pending`/`in_progress` segment just
+  gets the pruning, and a segment sitting in `human/` is reported but left
+  completely untouched; `fix_book` never deletes, moves, or rewrites a
+  record file itself. `runner.py` wires all of it (including `queue audit
+  [--fix]`) into the CLI. `owlsperch validate` promotes a path from
+  `pending_records` to `records` on PASS and drops it (deleting the file
+  too, unless it's also in `records`) on FAIL. The skill itself is
+  `.claude/skills/extract/SKILL.md`
   -- a short Claude-Code-facing loop over these commands plus Agent-tool
   subagent launches, using whatever tier `queue next` returns per item; all
   the logic that can be unit tested lives in `queue/` instead of the skill
