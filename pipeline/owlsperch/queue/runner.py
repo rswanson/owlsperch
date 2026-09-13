@@ -9,6 +9,7 @@ subprocessing.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -226,9 +227,14 @@ def run_queue_reset(
 
         target_path = data_dir / "segments" / segment.book_id / f"{seg_id}.json"
         if was_human:
+            # Write the updated segment atomically to its current (human/)
+            # path first, then a single same-filesystem `os.replace` into
+            # `segments/` -- never a moment with copies in both places (see
+            # `owlsperch.queue.common.move_segment_to_human`, the same
+            # pattern in the other direction).
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(target_path, segment.model_dump_json(indent=2) + "\n")
-            path.unlink()
+            atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+            os.replace(path, target_path)
         else:
             atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
 

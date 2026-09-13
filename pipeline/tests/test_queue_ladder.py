@@ -125,6 +125,36 @@ def test_record_failure_is_idempotent_for_identical_repeat_at_same_tier() -> Non
     assert segment.tier == "sonnet"  # unchanged by the second (idempotent) call
 
 
+def test_record_failure_idempotency_guard_is_validation_only() -> None:
+    """The `(tier, kind, errors)` idempotency guard exists only so a rerun
+    of `owlsperch validate` with nothing changed doesn't append a duplicate
+    validation attempt. A repeated identical `needs_context` (e.g. a second
+    subagent reply naming the same adjacent segment id as the first) is a
+    genuinely new attempt from a genuinely new `queue complete` call, so it
+    must still escalate -- not be swallowed as a no-op -- while an identical
+    repeated `validation` failure is still a true no-op."""
+    needs_context_segment = _segment(tier="haiku")
+    record_failure(needs_context_segment, ["needs_context: book-p0011-01"], kind="needs_context")
+
+    result = record_failure(
+        needs_context_segment, ["needs_context: book-p0011-01"], kind="needs_context"
+    )
+
+    assert not result.retried_same_tier
+    assert result.escalated_to == "sonnet"
+    assert needs_context_segment.tier == "sonnet"
+    assert len(needs_context_segment.attempts) == 2
+
+    validation_segment = _segment(tier="haiku")
+    record_failure(validation_segment, ["same error"], kind="validation", tier="haiku")
+
+    result = record_failure(validation_segment, ["same error"], kind="validation", tier="haiku")
+
+    assert result == type(result)()
+    assert len(validation_segment.attempts) == 1
+    assert validation_segment.tier == "sonnet"  # unchanged by the no-op repeat
+
+
 def test_record_failure_stale_attempt_tier_behind_current_tier_never_double_advances() -> None:
     """A record whose own `extraction.tier` (passed explicitly here, mirroring
     `owlsperch.validate.runner._write_back_fail`) is behind the segment's

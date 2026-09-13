@@ -45,6 +45,13 @@ class FixtureExhaustedError(Exception):
     enough replies scripted for the scenario under test."""
 
 
+class FixtureUnsafePathError(Exception):
+    """Raised when a fixture's `files` mapping names a path that would
+    resolve outside `data_dir` (e.g. via a `..` component or an absolute
+    path) -- a fixture file must never be able to write anywhere else on
+    disk."""
+
+
 class Subagent(Protocol):
     def run(self, seg_id: str, *, data_dir: Path) -> str: ...
 
@@ -68,8 +75,16 @@ class FixtureSubagent:
                 f"no fixture at {fixture_path} for call #{n} to segment '{seg_id}'"
             )
         payload = json.loads(fixture_path.read_text())
+        data_dir_resolved = data_dir.resolve()
         for rel_path, content in payload.get("files", {}).items():
-            out_path = data_dir / rel_path
+            out_path = (data_dir / rel_path).resolve()
+            try:
+                out_path.relative_to(data_dir_resolved)
+            except ValueError:
+                raise FixtureUnsafePathError(
+                    f"fixture {fixture_path} names a 'files' path that resolves outside "
+                    f"data_dir: {rel_path!r}"
+                ) from None
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(content, indent=2) + "\n")
         self.served.setdefault(seg_id, []).append(f"{n}.json")

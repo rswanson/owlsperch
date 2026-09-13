@@ -16,16 +16,23 @@ tier escalates like any other failure. A failure recorded once opus is
 already exhausted reports `exhausted=True` instead of a tier -- the caller
 moves the segment to `human/`.
 
-`record_failure` is idempotent the same way the pre-B8 write-back guard was:
-calling it again with the exact same `(tier, kind, errors)` as the segment's
-last attempt is a no-op (no duplicate attempt, no further tier movement) --
-this is what a rerun of `owlsperch validate` with nothing changed produces,
-and is also what stops a *stale* re-validation of an old-tier record (one
-whose own `extraction.tier` predates the segment's current tier, e.g. after
-a schema change makes a previously-passing record fail again) from
-double-advancing the ladder: such a call's `tier` argument no longer matches
-`segment.tier`, so `record_failure` records the attempt for the record but
-never moves `segment.tier` for it.
+`record_failure` is idempotent, but *only* for `kind == "validation"`, the
+same way the pre-B8 write-back guard was: calling it again with the exact
+same `(tier, kind, errors)` as the segment's last attempt is a no-op (no
+duplicate attempt, no further tier movement) -- this is what a rerun of
+`owlsperch validate` with nothing changed produces, and is also what stops a
+*stale* re-validation of an old-tier record (one whose own `extraction.tier`
+predates the segment's current tier, e.g. after a schema change makes a
+previously-passing record fail again) from double-advancing the ladder: such
+a call's `tier` argument no longer matches `segment.tier`, so `record_failure`
+records the attempt for the record but never moves `segment.tier` for it.
+This guard is deliberately *not* applied to `needs_context` or `malformed`:
+every call for those kinds comes from a distinct `owlsperch queue complete`
+of a distinct subagent reply, so an identical repeat (e.g. a second
+`needs_context` reply naming the same adjacent segment id as the first) is a
+genuinely new attempt, not a rerun of the same check -- it must still
+retry-then-escalate (or escalate outright, for `malformed`) rather than be
+swallowed as a no-op.
 """
 
 from __future__ import annotations
@@ -130,20 +137,22 @@ def record_failure(
     tier: str | None = None,
 ) -> FailureResult:
     """Append `{"tier", "timestamp", "errors", "kind"}` to `segment.attempts`
-    (idempotent -- see module docstring) and advance `segment.tier` to the
-    next rung, unless this is a first `needs_context` at the current tier
-    (stay put for a retry) or the attempt's own `tier` no longer matches
-    `segment.tier` (a stale re-validation of an old-tier record -- recorded
-    for the audit trail, but never allowed to move the ladder). Mutates
-    `segment.attempts` and (when advancing) `segment.tier` in place; never
-    touches `segment.status` or does any I/O -- the caller decides what to
-    persist and where (including moving an exhausted segment to `human/`).
+    (idempotent for `kind == "validation"` only -- see module docstring) and
+    advance `segment.tier` to the next rung, unless this is a first
+    `needs_context` at the current tier (stay put for a retry) or the
+    attempt's own `tier` no longer matches `segment.tier` (a stale
+    re-validation of an old-tier record -- recorded for the audit trail, but
+    never allowed to move the ladder). Mutates `segment.attempts` and (when
+    advancing) `segment.tier` in place; never touches `segment.status` or
+    does any I/O -- the caller decides what to persist and where (including
+    moving an exhausted segment to `human/`).
     """
     attempt_tier = tier if tier is not None else segment.tier
 
     last = segment.attempts[-1] if segment.attempts else None
     already_recorded = (
-        isinstance(last, dict)
+        kind == "validation"
+        and isinstance(last, dict)
         and last.get("tier") == attempt_tier
         and last.get("errors") == errors
         and attempt_kind_of(last) == kind

@@ -12,7 +12,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from owlsperch.queue.driver import FixtureExhaustedError, drive_dry_run, run_queue_run
+from owlsperch.queue.driver import (
+    FixtureExhaustedError,
+    FixtureUnsafePathError,
+    drive_dry_run,
+    run_queue_run,
+)
 from owlsperch.segment.runner import Segment
 
 
@@ -287,7 +292,6 @@ def test_dry_run_second_needs_context_escalates(tmp_path: Path) -> None:
     fixtures_dir = tmp_path / "fixtures"
     _write_segment(data_dir, "book", "book-p0040-01")
     _write_segment(data_dir, "book", "book-p0041-01", status="done", outcome="no_content")
-    _write_segment(data_dir, "book", "book-p0042-01", status="done", outcome="no_content")
 
     _write_fixture(
         fixtures_dir,
@@ -304,6 +308,9 @@ def test_dry_run_second_needs_context_escalates(tmp_path: Path) -> None:
             },
         },
     )
+    # A second reply naming the SAME adjacent segment id as the first -- a
+    # genuinely new attempt (a distinct subagent call), which must still
+    # escalate rather than be swallowed as an idempotent no-op.
     _write_fixture(
         fixtures_dir,
         "book-p0040-01",
@@ -314,7 +321,7 @@ def test_dry_run_second_needs_context_escalates(tmp_path: Path) -> None:
                 "seg_id": "book-p0040-01",
                 "records": [],
                 "no_content": None,
-                "needs_context": ["book-p0042-01"],
+                "needs_context": ["book-p0041-01"],
                 "notes": [],
             },
         },
@@ -351,7 +358,7 @@ def test_dry_run_second_needs_context_escalates(tmp_path: Path) -> None:
     assert segment["status"] == "done"
     assert segment["outcome"] == "validated"
     assert segment["tier"] == "sonnet"  # escalated once, by the 2nd needs_context
-    assert segment["context_seg_ids"] == ["book-p0041-01", "book-p0042-01"]
+    assert segment["context_seg_ids"] == ["book-p0041-01"]
     needs_context_attempts = [a for a in segment["attempts"] if a["kind"] == "needs_context"]
     assert len(needs_context_attempts) == 2
     assert result.summary.needs_context_retries == 2
@@ -452,6 +459,43 @@ def test_fixture_exhausted_raises_when_no_more_fixtures_for_a_reselected_segment
         raise AssertionError("expected FixtureExhaustedError")
     except FixtureExhaustedError:
         pass
+
+
+def test_fixture_with_path_traversal_in_files_is_rejected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    fixtures_dir = tmp_path / "fixtures"
+    _write_segment(data_dir, "book", "book-p0080-01")
+    _write_fixture(
+        fixtures_dir,
+        "book-p0080-01",
+        1,
+        {
+            "files": {"../../../../etc/evil.json": {"pwned": True}},
+            "reply": {
+                "seg_id": "book-p0080-01",
+                "records": [],
+                "no_content": {"reason": "n/a"},
+                "notes": [],
+            },
+        },
+    )
+
+    unsafe_target = (data_dir / "../../../../etc/evil.json").resolve()
+
+    try:
+        drive_dry_run(
+            "book",
+            fixtures_dir=fixtures_dir,
+            data_dir=data_dir,
+            schemas_dir=_repo_schemas_dir(),
+            manifest_path=manifest_path,
+        )
+        raise AssertionError("expected FixtureUnsafePathError")
+    except FixtureUnsafePathError:
+        pass
+
+    assert not unsafe_target.exists()
 
 
 def test_run_queue_run_without_dry_run_flag_errors(tmp_path: Path) -> None:

@@ -154,7 +154,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   consistency + the page-within-segment-span check (segment looked up by
   `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
   writes the outcome back to the originating segment (via the `Segment`
-  model) idempotently.
+  model) idempotently. Bumping a type's `schema_version` in
+  `schemas/registry.json` requires following up with `uv run owlsperch
+  validate <book_id|all> --bump-compatible` against the data dir --
+  otherwise every older record stays stale, `owlsperch build-db` skips all
+  of them, and `server/tests/test_corpus.py` fails (or skips, naming this
+  command) until the migration is run.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `run`), the Python side of the `/extract`

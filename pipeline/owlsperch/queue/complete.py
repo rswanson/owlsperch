@@ -17,8 +17,9 @@ came back fenced and were wrongly rejected before this. In precedence order:
   "proposed_type"` and the proposal (`{"name": ..., "reason": ...}`) stored
   on `proposal`. Every prior attempt is kept.
 - `needs_context` is not null: a non-empty list of adjacent segment ids
-  (must all exist under `segments/<same book_id>/`, or the reply is
-  malformed) naming where the entity continues. The ids are merged
+  (must all exist under `segments/<same book_id>/` and none may be the
+  segment's own `seg_id`, or the reply is malformed) naming where the
+  entity continues. The ids are merged
   (deduped, order preserved) onto `context_seg_ids`. The *first*
   `needs_context` at the segment's current tier retries the same tier (for
   one wave with the adjacent text merged into the prompt -- see
@@ -241,10 +242,18 @@ def _overwrite_authoritative_fields(
     atomic_write_text(path, json.dumps(record, indent=2) + "\n")
 
 
-def _missing_context_ids(data_dir: Path, book_id: str, ids: list[str]) -> list[str]:
-    """The subset of `ids` that do NOT resolve to an existing
-    `segments/<book_id>/<id>.json` file -- empty means every id is valid."""
-    return [i for i in ids if not (data_dir / "segments" / book_id / f"{i}.json").is_file()]
+def _missing_context_ids(
+    data_dir: Path, book_id: str, ids: list[str], own_seg_id: str
+) -> list[str]:
+    """The subset of `ids` that are invalid: either they don't resolve to an
+    existing `segments/<book_id>/<id>.json` file, or they name the
+    segment's own `own_seg_id` -- a segment can't be its own adjacent
+    context. Empty means every id is valid."""
+    return [
+        i
+        for i in ids
+        if i == own_seg_id or not (data_dir / "segments" / book_id / f"{i}.json").is_file()
+    ]
 
 
 def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> CompleteOutcome:
@@ -277,7 +286,7 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
 
     needs_context = parsed.get("needs_context")
     if needs_context is not None:
-        bad_ids = _missing_context_ids(data_dir, segment.book_id, needs_context)
+        bad_ids = _missing_context_ids(data_dir, segment.book_id, needs_context, seg_id)
         if bad_ids:
             error_msg = f"needs_context id(s) not found: {', '.join(bad_ids)}"
             result = record_failure(segment, [f"malformed_result: {error_msg}"], kind="malformed")

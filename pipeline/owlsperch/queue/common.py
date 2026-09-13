@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,7 +48,13 @@ def move_segment_to_human(
     """Move `segment` (currently on disk at `path`, under `segments/`) to
     `human/<book_id>/<seg_id>.json` (spec 4.2): sets `status: "human"`,
     `outcome`, and (for a `proposed_type` outcome) `proposal`, keeping every
-    attempt. The old `segments/` file is deleted."""
+    attempt. The updated JSON is written atomically to `path` first (the
+    existing `atomic_write_text`), then a single `os.replace(path,
+    human_path)` renames it into place under `human/` -- both are on the
+    same filesystem (under `data_dir`), so there is never a moment where the
+    segment exists at both `segments/` and `human/`, unlike write-new-then-
+    delete-old, which can leave both copies behind if it crashes in
+    between."""
     segment.status = "human"
     segment.outcome = outcome
     if proposal is not None:
@@ -56,9 +63,9 @@ def move_segment_to_human(
 
     human_path = human_segment_path(data_dir, segment.book_id, segment.seg_id)
     human_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(human_path, segment.model_dump_json(indent=2) + "\n")
-    if path != human_path and path.is_file():
-        path.unlink()
+    atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+    if path != human_path:
+        os.replace(path, human_path)
 
 
 def finish_after_failure(

@@ -221,7 +221,7 @@ def test_repeated_malformed_replies_keep_escalating_not_stuck_at_same_tier(
     assert segment["status"] == "pending"
 
 
-def test_identical_malformed_reply_completed_twice_for_the_same_open_attempt_is_idempotent(
+def test_identical_validation_reply_at_the_same_fixed_tier_is_idempotent(
     tmp_path: Path,
 ) -> None:
     """When `record_failure` is given the *same* attempt tier explicitly
@@ -230,7 +230,11 @@ def test_identical_malformed_reply_completed_twice_for_the_same_open_attempt_is_
     `(tier, kind, errors)` is a true no-op -- this is the guard
     `owlsperch.queue.ladder.record_failure`'s docstring describes, exercised
     directly here since `queue complete` itself has no such fixed tier to
-    pass (see the test above)."""
+    pass (see the test above). This guard applies only to `kind ==
+    "validation"` (the only kind `_write_back_fail` ever passes an explicit
+    `tier` for) -- `malformed` and `needs_context` are exercised elsewhere
+    and must NOT get this no-op treatment, since every call for those kinds
+    is a genuinely distinct subagent reply."""
     from owlsperch.queue.ladder import record_failure
     from owlsperch.segment.runner import Segment
 
@@ -245,8 +249,8 @@ def test_identical_malformed_reply_completed_twice_for_the_same_open_attempt_is_
         created_at="2026-01-01T00:00:00+00:00",
     )
 
-    first = record_failure(segment, ["boom"], kind="malformed", tier="haiku")
-    second = record_failure(segment, ["boom"], kind="malformed", tier="haiku")
+    first = record_failure(segment, ["boom"], kind="validation", tier="haiku")
+    second = record_failure(segment, ["boom"], kind="validation", tier="haiku")
 
     assert first.escalated_to == "sonnet"
     assert second == type(second)()  # a true no-op: no further movement
@@ -829,7 +833,6 @@ def test_second_needs_context_at_same_tier_escalates_and_merges_ids(tmp_path: Pa
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
     _write_segment(data_dir, "book", "book-p0011-01")
-    _write_segment(data_dir, "book", "book-p0012-01")
     first = json.dumps(
         {
             "seg_id": "book-p0010-01",
@@ -840,12 +843,16 @@ def test_second_needs_context_at_same_tier_escalates_and_merges_ids(tmp_path: Pa
         }
     )
     complete_segment("book-p0010-01", first, data_dir=data_dir)
+    # A second reply naming the SAME adjacent segment id as the first -- a
+    # genuinely new attempt (a distinct `queue complete` of a distinct
+    # subagent reply), which must still escalate rather than be swallowed as
+    # an idempotent no-op (see `owlsperch.queue.ladder`'s module docstring).
     second = json.dumps(
         {
             "seg_id": "book-p0010-01",
             "records": [],
             "no_content": None,
-            "needs_context": ["book-p0012-01"],
+            "needs_context": ["book-p0011-01"],
             "notes": [],
         }
     )
@@ -855,7 +862,7 @@ def test_second_needs_context_at_same_tier_escalates_and_merges_ids(tmp_path: Pa
     assert outcome.outcome == "needs_context"
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["tier"] == "sonnet"
-    assert segment["context_seg_ids"] == ["book-p0011-01", "book-p0012-01"]
+    assert segment["context_seg_ids"] == ["book-p0011-01"]
     assert len(segment["attempts"]) == 2
 
 
@@ -868,6 +875,29 @@ def test_needs_context_unknown_id_is_malformed(tmp_path: Path) -> None:
             "records": [],
             "no_content": None,
             "needs_context": ["book-p9999-01"],
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["context_seg_ids"] == []
+    assert segment["tier"] == "sonnet"  # a malformed reply still escalates
+
+
+def test_needs_context_naming_itself_is_malformed(tmp_path: Path) -> None:
+    """A segment can't be its own adjacent context -- naming its own
+    `seg_id` in `needs_context` is invalid the same way an unknown id is."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0010-01"],
             "notes": [],
         }
     )
@@ -896,7 +926,6 @@ def test_second_needs_context_at_opus_moves_to_human(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", tier="opus")
     _write_segment(data_dir, "book", "book-p0011-01", tier="opus")
-    _write_segment(data_dir, "book", "book-p0012-01", tier="opus")
     first = json.dumps(
         {
             "seg_id": "book-p0010-01",
@@ -907,16 +936,17 @@ def test_second_needs_context_at_opus_moves_to_human(tmp_path: Path) -> None:
         }
     )
     complete_segment("book-p0010-01", first, data_dir=data_dir)
-    # A *different* needs_context target than the first reply -- otherwise
-    # this would be an identical repeat of the same open attempt, which is
-    # the idempotent no-op case (see `owlsperch.queue.ladder`), not a
-    # genuinely new second attempt.
+    # A second reply naming the SAME adjacent segment id as the first -- a
+    # genuinely new attempt (a distinct `queue complete` of a distinct
+    # subagent reply), which must still escalate (and exhaust at opus) rather
+    # than be swallowed as an idempotent no-op (see `owlsperch.queue.ladder`'s
+    # module docstring).
     second = json.dumps(
         {
             "seg_id": "book-p0010-01",
             "records": [],
             "no_content": None,
-            "needs_context": ["book-p0012-01"],
+            "needs_context": ["book-p0011-01"],
             "notes": [],
         }
     )
