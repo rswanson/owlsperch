@@ -1210,6 +1210,47 @@ def test_ownership_index_scan_skips_a_file_that_is_not_valid_json(tmp_path: Path
     assert segment["pending_records"] == ["records/book/spell/fireball.json"]
 
 
+def test_collision_at_opus_moves_the_victim_to_human(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0026-01",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0148-01", tier="opus")
+    _write_record_file(data_dir, "records/book/rules_section/class-features.json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0148-01",
+            "records": ["records/book/rules_section/class-features.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0148-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    seg_path = data_dir / "segments" / "book" / "book-p0148-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0148-01.json"
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "escalation_exhausted"
+    assert len(human_segment["attempts"]) == 1
+    assert human_segment["attempts"][0]["kind"] == "malformed"
+    assert human_segment["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/rules_section/class-features.json "
+        "is owned by segment book-p0026-01"
+    ]
+
+    # The original owner's own segment is unaffected.
+    owner = _read_segment(data_dir, "book", "book-p0026-01")
+    assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
 def test_proposed_type_takes_precedence_over_needs_context(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")

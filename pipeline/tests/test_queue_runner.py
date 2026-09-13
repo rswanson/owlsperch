@@ -421,6 +421,50 @@ def test_run_queue_audit_fix_soft_resets_and_reports_it(tmp_path: Path) -> None:
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["status"] == "pending"
     assert segment["records"] == []
+    output = out.getvalue()
+    # Criterion 7: one line per segment touched, plus a final count of
+    # segments actually reset (not pruned-only or left-in-human).
+    assert "book-p0010-01: reset" in output
+    assert "1 segment(s) reset" in output
+
+
+def test_run_queue_audit_fix_text_reports_pruned_and_reset_counts_separately(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    # A `done` segment with a stale claim -- gets soft-reset.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="done",
+        outcome="validated",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps({"extraction": {"segment_id": "book-p0011-01"}}))
+
+    # A `pending` segment with a dangling claim -- gets pruned only, no
+    # reset, and must not be lumped into the reset count.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0012-01",
+        status="pending",
+        pending_records=["records/book/spell/missing-spell.json"],
+    )
+
+    out = io.StringIO()
+    exit_code = run_queue_audit("book", fix=True, json_output=False, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    output = out.getvalue()
+    assert "book-p0010-01: reset" in output
+    assert "book-p0012-01: pruned" in output
+    assert "records/book/spell/missing-spell.json" in output
+    # Only one of the two touched segments was actually reset.
+    assert "1 segment(s) reset" in output
 
 
 # ---------------------------------------------------------------------------

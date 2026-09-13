@@ -182,7 +182,16 @@ def run_queue_audit(
     else:
         print(report.render(), file=out)
         if fixed is not None:
-            print(f"  fixed {len(fixed)} segment(s)", file=out)
+            reset_count = 0
+            for entry in fixed:
+                pruned = ", ".join(entry["pruned_paths"]) if entry["pruned_paths"] else "(none)"
+                print(
+                    f"  {entry['seg_id']}: {entry['action']} (pruned: {pruned})",
+                    file=out,
+                )
+                if entry["action"] == "reset":
+                    reset_count += 1
+            print(f"  {reset_count} segment(s) reset", file=out)
     return 0
 
 
