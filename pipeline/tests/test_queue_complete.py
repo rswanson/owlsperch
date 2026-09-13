@@ -151,9 +151,12 @@ def test_invalid_json_is_malformed_result(tmp_path: Path) -> None:
     assert outcome.outcome == "malformed"
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["status"] == "pending"
-    assert segment["tier"] == "haiku"
+    # A malformed reply is "treated as a validation failure and escalated"
+    # (spec 4.5, batch B8) -- one attempt advances the tier immediately.
+    assert segment["tier"] == "sonnet"
     assert len(segment["attempts"]) == 1
     assert "malformed_result" in segment["attempts"][0]["errors"][0]
+    assert segment["attempts"][0]["kind"] == "malformed"
 
 
 def test_missing_required_keys_is_malformed_result(tmp_path: Path) -> None:
@@ -196,9 +199,15 @@ def test_no_content_without_reason_is_malformed_result(tmp_path: Path) -> None:
     assert outcome.outcome == "malformed"
 
 
-def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error(
+def test_repeated_malformed_replies_keep_escalating_not_stuck_at_same_tier(
     tmp_path: Path,
 ) -> None:
+    """Unlike a `validate` rerun on an unchanged record (which has a fixed
+    `extraction.tier` and is genuinely idempotent, see
+    `owlsperch.queue.ladder`'s module docstring), two `queue complete` calls
+    with identical malformed text are two distinct subagent attempts (one
+    per `queue next` selection) -- each one escalates the segment, it never
+    gets stuck re-recording the same attempt at the same tier."""
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
 
@@ -206,7 +215,43 @@ def test_malformed_result_does_not_add_duplicate_attempts_on_rerun_of_same_error
     complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
 
     segment = _read_segment(data_dir, "book", "book-p0010-01")
-    assert len(segment["attempts"]) == 1
+    assert len(segment["attempts"]) == 2
+    assert [a["tier"] for a in segment["attempts"]] == ["haiku", "sonnet"]
+    assert segment["tier"] == "opus"
+    assert segment["status"] == "pending"
+
+
+def test_identical_malformed_reply_completed_twice_for_the_same_open_attempt_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    """When `record_failure` is given the *same* attempt tier explicitly
+    (mirroring `owlsperch.validate.runner._write_back_fail`'s use of a
+    record's own fixed `extraction.tier`), a repeat of the identical
+    `(tier, kind, errors)` is a true no-op -- this is the guard
+    `owlsperch.queue.ladder.record_failure`'s docstring describes, exercised
+    directly here since `queue complete` itself has no such fixed tier to
+    pass (see the test above)."""
+    from owlsperch.queue.ladder import record_failure
+    from owlsperch.segment.runner import Segment
+
+    segment = Segment(
+        seg_id="book-p0010-01",
+        book_id="book",
+        pages=[10],
+        printed_pages=[10],
+        kind_hint="spell",
+        heading="Fireball",
+        text="Fireball text.",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    first = record_failure(segment, ["boom"], kind="malformed", tier="haiku")
+    second = record_failure(segment, ["boom"], kind="malformed", tier="haiku")
+
+    assert first.escalated_to == "sonnet"
+    assert second == type(second)()  # a true no-op: no further movement
+    assert len(segment.attempts) == 1
+    assert segment.tier == "sonnet"
 
 
 def test_seg_id_mismatch_is_malformed_result(tmp_path: Path) -> None:
@@ -603,7 +648,7 @@ def _full_spell_record(*, pages: list[int], book_id: str = "book") -> dict[str, 
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "bogus-tier",
             "model": "bogus-model",
@@ -681,3 +726,279 @@ def test_record_with_wrong_pages_is_corrected_after_complete_and_then_passes_val
     assert "PASS records/book/spell/fireball.json" in out.getvalue()
     record = json.loads(record_path.read_text())
     assert record["pages"] == [197, 198]
+
+
+# ---------------------------------------------------------------------------
+# missing_record_path escalates the tier too (batch B8 -- "treated as a
+# validation failure and escalated").
+# ---------------------------------------------------------------------------
+
+
+def test_missing_record_path_advances_tier(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/never-written.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert segment["attempts"][0]["kind"] == "malformed"
+
+
+def test_missing_record_path_at_opus_moves_to_human(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="opus")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/never-written.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    # missing_record_path's outcome label stays "pending_records" (matching
+    # the pre-B8 shape callers already branch on -- see e.g.
+    # `test_mix_of_valid_and_invalid_record_paths`); the escalation happens
+    # underneath regardless of the label.
+    assert outcome.outcome == "pending_records"
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    assert json.loads(human_path.read_text())["outcome"] == "escalation_exhausted"
+
+
+def test_malformed_at_opus_moves_to_human(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="opus")
+
+    outcome = complete_segment("book-p0010-01", "{not json", data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "escalation_exhausted"
+    assert len(human_segment["attempts"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# needs_context (batch B8, acceptance criterion 3): first reply at a tier
+# retries the same tier with merged context; a second escalates.
+# ---------------------------------------------------------------------------
+
+
+def test_needs_context_first_reply_retries_same_tier_and_merges_ids(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_segment(data_dir, "book", "book-p0011-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0011-01"],
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "needs_context"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "haiku"
+    assert segment["status"] == "pending"
+    assert segment["context_seg_ids"] == ["book-p0011-01"]
+    assert segment["attempts"][0]["kind"] == "needs_context"
+    assert segment["in_progress_since"] is None
+
+
+def test_second_needs_context_at_same_tier_escalates_and_merges_ids(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_segment(data_dir, "book", "book-p0011-01")
+    _write_segment(data_dir, "book", "book-p0012-01")
+    first = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0011-01"],
+            "notes": [],
+        }
+    )
+    complete_segment("book-p0010-01", first, data_dir=data_dir)
+    second = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0012-01"],
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", second, data_dir=data_dir)
+
+    assert outcome.outcome == "needs_context"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert segment["context_seg_ids"] == ["book-p0011-01", "book-p0012-01"]
+    assert len(segment["attempts"]) == 2
+
+
+def test_needs_context_unknown_id_is_malformed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p9999-01"],
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["context_seg_ids"] == []
+    assert segment["tier"] == "sonnet"  # a malformed reply still escalates
+
+
+def test_needs_context_empty_list_is_malformed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [], "no_content": None, "needs_context": []}
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_second_needs_context_at_opus_moves_to_human(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="opus")
+    _write_segment(data_dir, "book", "book-p0011-01", tier="opus")
+    _write_segment(data_dir, "book", "book-p0012-01", tier="opus")
+    first = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0011-01"],
+            "notes": [],
+        }
+    )
+    complete_segment("book-p0010-01", first, data_dir=data_dir)
+    # A *different* needs_context target than the first reply -- otherwise
+    # this would be an identical repeat of the same open attempt, which is
+    # the idempotent no-op case (see `owlsperch.queue.ladder`), not a
+    # genuinely new second attempt.
+    second = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0012-01"],
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", second, data_dir=data_dir)
+
+    assert outcome.outcome == "needs_context"
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    assert json.loads(human_path.read_text())["outcome"] == "escalation_exhausted"
+
+
+# ---------------------------------------------------------------------------
+# proposed_type (batch B8, acceptance criterion 4): moves straight to
+# human/ with the proposal.
+# ---------------------------------------------------------------------------
+
+
+def test_proposed_type_moves_segment_to_human_with_proposal(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "proposed_type": {"name": "trap", "reason": "no schema for mechanical traps yet"},
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "proposed_type"
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "proposed_type"
+    assert human_segment["proposal"] == {
+        "name": "trap",
+        "reason": "no schema for mechanical traps yet",
+    }
+    # tier is untouched -- proposed_type doesn't go through the ladder.
+    assert human_segment["tier"] == "haiku"
+
+
+def test_proposed_type_without_name_is_malformed(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "proposed_type": {"reason": "why"},
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "malformed"
+
+
+def test_proposed_type_takes_precedence_over_needs_context(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_segment(data_dir, "book", "book-p0011-01")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [],
+            "no_content": None,
+            "needs_context": ["book-p0011-01"],
+            "proposed_type": {"name": "trap", "reason": "why"},
+            "notes": [],
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "proposed_type"

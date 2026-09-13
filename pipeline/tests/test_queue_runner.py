@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from owlsperch.queue.runner import (
     run_queue_complete,
     run_queue_next,
@@ -100,7 +102,7 @@ def _valid_spell_record(*, seg_id: str) -> dict[str, Any]:
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "haiku",
             "model": "claude-haiku-test",
@@ -471,6 +473,151 @@ def test_run_queue_reset_hard_never_deletes_files_outside_the_book_records_dir(
 
     assert exit_code == 0
     assert (other_book_dir / "fireball.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# queue reset on a human/ segment (batch B8)
+# ---------------------------------------------------------------------------
+
+
+def _write_human_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> None:
+    defaults: dict[str, Any] = dict(
+        seg_id=seg_id,
+        book_id=book_id,
+        pages=[10],
+        printed_pages=[10],
+        kind_hint="spell",
+        heading="Fireball",
+        text="Fireball text.",
+        status="human",
+        tier="opus",
+        outcome="escalation_exhausted",
+        created_at="2026-01-01T00:00:00+00:00",
+        attempts=[
+            {"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": ["e1"]},
+            {"tier": "sonnet", "timestamp": "2026-01-01T00:00:01+00:00", "errors": ["e2"]},
+            {"tier": "opus", "timestamp": "2026-01-01T00:00:02+00:00", "errors": ["e3"]},
+        ],
+    )
+    defaults.update(overrides)
+    segment = Segment(**defaults)
+    human_dir = data_dir / "human" / book_id
+    human_dir.mkdir(parents=True, exist_ok=True)
+    (human_dir / f"{seg_id}.json").write_text(segment.model_dump_json(indent=2))
+
+
+def test_run_queue_reset_moves_human_segment_back_to_pending_on_its_tier(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_human_segment(data_dir, "book", "book-p0010-01")
+
+    exit_code = run_queue_reset(["book-p0010-01"], data_dir=data_dir, out=io.StringIO())
+
+    assert exit_code == 0
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    assert not human_path.exists()
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "opus"  # stays on its current tier
+    assert segment["outcome"] is None
+    assert len(segment["attempts"]) == 3  # kept
+
+
+def test_run_queue_reset_hard_on_human_segment_also_resets_tier_to_haiku(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_human_segment(data_dir, "book", "book-p0010-01")
+
+    exit_code = run_queue_reset(["book-p0010-01"], hard=True, data_dir=data_dir, out=io.StringIO())
+
+    assert exit_code == 0
+    assert not (data_dir / "human" / "book" / "book-p0010-01.json").exists()
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "haiku"
+    assert segment["attempts"] == []
+    assert segment["outcome"] is None
+
+
+def test_run_queue_reset_unknown_seg_id_also_checks_human_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+
+    exit_code = run_queue_reset(["does-not-exist"], data_dir=data_dir, out=io.StringIO())
+
+    assert exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# queue next: --tier default omitted, stale-reset stderr note
+# ---------------------------------------------------------------------------
+
+
+def test_run_queue_next_without_tier_uses_lowest_pending_tier(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", tier="sonnet")
+
+    out = io.StringIO()
+    exit_code = run_queue_next(
+        "book",
+        limit=5,
+        kind="spell",
+        json_output=True,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+    )
+
+    assert exit_code == 0
+    parsed = json.loads(out.getvalue())
+    assert len(parsed) == 1
+    assert parsed[0]["tier"] == "sonnet"
+    assert parsed[0]["model"] == "claude-sonnet-5"
+
+
+def test_run_queue_next_reports_stale_reset_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="in_progress",
+        in_progress_since="2020-01-01T00:00:00+00:00",
+    )
+
+    exit_code = run_queue_next(
+        "book",
+        limit=5,
+        kind="spell",
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "reset 1 stale in_progress segment" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# queue run CLI wiring
+# ---------------------------------------------------------------------------
+
+
+def test_cli_help_lists_queue_run_subcommand() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "owlsperch", "queue", "run", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "--dry-run" in result.stdout
+    assert "--fixtures" in result.stdout
 
 
 # ---------------------------------------------------------------------------
