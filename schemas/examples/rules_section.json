@@ -1,15 +1,16 @@
 {
-  "id": "rules_section:example:sable-rites",
+  "id": "rules_section:example:class-features-sable-knight",
   "type": "rules_section",
-  "name": "Sable Rites",
-  "slug": "sable-rites",
+  "name": "Class Features (Sable Knight)",
+  "slug": "class-features-sable-knight",
   "aliases": [],
   "book_id": "example",
   "pages": [1],
   "citation": "Example p. 1",
-  "text_md": "Sable rites are a set of ranked observances a sable-order initiate performs to advance in standing. Each rite must be witnessed by a superior of higher rank.",
+  "text_md": "All of the following are class features of the sable knight prestige class.\n\nA sable knight gains no proficiency with any weapon or armor beyond what she already possesses. At 3rd level, and every three levels thereafter, a sable knight may perform the Rite of the Black Oath, gaining a +1 profane bonus on Intimidate checks that stacks with itself.",
   "fields": {
-    "topic": "Sable Rites",
+    "topic": "Class Features",
+    "parent_section": "Sable Knight",
     "chapter": "Chapter 1: The Sable Order"
   },
   "tables": ["table:example:table-1-1-sable-ranks"],

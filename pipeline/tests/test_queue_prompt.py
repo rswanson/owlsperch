@@ -9,11 +9,14 @@ instructions.
 
 from __future__ import annotations
 
+import json
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 from owlsperch.queue.prompt import prompt_path_for, render_prompt, render_prompt_to_file
-from owlsperch.schemas import load_registry
+from owlsperch.schemas import Registry, load_registry
 from owlsperch.segment.runner import Segment
 
 
@@ -814,3 +817,277 @@ def test_every_kind_that_is_told_to_write_a_table_is_shown_the_table_schema(
                 f"kind_hint={kind!r} tells the subagent to write "
                 "a `table` record but never shows it the table schema"
             )
+
+
+# ---------------------------------------------------------------------------
+# B10 retrospective (mand1): a generic rules_section heading must be
+# qualified with its enclosing entity, plus a prompt-rendering coverage test
+# for every registered kind (retro proposals 4 and 9).
+# ---------------------------------------------------------------------------
+
+
+def test_rules_section_prompt_states_generic_heading_qualification_rule(tmp_path: Path) -> None:
+    """Acceptance criteria 1-4: the rule names the recurring generic
+    headings, gives the literal worked example, says where the enclosing
+    entity comes from (and the `needs_context` fallback), and states how
+    `slug`/`id` follow from the qualified `name` -- never from qualifying
+    the slug alone."""
+    segment = _segment(kind_hint="rules_section")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    rules_index = text.index("## Extraction rules for `rules_section`")
+    next_heading_index = text.index("\n## ", rules_index)
+    rules_section = text[rules_index:next_heading_index]
+
+    # Criterion 1: recurring generic headings named, worked example given.
+    for heading in ["Class Features", "Class Skills", "Game Rule Information", "Description"]:
+        assert heading in rules_section, heading
+    assert "Class Features (Barbarian)" in rules_section
+    assert "GENERIC" in rules_section
+
+    # Criterion 2: where the enclosing entity comes from, and the
+    # needs_context fallback naming the previous segment id.
+    assert "nearest preceding" in rules_section
+    assert "### Adjacent context" in rules_section
+    assert (
+        "If none of those name it, answer `needs_context` naming the\n"
+        "previous segment id instead of guessing at an entity."
+    ) in rules_section
+
+    # Criterion 3: slug/id follow from the QUALIFIED name; qualifying the
+    # slug alone while name stays generic is wrong and fails validation --
+    # this is the exact observed `class-features-barbarian` failure shape.
+    assert "`slug` and `id` follow from the QUALIFIED `name`" in rules_section
+    assert "class-features-barbarian" in rules_section
+    assert "rules_section:<book_id>:class-features-barbarian" in rules_section
+    assert "Qualifying the\nslug alone while leaving `name` GENERIC is WRONG and fails" in (
+        rules_section
+    )
+
+    # Criterion 4: topic/parent_section split, unchanged meanings.
+    assert "`fields.topic` still stays the bare heading" in rules_section
+    assert "`fields.parent_section` carries the enclosing" in rules_section
+    assert "`topic` is the section's own heading/subject" in rules_section
+    assert "`parent_section` is" in rules_section
+    assert "the enclosing section's heading, ONLY when the text makes it" in rules_section
+
+
+def test_spell_feat_table_prompts_do_not_carry_rules_section_qualification_rule(
+    tmp_path: Path,
+) -> None:
+    """Acceptance criterion 6: kind-specific instructions stay kind-specific
+    -- pinned on the rule's distinctive sentence, not on a word (like "Class
+    Features") that also appears only inside the rules_section EXAMPLE
+    RECORD, which spell/feat/table prompts never render."""
+    manifest_path = _write_manifest(tmp_path)
+    marker = "`slug` and `id` follow from the QUALIFIED `name`"
+
+    for kind in ["spell", "feat", "table"]:
+        text = render_prompt(
+            _segment(kind_hint=kind),
+            data_dir=tmp_path / "data",
+            manifest_path=manifest_path,
+            schemas_dir=_repo_schemas_dir(),
+        )
+        assert marker not in text, kind
+        assert "Class Features (Barbarian)" not in text, kind
+
+
+def test_rules_section_example_fixture_models_the_qualification_convention() -> None:
+    """Acceptance criterion 5: the EXAMPLE RECORD rendered verbatim into
+    every rules_section prompt itself demonstrates the convention."""
+    path = _repo_schemas_dir() / "examples" / "rules_section.json"
+    example = json.loads(path.read_text())
+
+    assert example["name"] == "Class Features (Sable Knight)"
+    assert example["slug"] == "class-features-sable-knight"
+    assert example["id"] == "rules_section:example:class-features-sable-knight"
+    assert example["fields"]["topic"] == "Class Features"
+    assert example["fields"]["parent_section"] == "Sable Knight"
+
+
+# ---------------------------------------------------------------------------
+# Acceptance criteria 7-8: a per-registered-kind prompt-rendering coverage
+# guard (retro proposal 9). `_prompt_coverage_failures` returns a list of
+# human-readable gap descriptions for one rendered prompt -- empty means no
+# gaps found. This is a guard, not a red-then-green test for criteria 7
+# (already true on main for all four registered types); criterion 8's
+# negative test is what proves it actually bites.
+# ---------------------------------------------------------------------------
+
+_REPLY_CONTRACT_KEYS = {
+    "seg_id",
+    "records",
+    "no_content",
+    "needs_context",
+    "proposed_type",
+    "notes",
+}
+_JSON_LITERALS = {"null", "true", "false"}
+_BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+_FIELD_TOKEN_RE = re.compile(r"^[a-z_][a-z0-9_]*(\[\])?(\.[a-z_][a-z0-9_]*)?$")
+
+
+def _schema_property_names(schema: dict[str, Any]) -> set[str]:
+    """All property names in `schema`, recursing into nested array-of-object
+    and object properties the same way `_render_schema_properties` does."""
+    names: set[str] = set()
+    for name, prop in schema.get("properties", {}).items():
+        if not isinstance(prop, dict):
+            continue
+        names.add(name)
+        items = prop.get("items")
+        if isinstance(items, dict) and items.get("type") == "object" and items.get("properties"):
+            names |= _schema_property_names(items)
+        if prop.get("type") == "object" and prop.get("properties"):
+            names |= _schema_property_names(prop)
+    return names
+
+
+def _section_text(text: str, marker: str) -> str | None:
+    """The text of the section starting at `marker` up to (not including)
+    the next real `## ` (exactly two hashes) heading -- `### `/`#### `
+    sub-headings inside it don't end the section, since a literal `\\n## `
+    only matches a true two-hash heading."""
+    if marker not in text:
+        return None
+    start = text.index(marker)
+    try:
+        end = text.index("\n## ", start)
+    except ValueError:
+        end = len(text)
+    return text[start:end]
+
+
+def _prompt_coverage_failures(kind: str, text: str, registry: Registry) -> list[str]:
+    """Human-readable coverage gaps for a rendered `kind` prompt: every
+    instruction naming a field or a record type must be backed by a
+    schema/example actually rendered in this same prompt (retro proposal 9 --
+    the mechanical counter-measure to B10's table-cross-link defect)."""
+    failures: list[str] = []
+    if kind not in registry.types:
+        return failures
+
+    type_schema = registry.load_type_schema(kind)
+    type_props = _schema_property_names(type_schema)
+    envelope_props = _schema_property_names(registry.envelope_schema)
+
+    for prop_name in sorted(type_props):
+        if f"`{prop_name}`" not in text:
+            failures.append(f"{kind}: fields property `{prop_name}` is not rendered in the prompt")
+    for prop_name in sorted(envelope_props):
+        if f"`{prop_name}`" not in text:
+            failures.append(
+                f"{kind}: envelope property `{prop_name}` is not rendered in the prompt"
+            )
+
+    example_path = registry.schemas_dir / "examples" / f"{kind}.json"
+    if not example_path.is_file():
+        failures.append(f"{kind}: schemas/examples/{kind}.json does not exist")
+    else:
+        example = json.loads(example_path.read_text())
+        if json.dumps(example, indent=2) not in text:
+            failures.append(
+                f"{kind}: its own example record is not rendered verbatim in the prompt"
+            )
+
+    from owlsperch.queue.prompt import _KIND_RULES
+
+    if kind not in _KIND_RULES:
+        failures.append(f"{kind}: no entry in _KIND_RULES")
+    elif f"## Extraction rules for `{kind}`" not in text:
+        failures.append(f"{kind}: '## Extraction rules for `{kind}`' heading is not rendered")
+
+    mentioned_types = {t for t in registry.types if t != kind and f"`{t}`" in text}
+    grounded = (
+        type_props | envelope_props | _REPLY_CONTRACT_KEYS | _JSON_LITERALS | set(registry.types)
+    )
+
+    for other in sorted(mentioned_types):
+        other_props = _schema_property_names(registry.load_type_schema(other))
+        grounded |= other_props
+        for prop_name in sorted(other_props):
+            if f"`{prop_name}`" not in text:
+                failures.append(
+                    f"{kind}: cross-type `{other}` property `{prop_name}` is not rendered "
+                    "in the prompt"
+                )
+        other_example_path = registry.schemas_dir / "examples" / f"{other}.json"
+        if not other_example_path.is_file():
+            failures.append(f"{kind}: cross-type `{other}` has no schemas/examples/{other}.json")
+        else:
+            other_example = json.loads(other_example_path.read_text())
+            if json.dumps(other_example, indent=2) not in text:
+                failures.append(
+                    f"{kind}: cross-type `{other}` example record is not rendered verbatim "
+                    "in the prompt"
+                )
+
+    for marker in [f"## Extraction rules for `{kind}`", "### Tables belonging to this entity"]:
+        section = _section_text(text, marker)
+        if section is None:
+            continue
+        for match in _BACKTICK_RE.finditer(section):
+            token = match.group(1)
+            if not _FIELD_TOKEN_RE.match(token):
+                continue
+            first_segment = token.split(".", 1)[0]
+            if first_segment.endswith("[]"):
+                first_segment = first_segment[:-2]
+            if first_segment not in grounded:
+                failures.append(
+                    f"{kind}: {marker!r} references `{token}` (via `{first_segment}`) which "
+                    "does not resolve to any known field, reply-contract key, JSON literal, "
+                    "or registered type"
+                )
+
+    return failures
+
+
+def test_every_registered_kind_prompt_has_zero_coverage_gaps(tmp_path: Path) -> None:
+    """Acceptance criterion 7 (guard, not red-then-green -- see criterion 8's
+    negative test for proof this actually bites): renders a prompt for every
+    type in `schemas/registry.json`, never a hard-coded type list."""
+    registry = load_registry(_repo_schemas_dir())
+    manifest_path = _write_manifest(tmp_path)
+
+    for kind in registry.types:
+        text = render_prompt(
+            _segment(kind_hint=kind),
+            data_dir=tmp_path / "data",
+            manifest_path=manifest_path,
+            schemas_dir=_repo_schemas_dir(),
+        )
+        failures = _prompt_coverage_failures(kind, text, registry)
+        assert failures == [], f"kind={kind!r}: {failures}"
+
+
+def test_coverage_guard_catches_a_missing_cross_type_example(tmp_path: Path) -> None:
+    """Acceptance criterion 8: reproduces the shape of the B10 defect (an
+    instruction to write a `table` record with no backing table material
+    rendered) against a doctored schemas dir missing `examples/table.json`,
+    and shows the coverage helper now catches it."""
+    doctored_schemas = tmp_path / "schemas"
+    shutil.copytree(_repo_schemas_dir(), doctored_schemas)
+    (doctored_schemas / "examples" / "table.json").unlink()
+
+    registry = load_registry(doctored_schemas)
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        _segment(kind_hint="rules_section"),
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=doctored_schemas,
+    )
+    assert "a `table` record" in text  # the cross-link instruction is still there
+
+    failures = _prompt_coverage_failures("rules_section", text, registry)
+    assert any("cross-type `table`" in f and "examples/table.json" in f for f in failures), failures

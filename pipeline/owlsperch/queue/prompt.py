@@ -20,6 +20,14 @@ against its own schema). A non-`table` prompt additionally renders the
 `_table_convention_lines`), since it tells its subagent to write a SECOND,
 `table`-typed record for any cross-linked table.
 
+A `rules_section` prompt's rules additionally require a GENERIC,
+cross-chapter heading (e.g. "Class Features") to be qualified with its
+enclosing entity in the record's own `name` (`Class Features (Barbarian)`,
+never the bare heading) -- since `slug`/`id` are derived from `name`, an
+unqualified generic name collides across chapters and overwrites another
+chapter's record of the same slug (see `_KIND_RULES["rules_section"]`; the
+convention is modeled by `schemas/examples/rules_section.json`).
+
 Default model string ("claude-haiku-4-5") is only ever a placeholder for
 `--model`/`--tier` defaults on the CLI (`owlsperch queue next|prompt`); the
 value actually rendered into a prompt's `extraction.model` example is
@@ -99,6 +107,33 @@ _KIND_RULES: dict[str, list[str]] = {
         "the enclosing section's heading, ONLY when the text makes it",
         "explicit (otherwise omit it). `chapter` is the chapter name, ONLY",
         "when it's known from the text (otherwise omit it).",
+        "",
+        "Some section headings are GENERIC: they recur verbatim across many",
+        'chapters or entities in this book -- "Class Features", "Class Skills",',
+        '"Game Rule Information", "Description", and others like them. For a',
+        "GENERIC heading, the record's `name` MUST be qualified with the",
+        "enclosing entity, in the form `Heading (Entity)` -- e.g. a Barbarian",
+        'chapter\'s "Class Features" section becomes the record name',
+        "`Class Features (Barbarian)`, never the bare `Class Features`.",
+        "`fields.topic` still stays the bare heading (`Class Features`);",
+        "`fields.parent_section` carries the enclosing entity (`Barbarian`) --",
+        "the meaning of `topic`/`parent_section` does not change, only `name`",
+        "gains the qualifier.",
+        "",
+        "Find the enclosing entity from, in order: the nearest preceding",
+        "entity name in this segment's own text, this segment's own heading",
+        'shown above under "## Segment", or an "### Adjacent context"',
+        "block. If none of those name it, answer `needs_context` naming the",
+        "previous segment id instead of guessing at an entity.",
+        "",
+        "`slug` and `id` follow from the QUALIFIED `name`, via the slug rule",
+        "below -- `Class Features (Barbarian)` slugifies to",
+        "`class-features-barbarian`, giving `id` =",
+        "`rules_section:<book_id>:class-features-barbarian`. Qualifying the",
+        "slug alone while leaving `name` GENERIC is WRONG and fails",
+        "validation -- `slug` must equal the slugified `name`, so the",
+        "qualifier belongs on `name` first and the slug follows from it, not",
+        "the other way around.",
         "",
         "`text_md` is the section's prose, faithfully reproduced.",
         "",

@@ -214,8 +214,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   "text_md begins at the descriptive body, don't repeat the stat block"
   rule; feat's `NAME [TYPE]` heading and `Prerequisite:`/`Benefit:`/
   `Normal:`/`Special:` marker-splitting rules; rules_section's `topic`/
-  `parent_section`/`chapter` rules and its table-of-contents/index-fragment
-  `no_content` guidance; table's verbatim title, column/row padding, and
+  `parent_section`/`chapter` rules, its table-of-contents/index-fragment
+  `no_content` guidance, and (B10 retrospective) a rule that a GENERIC,
+  cross-chapter heading (e.g. "Class Features") must have its record `name`
+  qualified with the enclosing entity (`Class Features (Barbarian)`, never
+  the bare heading) since `slug`/`id` derive from `name` and an unqualified
+  generic name collides across chapters -- modeled by
+  `schemas/examples/rules_section.json`'s own "Class Features (Sable
+  Knight)" example; table's verbatim title, column/row padding, and
   caption-only-segment `no_content` guidance -- a kind_hint with no entry,
   e.g. `stat_block`, gets no rules section), a shared "### Tables belonging
   to this entity" convention for every non-table kind (write a second
@@ -229,8 +235,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   an explicit never-`null` instruction for `fields` (write nothing rather
   than `null` -- envelope build-time keys may simply be omitted), the output
   contract including `needs_context`/`proposed_type`, and
-  `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`;
-  `complete.py` ingests a subagent's final JSON: `proposed_type` moves the
+  `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`.
+  `pipeline/tests/test_queue_prompt.py` carries a per-registered-kind
+  prompt-coverage guard (`_prompt_coverage_failures`, B10 retrospective
+  proposal 9): it renders a prompt for every type in `schemas/registry.json`
+  and asserts every field/type instruction in it is backed by a
+  schema/example actually rendered in that same prompt -- a new kind, or a
+  new cross-type instruction like the table cross-link convention, must
+  satisfy it too. `complete.py` ingests a subagent's final JSON:
+  `proposed_type` moves the
   segment straight to `human/<book_id>/` with the proposal; `needs_context`
   (ids must exist under `segments/<book_id>/`) merges into
   `context_seg_ids` and retries the same tier once before escalating;
