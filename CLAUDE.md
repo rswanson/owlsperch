@@ -11,8 +11,9 @@ PDF manifest (`pipeline/manifest.yaml`), `manifest check`, `text`
 (column-repaired per-page text extraction for text-layer books, plus a
 `.meta.json` sidecar of paragraph font-size stats), `segment` (splits a
 book's text into candidate spell/stat_block/feat/table/rules_section
-segments), the `schemas/` type registry (envelope + spell schema, JSON
-Schema draft 2020-12) with `validate` and `schema show`, the `queue`
+segments), the `schemas/` type registry (envelope + spell/feat/table/
+rules_section schemas -- batch B10 adds the latter three -- JSON Schema
+draft 2020-12) with `validate` and `schema show`, the `queue`
 extraction-queue CLI plus the `/extract` Claude Code skill -- now (batch B8)
 with a full haiku -> sonnet -> opus escalation ladder and a `human/` inbox
 for what opus can't resolve (see "Architecture" below), `build-db` (builds
@@ -23,9 +24,13 @@ paginated browse lists and their facet counts), `/schemas`, `/health`,
 `/stats`), `dev` (runs `serve` and `web/`'s Vite dev server together),
 `fixture-db <dir>` (builds a small synthetic database for local UI/e2e
 testing), and `web/` (search box, record page, and -- batch B9 --
-`/browse/:type` with a facet sidebar). CI. Everything else is a
-future-batch stub (`check-completeness`, `coverage`, `schema review`,
-`sample`, and `web/`'s own `/tools/*` routes from spec 4.10).
+`/browse/:type` with a facet sidebar). Batch B10 adds the feat/table/
+rules_section record types end to end: schemas, per-kind extraction
+rules, a `tables` SQLite table, record-detail table resolution, and
+web rendering of a record's owned tables (see "Architecture" below).
+CI. Everything else is a future-batch stub (`check-completeness`,
+`coverage`, `schema review`, `sample`, and `web/`'s own `/tools/*`
+routes from spec 4.10).
 
 ### Commands
 
@@ -39,7 +44,7 @@ uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
-uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind spell] [--model M] [--lock-timeout S] [--json]
+uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json]
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
@@ -138,21 +143,34 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
 - `schemas/` (repo root, not under `pipeline/`) -- the single source of truth
   for record types (spec 4.6, 4.14): `envelope.json` is the common record
   envelope, `registry.json` lists every type (schema file, label, plural
-  label, schema version), and `<type>.json` (currently just `spell.json`)
-  defines that type's `fields`, each carrying an `x-ui` hint (label,
-  filterable, sortable, group, order). All JSON Schema draft 2020-12.
-  `pipeline/owlsperch/schemas.py` finds this directory by walking up from
-  the package to one containing `schemas/registry.json` (overridable via
-  `$OWLSPERCH_SCHEMAS`), loads the registry, and renders `schema show`.
-  `schemas/examples/<type>.json` (currently just `spell.json`) is an
-  invented, schema-valid example record for that type, rendered verbatim
-  into extraction prompts (`owlsperch.queue.prompt`) and checked against its
-  own schema by a self-test in `test_schemas.py`.
+  label, schema version), and `<type>.json` -- `spell.json`, plus (batch
+  B10) `feat.json` (`feat_type`, `prerequisites`, `benefit` -- required,
+  `normal`, `special`), `rules_section.json` (`topic` -- required,
+  `parent_section`, `chapter`), and `table.json` (`caption`, `columns` --
+  `minItems: 1`, `rows` -- an array of string arrays, `parent_record`, the
+  owning record's `id`) -- defines that type's `fields`, each carrying an
+  `x-ui` hint (label, filterable, sortable, group, order). All JSON Schema
+  draft 2020-12. `pipeline/owlsperch/schemas.py` finds this directory by
+  walking up from the package to one containing `schemas/registry.json`
+  (overridable via `$OWLSPERCH_SCHEMAS`), loads the registry, and renders
+  `schema show`. `schemas/examples/<type>.json` (spell, plus B10's feat/
+  rules_section/table) is an invented, schema-valid example record for that
+  type, rendered verbatim into extraction prompts (`owlsperch.queue.prompt`)
+  and checked against its own schema by a self-test in `test_schemas.py` --
+  the rules_section and table examples cross-reference each other via
+  `tables`/`fields.parent_record`, modeling the convention below.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
   schema_version consistency checks plus type-specific field checks (spell:
-  non-empty `school` and `levels`); `runner.py` orchestrates conformance +
+  non-empty `school` and `levels`; batch B10 adds feat: non-empty `benefit`,
+  rules_section: non-empty `topic`, table: `columns` non-empty and every
+  `rows` entry the same length as `columns`). `checks.slugify` (B10) maps
+  every Unicode dash-punctuation character (category `Pd` -- an en dash,
+  em dash, etc., not just the ASCII hyphen) to a plain `-` before the ASCII
+  fold, so "Table 3–8: The Druid" (en dash) slugifies to
+  `table-3-8-the-druid` rather than losing the dash and merging into
+  `table-38-the-druid`; `runner.py` orchestrates conformance +
   consistency + the page-within-segment-span check (segment looked up by
   `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
   writes the outcome back to the originating segment (via the `Segment`
@@ -176,16 +194,37 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   own tier); `select.py` (`select_and_mark`) resets any segment `in_progress`
   for >60 min back to `pending`, lazily escalates legacy/stuck pending
   segments, then picks segments for `tier` (default: `None` -- the lowest
-  tier in `TIERS` with pending work) and `kind`, marking them `in_progress`
-  under an exclusive `flock` on `segments/<book_id>/.queue.lock`
-  (`--lock-timeout`, default 30s) so two concurrent `queue next` runs can't
-  race on the same segment; `prompt.py` renders a segment's subagent prompt
-  (book metadata, segment text, the candidate schema(s) -- including nested
-  `object`/array-of-object properties -- rendered live from `schemas/`, a
-  complete EXAMPLE RECORD loaded from `schemas/examples/<kind>.json` when
-  one exists, a "## Prior attempts" section on a retry, "### Adjacent
-  context" blocks for `context_seg_ids`, previous/next segment ids, the
-  output contract including `needs_context`/`proposed_type`, and
+  tier in `TIERS` with pending work) and `kind` (default, batch B10:
+  `None`, which resolves to every kind_hint with a registered schema --
+  `set(load_registry(schemas_dir).types)`, currently spell/feat/table/
+  rules_section -- so a kind with no schema yet, e.g. `stat_block`, is
+  never selected unless `--kind stat_block` is passed explicitly; one wave
+  can mix kinds this way, each `SelectedSegment` still carrying its own
+  `kind_hint`), marking them `in_progress` under an exclusive `flock` on
+  `segments/<book_id>/.queue.lock` (`--lock-timeout`, default 30s) so two
+  concurrent `queue next` runs can't race on the same segment; `prompt.py`
+  renders a segment's subagent prompt (book metadata, segment text, the
+  candidate schema(s) -- including nested `object`/array-of-object
+  properties -- rendered live from `schemas/`, a complete EXAMPLE RECORD
+  loaded from `schemas/examples/<kind>.json` when one exists, a
+  "## Prior attempts" section on a retry, "### Adjacent context" blocks
+  for `context_seg_ids`, previous/next segment ids, a per-kind
+  "## Extraction rules for `<kind>`" section from the module-level
+  `_KIND_RULES` dict (batch B10 -- spell's class-abbreviation table and its
+  "text_md begins at the descriptive body, don't repeat the stat block"
+  rule; feat's `NAME [TYPE]` heading and `Prerequisite:`/`Benefit:`/
+  `Normal:`/`Special:` marker-splitting rules; rules_section's `topic`/
+  `parent_section`/`chapter` rules and its table-of-contents/index-fragment
+  `no_content` guidance; table's verbatim title, column/row padding, and
+  caption-only-segment `no_content` guidance -- a kind_hint with no entry,
+  e.g. `stat_block`, gets no rules section), a shared "### Tables belonging
+  to this entity" convention for every non-table kind (write a second
+  `table` record alongside the entity's own when the segment's text
+  contains a table belonging to it, printing both absolute output
+  directories, cross-linked via `fields.parent_record`/`tables`), an
+  explicit never-`null` instruction for `fields` (write nothing rather than
+  `null` -- envelope build-time keys may simply be omitted), the output
+  contract including `needs_context`/`proposed_type`, and
   `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`;
   `complete.py` ingests a subagent's final JSON: `proposed_type` moves the
   segment straight to `human/<book_id>/` with the proposal; `needs_context`
@@ -228,7 +267,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `fields` flattened to one row per scalar -- `flatten_fields` handles
   scalars, lists of scalars, and array-of-object fields like spell `levels`,
   which get one row per `<key>.<subkey>` plus a combined `"Cleric 3"`-style
-  row), `record_pages`, and `names_fts` (FTS5 over name/aliases,
+  row -- a list-of-lists value, e.g. table `rows`, gets NO `record_fields`
+  rows at all, batch B10: that grid content lives in the `tables` table
+  instead, not flattened into individually-searchable scalar rows),
+  `record_pages`, `tables` (batch B10 -- `record_id` primary key, `book_id`,
+  `caption`, `columns`/`rows` as JSON-encoded lists, `parent_record`, an
+  index on `parent_record`; populated in `_insert_record` for every
+  `type == "table"` record, name/slug/citation staying in `records` for the
+  server to join), and `names_fts` (FTS5 over name/aliases,
   `content='records'`/`content_rowid='rowid'`). Every record is
   `canonical = 1` and `macro_eligible = 0` in this batch -- precedence
   (B11) and macro eligibility (B22) are future work. Skipping is expected
@@ -253,8 +299,16 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   fewer than `limit` hits, deduplicated, grouped by type, canonical only),
   `/records/{type}/{slug}` (the stored record JSON plus `variants` --
   other canonical records sharing type+slug across books, picking the
-  latest-published book's as the main response -- and placeholder `links`/
-  `referenced_by`/`tables` for later batches), `/schemas` (reusing
+  latest-published book's as the main response -- placeholder `links`/
+  `referenced_by` for later batches, and (batch B10) `tables` resolved to
+  one uniform object per id in the record's own `tables` list, in that
+  order: a resolved id joins `tables`+`records` for
+  `{id, pending: false, name, slug, caption, columns, rows, citation,
+  book_id}`; an id with no matching `tables` row comes back as
+  `{id, pending: true, ...null/empty}` (spec edge case: a table that failed
+  extraction shows a "table pending" marker instead of failing the whole
+  record) -- malformed stored `columns`/`rows` JSON falls back to `[]`
+  rather than raising), `/schemas` (reusing
   `owlsperch.schemas`), `/stats` (canonical record counts by type, for the
   web UI's home-page hint), `/health`, plus (batch B9) `/records/{type}`
   and `/facets/{type}` -- the SQL/param-parsing for both lives in
@@ -299,7 +353,10 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   synthetic, schema-valid manifest/segment/record set (three spells --
   Fireball/Evocation, Alarm/Abjuration, and, since batch B9, Summon Monster
   III/Conjuration with a Cleric-3 `levels` item, for the browse Playwright
-  spec's facet-filter flow) into `<dir>` and builds
+  spec's facet-filter flow; plus, since batch B10, an invented feat
+  ("Power Strike"), a rules_section ("Grapple Ranks") that owns a table via
+  its `tables` list, and that table record, for the smoke Playwright spec's
+  rendered-table flow) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.
@@ -312,9 +369,18 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `src/components/FieldGroups.tsx` renders a record's `fields` grouped and
   ordered by `/schemas`'s `x-ui` hints (`buildFieldGroups`/
   `formatFieldValue` are plain functions, unit tested separately from the
-  component); `src/pages/RecordPage.tsx` renders `text_md` with
-  `react-markdown` + `remark-gfm` (no raw HTML). `src/pages/BrowsePage.tsx`
-  (batch B9) keeps every filter/sort/page value in the URL query string via
+  component; batch B10 adds an optional `hiddenFields` prop so a
+  `type === "table"` record's own `columns`/`rows` fields aren't ALSO
+  rendered here as a comma-joined string); `src/pages/RecordPage.tsx`
+  renders `text_md` with `react-markdown` + `remark-gfm` (no raw HTML),
+  then (batch B10) `src/components/RecordTables.tsx` below it: one real
+  HTML `<table>` (caption, header row, body rows) per resolved entry in
+  `record.tables`, or a "Table pending" marker naming the id for an
+  unresolved one; for a `type === "table"` record itself,
+  `RecordTables.buildOwnTable` prepends a table built from the record's
+  own `fields.caption`/`columns`/`rows`, and `RecordPage` hides those two
+  field names from `FieldGroups` so the grid isn't also dumped as text.
+  `src/pages/BrowsePage.tsx` (batch B9) keeps every filter/sort/page value in the URL query string via
   `useSearchParams` (reload/back restore the view), fetches `/records/{type}`
   and `/facets/{type}` on every change, and keeps the previous facets/results
   mounted (a `loading` flag, not a full state-machine swap) while a refetch
@@ -329,7 +395,9 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   loopback only on some systems, which breaks anything that probes
   `127.0.0.1` directly, e.g. Playwright's `webServer.url` check). `web/e2e/`
   has Playwright specs -- `smoke.spec.ts` (flow A: type a prefix, Enter,
-  land on the record page), `mobile.spec.ts` (flow A at 400px width), and
+  land on the record page; plus, batch B10, opening the fixture
+  rules_section record and asserting its owned table renders as a real
+  `<table>` below the text), `mobile.spec.ts` (flow A at 400px width), and
   (batch B9) `browse.spec.ts` (flow B: nav to Spells, check Cleric/3/
   Conjuration in the facet sidebar, sort by name, open the one matching
   spell) -- run by `playwright.config.ts`'s `webServer` against two freshly
