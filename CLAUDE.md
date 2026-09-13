@@ -221,9 +221,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   to this entity" convention for every non-table kind (write a second
   `table` record alongside the entity's own when the segment's text
   contains a table belonging to it, printing both absolute output
-  directories, cross-linked via `fields.parent_record`/`tables`), an
-  explicit never-`null` instruction for `fields` (write nothing rather than
-  `null` -- envelope build-time keys may simply be omitted), the output
+  directories, cross-linked via `fields.parent_record`/`tables` -- this
+  convention also renders the `table` type's own `fields` schema,
+  `schema_version`, `_KIND_RULES["table"]`, and its own EXAMPLE RECORD
+  alongside the segment's own kind's, since the subagent is being told to
+  write a record of a different type than the rest of the prompt is about),
+  an explicit never-`null` instruction for `fields` (write nothing rather
+  than `null` -- envelope build-time keys may simply be omitted), the output
   contract including `needs_context`/`proposed_type`, and
   `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`;
   `complete.py` ingests a subagent's final JSON: `proposed_type` moves the
