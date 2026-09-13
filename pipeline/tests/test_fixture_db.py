@@ -5,6 +5,7 @@ pytest-free fixture-database helper behind `owlsperch fixture-db <dir>` and
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 from pathlib import Path
 
@@ -17,7 +18,7 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
     result = write_fixture_data(data_dir)
 
     assert result.skipped_invalid == 0
-    assert result.counts_by_type == {"spell": 3}
+    assert result.counts_by_type == {"spell": 3, "feat": 1, "rules_section": 1, "table": 1}
     assert default_db_path(data_dir).is_file()
 
 
@@ -47,6 +48,25 @@ def test_write_fixture_data_writes_manifest_segment_and_records(tmp_path: Path) 
     assert (data_dir / "segments" / "fixture-book" / "fixture-book-p0001-01.json").is_file()
     assert (data_dir / "records" / "fixture-book" / "spell" / "fireball.json").is_file()
     assert (data_dir / "records" / "fixture-book" / "spell" / "alarm.json").is_file()
+
+
+def test_write_fixture_data_writes_feat_rules_section_and_table_records(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    write_fixture_data(data_dir)
+
+    feat_path = data_dir / "records" / "fixture-book" / "feat" / "power-strike.json"
+    rules_section_path = (
+        data_dir / "records" / "fixture-book" / "rules_section" / "grapple-ranks.json"
+    )
+    table_path = data_dir / "records" / "fixture-book" / "table" / "table-1-grapple-ranks.json"
+    assert feat_path.is_file()
+    assert rules_section_path.is_file()
+    assert table_path.is_file()
+
+    rules_section = json.loads(rules_section_path.read_text())
+    table = json.loads(table_path.read_text())
+    assert rules_section["tables"] == ["table:fixture-book:table-1-grapple-ranks"]
+    assert table["fields"]["parent_record"] == "rules_section:fixture-book:grapple-ranks"
 
 
 def test_write_fixture_data_creates_data_dir_if_missing(tmp_path: Path) -> None:
