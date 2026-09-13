@@ -446,6 +446,31 @@ def test_facets_unknown_type_404(browse_data_dir: Path) -> None:
     assert response.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# B10 pitfall: a newly-registered type (feat) whose only facet is the
+# built-in `source` pseudo-field must not 500, even with zero records.
+# ---------------------------------------------------------------------------
+
+
+def test_records_list_for_feat_type_does_not_500(browse_data_dir: Path) -> None:
+    response = _client(browse_data_dir).get("/records/feat")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "feat"
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
+def test_facets_for_feat_type_does_not_500(browse_data_dir: Path) -> None:
+    response = _client(browse_data_dir).get("/facets/feat")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "feat"
+    field_names = {f["field"] for f in body["facets"]}
+    assert "source" in field_names
+    assert "feat_type" in field_names
+
+
 def test_facets_503_when_db_missing(tmp_path: Path) -> None:
     response = _client(tmp_path / "empty-data").get("/facets/spell")
     assert response.status_code == 503

@@ -152,6 +152,57 @@ def test_record_detail_duplicate_slug_returns_latest_and_lists_variant(
 
 
 # ---------------------------------------------------------------------------
+# /records/{type}/{slug} `tables` resolution (B10 criterion 11)
+# ---------------------------------------------------------------------------
+
+
+def test_record_detail_resolves_owned_table(built_data_dir: Path) -> None:
+    response = _client(built_data_dir).get("/records/rules_section/sable-rites")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tables"] == [
+        {
+            "id": "table:book-a:table-1-1-sable-ranks",
+            "pending": False,
+            "name": "Table 1-1: Sable Ranks",
+            "slug": "table-1-1-sable-ranks",
+            "caption": "Table 1-1: Sable Ranks",
+            "columns": ["Rank", "Title"],
+            "rows": [["1", "Initiate"], ["2", "Adept"]],
+            "citation": "book-a p. 1",
+            "book_id": "book-a",
+        }
+    ]
+
+
+def test_record_detail_unresolved_table_id_is_pending(built_data_dir: Path) -> None:
+    response = _client(built_data_dir).get("/records/rules_section/pending-table-section")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tables"] == [
+        {
+            "id": "table:book-a:does-not-exist-yet",
+            "pending": True,
+            "name": None,
+            "slug": None,
+            "caption": None,
+            "columns": [],
+            "rows": [],
+            "citation": None,
+            "book_id": None,
+        }
+    ]
+
+
+def test_record_detail_with_no_tables_returns_empty_list(built_data_dir: Path) -> None:
+    # Also covered by test_record_detail_returns_full_record's `tables ==
+    # []` assertion -- an explicit test here names the "no tables at all"
+    # case for criterion 11's three-case coverage.
+    response = _client(built_data_dir).get("/records/spell/fireball")
+    assert response.json()["tables"] == []
+
+
+# ---------------------------------------------------------------------------
 # /schemas, /health
 # ---------------------------------------------------------------------------
 
@@ -184,8 +235,9 @@ def test_stats_counts_canonical_records_by_type(built_data_dir: Path) -> None:
     response = _client(built_data_dir).get("/stats")
     assert response.status_code == 200
     # built_data_dir (conftest.py) writes 6 spell records: fireball,
-    # acid-fog x2 (book-a and book-b), test-spell-{one,two,three}.
-    assert response.json() == {"counts": {"spell": 6}}
+    # acid-fog x2 (book-a and book-b), test-spell-{one,two,three} -- plus
+    # (B10) 2 rules_section records and the 1 table record they reference.
+    assert response.json() == {"counts": {"spell": 6, "rules_section": 2, "table": 1}}
 
 
 def test_stats_503_when_db_missing(tmp_path: Path) -> None:

@@ -115,10 +115,89 @@ def _spell_record(
     }
 
 
-def _write_record(data_dir: Path, book_id: str, slug: str, record: dict[str, Any]) -> None:
-    out_dir = data_dir / "records" / book_id / "spell"
+def _write_record(
+    data_dir: Path, book_id: str, slug: str, record: dict[str, Any], *, type_dir: str = "spell"
+) -> None:
+    out_dir = data_dir / "records" / book_id / type_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{slug}.json").write_text(json.dumps(record, indent=2))
+
+
+def _rules_section_record(
+    *,
+    book_id: str,
+    slug: str,
+    name: str,
+    seg_id: str,
+    pages: list[int],
+    tables: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": f"rules_section:{book_id}:{slug}",
+        "type": "rules_section",
+        "name": name,
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": pages,
+        "citation": f"{book_id} p. {pages[0]}",
+        "text_md": f"{name} is a rules section.",
+        "fields": {"topic": name},
+        "tables": tables or [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "haiku",
+            "model": "claude-haiku-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def _table_record(
+    *,
+    book_id: str,
+    slug: str,
+    name: str,
+    seg_id: str,
+    pages: list[int],
+    columns: list[str],
+    rows: list[list[str]],
+    parent_record: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": f"table:{book_id}:{slug}",
+        "type": "table",
+        "name": name,
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": pages,
+        "citation": f"{book_id} p. {pages[0]}",
+        "text_md": "",
+        "fields": {
+            "caption": name,
+            "columns": columns,
+            "rows": rows,
+            "parent_record": parent_record,
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "haiku",
+            "model": "claude-haiku-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
 
 
 @pytest.fixture
@@ -135,6 +214,11 @@ def built_data_dir(tmp_path: Path) -> Path:
       (book-b, the later printing, wins; book-a's id is listed as a variant).
     - `spell:book-a:test-spell-{one,two,three}` -- three same-prefix names,
       for the `limit` and grouping tests.
+    - `rules_section:book-a:sable-rites` (B10) -- owns a resolved table
+      (`table:book-a:table-1-1-sable-ranks`) via its `tables` list, for
+      `/records/rules_section/sable-rites`'s tables resolution.
+    - `rules_section:book-a:pending-table-section` (B10) -- names a table id
+      with no matching `tables` row, for the "table pending" edge case.
     """
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
@@ -192,6 +276,51 @@ def built_data_dir(tmp_path: Path) -> Path:
                 pages=[1],
             ),
         )
+
+    _write_record(
+        data_dir,
+        "book-a",
+        "table-1-1-sable-ranks",
+        _table_record(
+            book_id="book-a",
+            slug="table-1-1-sable-ranks",
+            name="Table 1-1: Sable Ranks",
+            seg_id="book-a-p0001-01",
+            pages=[1],
+            columns=["Rank", "Title"],
+            rows=[["1", "Initiate"], ["2", "Adept"]],
+            parent_record="rules_section:book-a:sable-rites",
+        ),
+        type_dir="table",
+    )
+    _write_record(
+        data_dir,
+        "book-a",
+        "sable-rites",
+        _rules_section_record(
+            book_id="book-a",
+            slug="sable-rites",
+            name="Sable Rites",
+            seg_id="book-a-p0001-01",
+            pages=[1],
+            tables=["table:book-a:table-1-1-sable-ranks"],
+        ),
+        type_dir="rules_section",
+    )
+    _write_record(
+        data_dir,
+        "book-a",
+        "pending-table-section",
+        _rules_section_record(
+            book_id="book-a",
+            slug="pending-table-section",
+            name="Pending Table Section",
+            seg_id="book-a-p0001-01",
+            pages=[1],
+            tables=["table:book-a:does-not-exist-yet"],
+        ),
+        type_dir="rules_section",
+    )
 
     build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_REPO_SCHEMAS_DIR)
     return data_dir

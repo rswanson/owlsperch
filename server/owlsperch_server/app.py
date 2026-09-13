@@ -255,6 +255,82 @@ def _record_counts_by_type(conn: sqlite3.Connection) -> dict[str, int]:
     return {row["type"]: row["n"] for row in rows}
 
 
+def _resolve_tables(conn: sqlite3.Connection, table_ids: list[Any]) -> list[dict[str, Any]]:
+    """Resolve a record's own `tables` id list (spec edge case: "Record
+    references a table that failed") to one uniform object per id, IN THE
+    RECORD'S OWN ORDER: a resolved table's `{id, pending: false, name, slug,
+    caption, columns, rows, citation, book_id}` (name/slug/citation come
+    from `records`, caption/columns/rows from `tables`, joined by
+    `record_id`), or `{id, pending: true, ...empty}` for an id with no
+    matching row (the table's own extraction hasn't landed yet -- the UI
+    shows a "table pending" marker instead of erroring the whole record).
+    A malformed stored `columns`/`rows` JSON value falls back to `[]` rather
+    than raising."""
+    ids = [t for t in table_ids if isinstance(t, str)]
+    if not ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows_by_id: dict[str, sqlite3.Row] = {}
+    for row in conn.execute(
+        "SELECT t.record_id AS id, t.caption, t.columns, t.rows, t.parent_record, "
+        "r.name, r.slug, r.book_id, r.json AS record_json "
+        "FROM tables t JOIN records r ON r.id = t.record_id "
+        f"WHERE t.record_id IN ({placeholders})",
+        ids,
+    ):
+        rows_by_id[row["id"]] = row
+
+    resolved: list[dict[str, Any]] = []
+    for table_id in ids:
+        row = rows_by_id.get(table_id)
+        if row is None:
+            resolved.append(
+                {
+                    "id": table_id,
+                    "pending": True,
+                    "name": None,
+                    "slug": None,
+                    "caption": None,
+                    "columns": [],
+                    "rows": [],
+                    "citation": None,
+                    "book_id": None,
+                }
+            )
+            continue
+
+        try:
+            columns = json.loads(row["columns"])
+            if not isinstance(columns, list):
+                columns = []
+        except (json.JSONDecodeError, TypeError):
+            columns = []
+        try:
+            grid_rows = json.loads(row["rows"])
+            if not isinstance(grid_rows, list):
+                grid_rows = []
+        except (json.JSONDecodeError, TypeError):
+            grid_rows = []
+
+        record = json.loads(row["record_json"])
+        resolved.append(
+            {
+                "id": table_id,
+                "pending": False,
+                "name": row["name"],
+                "slug": row["slug"],
+                "caption": row["caption"],
+                "columns": columns,
+                "rows": grid_rows,
+                "citation": record.get("citation"),
+                "book_id": row["book_id"],
+            }
+        )
+
+    return resolved
+
+
 def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[str, Any] | None:
     rows = list(
         conn.execute(
@@ -276,7 +352,7 @@ def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[
     winner["variants"] = [row["id"] for row in rows[1:]]
     winner["links"] = []
     winner["referenced_by"] = []
-    winner.setdefault("tables", [])
+    winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])
     return winner
 
 
