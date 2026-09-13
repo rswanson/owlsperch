@@ -510,7 +510,9 @@ def test_build_db_skips_duplicate_record_id_instead_of_crashing(tmp_path: Path) 
     _write_record(data_dir, "book", "spell", "fireball", record)
     _write_record(data_dir, "book", "spell", "fireball-copy", record)
 
-    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
 
     with _connect(result.db_path) as conn:
         count = conn.execute("SELECT count(*) FROM records").fetchone()[0]

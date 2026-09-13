@@ -291,9 +291,7 @@ def select_and_mark(
                         seg_id=segment.seg_id,
                         segment_path=path.relative_to(data_dir).as_posix(),
                         kind_hint=segment.kind_hint,
-                        prompt_path=str(
-                            prompt_path_for(data_dir, segment.book_id, segment.seg_id)
-                        ),
+                        prompt_path=str(prompt_path_for(data_dir, segment.book_id, segment.seg_id)),
                         tier=resolved_tier,
                         model=resolved_model,
                     )
