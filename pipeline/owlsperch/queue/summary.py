@@ -1,7 +1,10 @@
 """`owlsperch queue summary <book_id>` -- progress counts, per spec 4.5 and
 B5 acceptance criterion 5 (batch B8 replaces `awaiting_escalation`, which
 stopped meaning anything once tier escalation landed, with per-tier ladder
-counts, plus `needs_context_retries` and `human`)."""
+counts, plus `needs_context_retries` and `human`; a B10 follow-up adds
+`pending_by_kind`/`pending_by_tier`, the pending-only breakdown of
+`counts_by_kind`/`counts_by_tier`, so a wave can be planned from this
+read-only command instead of `queue next`, which selects and mutates)."""
 
 from __future__ import annotations
 
@@ -64,6 +67,13 @@ class QueueSummary:
     counts_by_tier: dict[str, int] = field(default_factory=dict)
     counts_by_outcome: dict[str, int] = field(default_factory=dict)
     counts_by_kind: dict[str, int] = field(default_factory=dict)
+    #: Counts of segments still `pending`, split by kind_hint and by tier
+    #: -- i.e. the work that is LEFT, as opposed to `counts_by_kind`'s
+    #: done+pending total. Added so a wave can be planned from `queue
+    #: summary` (read-only) instead of `queue next` (which selects and
+    #: marks segments `in_progress`).
+    pending_by_kind: dict[str, int] = field(default_factory=dict)
+    pending_by_tier: dict[str, int] = field(default_factory=dict)
     records_written: int = 0
     #: Per-tier pass/escalated counts, in `owlsperch.queue.ladder.TIERS`
     #: order (batch B8).
@@ -88,6 +98,8 @@ class QueueSummary:
             _line("  by tier", self.counts_by_tier),
             _line("  by outcome", self.counts_by_outcome),
             _line("  by kind_hint", self.counts_by_kind),
+            _line("  pending by kind_hint", self.pending_by_kind),
+            _line("  pending by tier", self.pending_by_tier),
             f"  records written: {self.records_written}",
             "  ladder:",
             *[tier_line.render() for tier_line in self.ladder],
@@ -103,6 +115,8 @@ class QueueSummary:
             "counts_by_tier": self.counts_by_tier,
             "counts_by_outcome": self.counts_by_outcome,
             "counts_by_kind": self.counts_by_kind,
+            "pending_by_kind": self.pending_by_kind,
+            "pending_by_tier": self.pending_by_tier,
             "records_written": self.records_written,
             "ladder": [tier_line.to_json() for tier_line in self.ladder],
             "needs_context_retries": self.needs_context_retries,
@@ -135,12 +149,16 @@ def compute_summary(book_id: str, *, data_dir: Path) -> QueueSummary:
         if isinstance(a, dict) and attempt_kind_of(a) == "needs_context"
     )
 
+    pending = [s for s in segments if s.status == "pending"]
+
     return QueueSummary(
         book_id=book_id,
         counts_by_status=dict(Counter(s.status for s in segments)),
         counts_by_tier=dict(Counter(s.tier for s in segments)),
         counts_by_outcome=dict(Counter(s.outcome for s in segments if s.outcome is not None)),
         counts_by_kind=dict(Counter(s.kind_hint for s in segments)),
+        pending_by_kind=dict(Counter(s.kind_hint for s in pending)),
+        pending_by_tier=dict(Counter(s.tier for s in pending)),
         records_written=records_written,
         ladder=ladder,
         needs_context_retries=needs_context_retries,

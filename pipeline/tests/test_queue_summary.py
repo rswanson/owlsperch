@@ -238,6 +238,60 @@ def test_first_needs_context_at_tier_is_not_counted_as_escalated_second_is(
     assert summary.needs_context_retries == 3  # 1 + 2 attempts total
 
 
+def test_summary_reports_pending_counts_split_by_kind_and_tier(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0001-01",
+        status="pending",
+        kind_hint="rules_section",
+        tier="haiku",
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0002-01",
+        status="pending",
+        kind_hint="rules_section",
+        tier="haiku",
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0003-01",
+        status="pending",
+        kind_hint="table",
+        tier="sonnet",
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0004-01",
+        status="done",
+        outcome="validated",
+        kind_hint="spell",
+        tier="haiku",
+    )
+    _write_human_segment(
+        data_dir,
+        "book",
+        "book-p0005-01",
+        kind_hint="feat",
+        tier="opus",
+    )
+
+    summary = compute_summary("book", data_dir=data_dir)
+
+    payload = summary.to_json()
+    assert payload["pending_by_kind"] == {"rules_section": 2, "table": 1}
+    assert payload["pending_by_tier"] == {"haiku": 2, "sonnet": 1}
+    assert summary.counts_by_kind["spell"] == 1
+    assert summary.counts_by_kind["feat"] == 1
+    assert "pending by kind_hint" in summary.render()
+    assert "pending by tier" in summary.render()
+
+
 def test_human_segments_are_counted_and_included_in_status_and_ladder(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0001-01", status="pending", tier="haiku")
