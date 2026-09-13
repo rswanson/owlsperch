@@ -22,8 +22,10 @@ them and launches subagents.
 - `--limit N` -- stop after N segments total for this book (default:
   unlimited -- run until nothing pending is left).
 - `--parallel N` -- subagents in flight at once (default: 8).
-- `--kind K` -- restrict to one kind_hint (default: `spell`, the only type
-  with a schema this batch; other kinds are simply never selected).
+- `--kind K` -- restrict to one kind_hint (default: omit it -- `queue next`
+  then selects across every kind_hint with a registered schema at once,
+  currently spell/feat/table/rules_section; `stat_block` has no schema yet
+  and is never selected unless `--kind stat_block` is passed explicitly).
 - `--tier T` -- restrict to one tier (`haiku`/`sonnet`/`opus`). Default:
   omit it -- `queue next` picks the lowest tier with pending work on its
   own, so a plain `/extract <book_id>` naturally drains haiku, then sonnet,
@@ -33,7 +35,7 @@ them and launches subagents.
 
 1. Compute this wave's size: `min(--parallel, remaining --limit)`.
 2. Run:
-   `uv run owlsperch queue next <book_id> [--tier T] --limit <wave size> --kind <kind> --json`
+   `uv run owlsperch queue next <book_id> [--tier T] --limit <wave size> [--kind K] --json`
    Parse the JSON array of `{seg_id, segment_path, kind_hint, prompt_path,
    tier, model}`. **The loop for this book_id ends only when this returns
    `[]`.** Before selecting, `queue next` itself resets any segment stuck
@@ -100,6 +102,17 @@ Beyond a plain `records`/`no_content` reply, `queue complete` also handles:
 None of this needs special handling in the loop above -- steps 4-5 already
 route every outcome through `queue complete`/`owlsperch validate`, which do
 the escalation/human-move bookkeeping.
+
+## Tables belonging to an entity (batch B10)
+
+When a segment's text contains a table belonging to the entity being
+extracted (a feat, rules_section, or spell with tab-separated rows), the
+subagent's prompt tells it to write TWO record files for that one segment:
+the entity's own record, and a separate `table` record (cross-linked via
+the table's `fields.parent_record` and the owning record's `tables` list).
+The subagent lists BOTH paths in its reply's `records` array, and `queue
+complete` already accepts any path under `records/<book_id>/` -- no change
+to this loop is needed to handle it.
 
 ## Report to the user
 
