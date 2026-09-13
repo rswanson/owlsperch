@@ -52,7 +52,7 @@ def test_fixture_db_subcommand_builds_a_database(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0
-    assert "spell: 2" in result.stdout
+    assert "spell: 3" in result.stdout
 
 
 def test_console_script_help_lists_manifest_command() -> None:

@@ -97,6 +97,55 @@ _SPELLS: list[dict[str, Any]] = [
         },
     },
     {
+        # Batch B9 (browse/facets): a Cleric-3 Conjuration spell, distinct
+        # from Fireball (Evocation) and Alarm (Abjuration, no Cleric level)
+        # -- the fixture data flow B's Playwright spec filters on (class
+        # Cleric, level 3, school Conjuration) needs a single spell that
+        # matches all three and others that don't.
+        "id": "spell:fixture-book:summon-monster-iii",
+        "type": "spell",
+        "name": "Summon Monster III",
+        "slug": "summon-monster-iii",
+        "aliases": [],
+        "book_id": "fixture-book",
+        "pages": [1],
+        "citation": "FB p. 1",
+        "text_md": (
+            "A **summon monster III** spell calls a creature from the "
+            "list of 3rd-level summoned creatures to fight for you."
+        ),
+        "fields": {
+            "school": "Conjuration",
+            "subschool": "Summoning",
+            "descriptors": [],
+            "levels": [
+                {"class": "Cleric", "level": 3},
+                {"class": "Sorcerer", "level": 3},
+                {"class": "Wizard", "level": 3},
+            ],
+            "components": ["V", "S"],
+            "casting_time": "1 round",
+            "range": "Close (25 ft. + 5 ft./2 levels)",
+            "target_effect_area": "One summoned creature",
+            "duration": "1 round/level (D)",
+            "saving_throw": "None",
+            "spell_resistance": "No",
+            "costs": {"material": None, "focus": None, "xp": None},
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 3,
+        "extraction": {
+            "tier": "haiku",
+            "model": "fixture",
+            "segment_id": "fixture-book-p0001-01",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    },
+    {
         "id": "spell:fixture-book:alarm",
         "type": "spell",
         "name": "Alarm",

@@ -17,7 +17,7 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
     result = write_fixture_data(data_dir)
 
     assert result.skipped_invalid == 0
-    assert result.counts_by_type == {"spell": 2}
+    assert result.counts_by_type == {"spell": 3}
     assert default_db_path(data_dir).is_file()
 
 
@@ -60,4 +60,4 @@ def test_run_fixture_db_returns_zero_and_prints_summary(tmp_path: Path) -> None:
     out = io.StringIO()
     exit_code = run_fixture_db(data_dir, out=out)
     assert exit_code == 0
-    assert "spell: 2" in out.getvalue()
+    assert "spell: 3" in out.getvalue()

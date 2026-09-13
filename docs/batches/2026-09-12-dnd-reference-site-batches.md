@@ -194,7 +194,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `web/`, `.github/workflows/ci.yml`, root dev script.
 
 ## B8: Escalation ladder
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `/extract` retries haiku failures on sonnet,
   then opus, then moves them to `human/`; the summary shows per-tier counts.
 - **Acceptance criteria:**
@@ -219,7 +219,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `.claude/skills/extract/`, `pipeline/owlsperch/queue/`, tests.
 
 ## B9: Browse pages and facets from schema hints
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** `/browse/spell` lists spells with a facet
   sidebar (class, level, school, source) and sort controls.
 - **Acceptance criteria:**
