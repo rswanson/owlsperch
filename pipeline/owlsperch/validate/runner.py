@@ -220,21 +220,30 @@ def _write_back_fail(
     in `records` (a previously-validated record failing only now, e.g. after
     a schema change) is never deleted -- only dropped from `pending_records`
     if for some reason it was listed in both.
+
+    The segment write-back happens *before* the file is unlinked: if a
+    crash lands between the two, the orphaned record file on disk (already
+    dropped from `pending_records`, so nothing will ever look at it again)
+    is a harmless leak, unlike the reverse order, which could leave
+    `pending_records` naming a file that no longer exists.
     """
     path = segment_path(data_dir, book_id, segment_id)
     segment_model = Segment.model_validate_json(path.read_text())
 
+    should_delete_record_file = False
     if record_rel_path is not None and record_rel_path in segment_model.pending_records:
         segment_model.pending_records = [
             p for p in segment_model.pending_records if p != record_rel_path
         ]
-        if record_rel_path not in segment_model.records:
-            record_file = data_dir / record_rel_path
-            if record_file.is_file():
-                record_file.unlink()
+        should_delete_record_file = record_rel_path not in segment_model.records
 
     result = record_failure(segment_model, errors, kind="validation", tier=tier)
     finish_after_failure(data_dir, path, segment_model, result)
+
+    if should_delete_record_file and record_rel_path is not None:
+        record_file = data_dir / record_rel_path
+        if record_file.is_file():
+            record_file.unlink()
 
 
 def validate_record(
