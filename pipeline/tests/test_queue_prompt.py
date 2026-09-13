@@ -771,7 +771,17 @@ def test_non_table_prompt_renders_the_table_fields_schema_and_example(tmp_path: 
     assert "`rows`" in rules_section_text
     assert '"columns": [' in rules_section_text
     assert "pad a short row" in rules_section_text
-    assert f"schema_version {table_version}" in rules_section_text
+    # Pinned to the distinct-version sentence itself (criterion 4), not to
+    # the pre-existing "`fields` schema for type `rules_section` (schema_
+    # version 1):" heading, which already contains the substring
+    # "schema_version 1" with or without this feature -- rules_section and
+    # table happen to share schema_version 1 today, so a substring-only
+    # assertion would pass even if this distinct-version sentence were
+    # removed or broken.
+    assert (
+        "The table record's own `schema_version` is the current registered\n"
+        f"version for type `table`: {table_version} -- NOT the same value as"
+    ) in rules_section_text
 
     table_text = render_prompt(
         _segment(kind_hint="table"),
