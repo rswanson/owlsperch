@@ -19,6 +19,7 @@ from owlsperch.manifest import ManifestError, run_check
 from owlsperch.queue.driver import run_queue_run
 from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.queue.runner import (
+    run_queue_audit,
     run_queue_complete,
     run_queue_next,
     run_queue_prompt,
@@ -198,6 +199,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    queue_audit_parser = queue_subparsers.add_parser(
+        "audit",
+        help="Find records claimed by more than one segment and (with --fix) re-extract them.",
+    )
+    queue_audit_parser.add_argument("book_id", help="Manifest book_id.")
+    queue_audit_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Soft-reset the affected segments so they re-extract under the ownership guard.",
+    )
+    queue_audit_parser.add_argument(
+        "--json", action="store_true", help="Print JSON instead of human-readable lines."
+    )
+
     queue_run_parser = queue_subparsers.add_parser(
         "run",
         help="Drive the whole select/subagent/complete/validate loop in-process (--dry-run only).",
@@ -346,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "queue" and args.queue_command == "reset":
         return run_queue_reset(args.seg_id, hard=args.hard)
+
+    if args.command == "queue" and args.queue_command == "audit":
+        return run_queue_audit(args.book_id, fix=args.fix, json_output=args.json)
 
     if args.command == "queue" and args.queue_command == "run":
         return run_queue_run(

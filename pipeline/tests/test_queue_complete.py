@@ -1014,6 +1014,299 @@ def test_proposed_type_without_name_is_malformed(tmp_path: Path) -> None:
     assert outcome.outcome == "malformed"
 
 
+# ---------------------------------------------------------------------------
+# Record path collisions: `queue complete` must never let one segment's
+# claimed record path silently overwrite a file another segment already
+# owns. Ownership here comes from the SEGMENT index (a segment's own
+# `records`/`pending_records`) -- not from the record file's own
+# `extraction.segment_id`, which is only a subagent-copied placeholder by
+# the time `queue complete` runs (see `owlsperch.queue.prompt`) and would
+# already name the new claimant on a just-clobbered file.
+# ---------------------------------------------------------------------------
+
+
+def test_claim_on_a_path_owned_by_another_segments_records_is_a_collision(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0026-01",
+        tier="opus",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0148-01")
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    # A real (already-validated) record body -- the byte-identity assertion
+    # below is exactly what fails on main, since `_overwrite_authoritative_
+    # fields` rewrites `extraction`/`pages`/`book_id` in place.
+    original_body = json.dumps(
+        {
+            "extraction": {
+                "tier": "haiku",
+                "model": "claude-haiku-4-5",
+                "segment_id": "book-p0026-01",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            },
+            "pages": [26],
+            "book_id": "book",
+        },
+        indent=2,
+    )
+    record_path.write_text(original_body)
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0148-01",
+            "records": ["records/book/rules_section/class-features.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0148-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    # The file is left completely untouched, byte for byte.
+    assert record_path.read_text() == original_body
+
+    victim = _read_segment(data_dir, "book", "book-p0148-01")
+    assert victim["pending_records"] == []
+    assert victim["tier"] == "sonnet"
+    assert len(victim["attempts"]) == 1
+    assert victim["attempts"][0]["kind"] == "malformed"
+    assert victim["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/rules_section/class-features.json "
+        "is owned by segment book-p0026-01"
+    ]
+
+    # The original owner's own segment is unaffected.
+    owner = _read_segment(data_dir, "book", "book-p0026-01")
+    assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
+def test_claim_on_a_path_owned_by_another_segments_pending_records_is_a_collision(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        pending_records=["records/book/spell/fireball.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0011-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0011-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0011-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    thief = _read_segment(data_dir, "book", "book-p0011-01")
+    assert thief["pending_records"] == []
+    assert thief["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/spell/fireball.json is owned by segment book-p0010-01"
+    ]
+
+
+def test_a_differently_spelled_claim_on_an_owned_path_is_still_a_collision(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0026-01",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0148-01")
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    original_body = json.dumps(
+        {
+            "extraction": {
+                "tier": "haiku",
+                "model": "claude-haiku-4-5",
+                "segment_id": "book-p0026-01",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            },
+            "pages": [26],
+            "book_id": "book",
+        },
+        indent=2,
+    )
+    record_path.write_text(original_body)
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0148-01",
+            "records": ["records/book/rules_section/../rules_section/class-features.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0148-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    assert record_path.read_text() == original_body
+
+    victim = _read_segment(data_dir, "book", "book-p0148-01")
+    assert victim["pending_records"] == []
+    assert victim["tier"] == "sonnet"
+    assert len(victim["attempts"]) == 1
+    assert victim["attempts"][0]["kind"] == "malformed"
+    assert victim["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/rules_section/../rules_section/"
+        "class-features.json is owned by segment book-p0026-01"
+    ]
+
+    owner = _read_segment(data_dir, "book", "book-p0026-01")
+    assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
+def test_segment_reclaiming_its_own_already_owned_path_is_not_a_collision(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        pending_records=["records/book/spell/fireball.json"],
+    )
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert outcome.detail == "1 record(s) claimed"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+    assert segment["attempts"] == []
+
+
+def test_mix_of_valid_invalid_and_colliding_paths_is_one_attempt(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        records=["records/book/spell/icy-bolt.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0011-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    _write_record_file(data_dir, "records/book/spell/icy-bolt.json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0011-01",
+            "records": [
+                "records/book/spell/fireball.json",
+                "records/book/spell/icy-bolt.json",
+                "records/book/spell/never-written.json",
+            ],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0011-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0011-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+    # One reply -> one attempt, even though it carries two distinct kinds of
+    # bad path.
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["errors"] == [
+        "missing_record_path: records/book/spell/never-written.json",
+        "record_path_collision: records/book/spell/icy-bolt.json is owned by segment book-p0010-01",
+    ]
+    assert "1 record(s) claimed" in outcome.detail
+    assert "1 invalid path(s)" in outcome.detail
+    assert "1 collision(s)" in outcome.detail
+
+
+def test_ownership_index_scan_skips_a_file_that_is_not_valid_json(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    bogus = data_dir / "segments" / "book" / "book-p9999-01.json"
+    bogus.write_text("{not json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/fireball.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == ["records/book/spell/fireball.json"]
+
+
+def test_collision_at_opus_moves_the_victim_to_human(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0026-01",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0148-01", tier="opus")
+    _write_record_file(data_dir, "records/book/rules_section/class-features.json")
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0148-01",
+            "records": ["records/book/rules_section/class-features.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0148-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    seg_path = data_dir / "segments" / "book" / "book-p0148-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0148-01.json"
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "escalation_exhausted"
+    assert len(human_segment["attempts"]) == 1
+    assert human_segment["attempts"][0]["kind"] == "malformed"
+    assert human_segment["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/rules_section/class-features.json "
+        "is owned by segment book-p0026-01"
+    ]
+
+    # The original owner's own segment is unaffected.
+    owner = _read_segment(data_dir, "book", "book-p0026-01")
+    assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
 def test_proposed_type_takes_precedence_over_needs_context(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")

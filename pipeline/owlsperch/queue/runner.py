@@ -1,6 +1,7 @@
-"""Orchestration for `owlsperch queue next|prompt|complete|summary|reset`,
-wired into `owlsperch.cli` (spec 4.5; batch B5). Each function mirrors the
-`run_*` pattern used by `owlsperch.segment.runner.run_segment` and
+"""Orchestration for `owlsperch queue next|prompt|complete|summary|reset|
+audit`, wired into `owlsperch.cli` (spec 4.5; batch B5; `audit` is a B10
+mandated follow-up). Each function mirrors the `run_*` pattern used by
+`owlsperch.segment.runner.run_segment` and
 `owlsperch.validate.runner.run_validate`: resolve defaults, do the work, and
 print to `out` (default `sys.stdout`) so tests can capture output without
 subprocessing.
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
+from owlsperch.queue.audit import audit_book, fix_book
 from owlsperch.queue.common import find_segment_path, resolve_record_path_under_book
 from owlsperch.queue.complete import QueueError, complete_segment
 from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
@@ -151,6 +153,45 @@ def run_queue_summary(
         print(json.dumps(summary.to_json()), file=out)
     else:
         print(summary.render(), file=out)
+    return 0
+
+
+def run_queue_audit(
+    book_id: str,
+    *,
+    fix: bool = False,
+    json_output: bool = False,
+    data_dir: Path | None = None,
+    out: Any = None,
+) -> int:
+    """Report (and, with `fix=True`, recover from) record paths this book's
+    segments no longer agree on the ownership of -- see
+    `owlsperch.queue.audit` for what a collision/stale claim means and what
+    `--fix` actually changes."""
+    out = out if out is not None else sys.stdout
+    data_dir = data_dir if data_dir is not None else default_data_dir()
+
+    report = audit_book(book_id, data_dir=data_dir)
+    fixed = fix_book(book_id, data_dir=data_dir) if fix else None
+
+    if json_output:
+        payload = report.to_json()
+        if fixed is not None:
+            payload["fixed"] = fixed
+        print(json.dumps(payload), file=out)
+    else:
+        print(report.render(), file=out)
+        if fixed is not None:
+            reset_count = 0
+            for entry in fixed:
+                pruned = ", ".join(entry["pruned_paths"]) if entry["pruned_paths"] else "(none)"
+                print(
+                    f"  {entry['seg_id']}: {entry['action']} (pruned: {pruned})",
+                    file=out,
+                )
+                if entry["action"] == "reset":
+                    reset_count += 1
+            print(f"  {reset_count} segment(s) reset", file=out)
     return 0
 
 

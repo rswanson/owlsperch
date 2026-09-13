@@ -30,12 +30,25 @@ came back fenced and were wrongly rejected before this. In precedence order:
   and `outcome_reason` records the reason.
 - Otherwise, `records` is a list of strings: each path is checked to (a)
   resolve inside `records/<book_id>/` under `$OWLSPERCH_DATA` (this
-  segment's own book, not any other) and (b) actually exist on disk. A path
-  failing either check escalates the segment (spec: "treated as a
-  validation failure and escalated", batch B8) with error
-  `"missing_record_path: <path>"` for each such path. Every path that
-  passes both checks has its own `extraction` overwritten with the
-  authoritative `{tier, model, segment_id, timestamp}` (B5 follow-up 3), and
+  segment's own book, not any other), (b) actually exist on disk, and (c)
+  not already be owned by a *different* segment of the same book. A path
+  failing (a) or (b) escalates the segment (spec: "treated as a validation
+  failure and escalated", batch B8) with error `"missing_record_path:
+  <path>"`; a path failing (c) escalates it with error
+  `"record_path_collision: <path> is owned by segment <seg_id>"` and is
+  left completely untouched on disk -- neither its content nor its
+  `extraction` block is written to, so the earlier claimant's extracted
+  content survives. Ownership for (c) comes from the SEGMENT index (every
+  other segment's own `records`/`pending_records`, see
+  `_record_path_owners`), never from the record file's own
+  `extraction.segment_id` -- `owlsperch.queue.prompt` tells a subagent to
+  copy its own `seg_id` there as a placeholder, so a file that has just
+  been clobbered already carries the new (thieving) claimant's id, not the
+  real owner's. A segment re-claiming a path it already owns itself (its
+  own `records`/`pending_records`) is still allowed -- an idempotent retry
+  of the same claim is not a collision. Every path that passes all three
+  checks has its own `extraction` overwritten with the authoritative
+  `{tier, model, segment_id, timestamp}` (B5 follow-up 3), and
   (B6 follow-up) its `pages` and `book_id` overwritten with the segment's
   own `pages` (PDF page indices) and `book_id` -- see
   `_overwrite_authoritative_fields`; `model` is whatever `owlsperch queue
@@ -242,6 +255,44 @@ def _overwrite_authoritative_fields(
     atomic_write_text(path, json.dumps(record, indent=2) + "\n")
 
 
+def _record_path_owners(data_dir: Path, book_id: str, own_seg_id: str) -> dict[Path, str]:
+    """Which segment (other than `own_seg_id`) currently owns each record
+    path under `records/<book_id>/`. Ownership lives in the SEGMENT index,
+    not in the record file: `queue prompt` tells a subagent to write its own
+    `seg_id` into `extraction.segment_id` as a placeholder, so a file that
+    has just been clobbered already carries the new claimant's id and cannot
+    identify its real owner. Keyed by the RESOLVED path so `records/x.json`,
+    an absolute spelling and a `..`-containing spelling all compare equal.
+    Reads the raw JSON (not `Segment.model_validate_json`) and skips any file
+    that won't parse -- an audit index must never be the thing that makes
+    `queue complete` blow up."""
+    owners: dict[Path, str] = {}
+    other_segment_files = [
+        *sorted(data_dir.glob(f"segments/{book_id}/*.json")),
+        *sorted(data_dir.glob(f"human/{book_id}/*.json")),
+    ]
+    for other_path in other_segment_files:
+        try:
+            raw = json.loads(other_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        other_seg_id = raw.get("seg_id")
+        if not isinstance(other_seg_id, str) or other_seg_id == own_seg_id:
+            continue
+        claimed: list[str] = []
+        for key in ("records", "pending_records"):
+            values = raw.get(key)
+            if isinstance(values, list):
+                claimed.extend(v for v in values if isinstance(v, str))
+        for rel_path in claimed:
+            resolved = resolve_record_path_under_book(data_dir, book_id, rel_path)
+            if resolved is not None:
+                owners.setdefault(resolved, other_seg_id)
+    return owners
+
+
 def _missing_context_ids(
     data_dir: Path, book_id: str, ids: list[str], own_seg_id: str
 ) -> list[str]:
@@ -321,6 +372,23 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
         else:
             invalid_paths.append(record_path)
 
+    # A path that resolves and exists may still be owned by a DIFFERENT
+    # segment -- only build the (~1500-file, for phb1) ownership index when
+    # there's at least one candidate worth checking, so a no_content/
+    # needs_context/proposed_type reply never pays for this scan.
+    colliding: list[tuple[str, str]] = []
+    if valid_paths:
+        owners = _record_path_owners(data_dir, segment.book_id, segment.seg_id)
+        still_valid: list[str] = []
+        for record_path in valid_paths:
+            resolved = resolve_record_path_under_book(data_dir, segment.book_id, record_path)
+            owner = owners.get(resolved) if resolved is not None else None
+            if owner is not None:
+                colliding.append((record_path, owner))
+            else:
+                still_valid.append(record_path)
+        valid_paths = still_valid
+
     # Extraction provenance is authoritative from here, not whatever
     # (possibly placeholder) values the subagent put in its own record.
     model = segment.model if segment.model is not None else TIER_MODELS["haiku"]
@@ -341,8 +409,10 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
             merged.append(record_path)
     segment.pending_records = merged
 
-    if invalid_paths:
-        errors = [f"missing_record_path: {p}" for p in invalid_paths]
+    errors = [f"missing_record_path: {p}" for p in invalid_paths] + [
+        f"record_path_collision: {p} is owned by segment {owner}" for p, owner in colliding
+    ]
+    if errors:
         result = record_failure(segment, errors, kind="malformed")
         finish_after_failure(data_dir, path, segment, result)
     else:
@@ -352,4 +422,8 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
     detail = f"{len(valid_paths)} record(s) claimed"
     if invalid_paths:
         detail += f", {len(invalid_paths)} invalid path(s)"
+    if colliding:
+        detail += f", {len(colliding)} collision(s): " + "; ".join(
+            f"{p} owned by {owner}" for p, owner in colliding
+        )
     return CompleteOutcome(seg_id=seg_id, outcome="pending_records", detail=detail)
