@@ -1,5 +1,6 @@
 """`owlsperch queue next` -- selecting pending segments for a subagent wave
-and marking them `in_progress`, per spec 4.5 and B5 acceptance criterion 1.
+and marking them `in_progress`, per spec 4.5 and B5 acceptance criterion 1
+(batch B8 adds the tier-escalation-aware selection rules below).
 
 The whole select-and-mark operation for a book holds an exclusive
 `fcntl.flock` on `segments/<book_id>/.queue.lock` (see `_book_lock`), so two
@@ -7,12 +8,29 @@ concurrent `queue next` invocations for the same book can never both select
 the same pending segment (a check-then-act race otherwise possible between
 reading a segment's `status` and writing it back as `in_progress`).
 
-A segment that already has an attempt recorded at the requested tier is
-never (re)selected here -- it is waiting for a tier escalation (B8), and
-selecting it again would either loop forever re-running the same tier or
-require the caller to notice and stop; `queue summary`'s `awaiting_escalation`
-count (`owlsperch.queue.summary`) surfaces these separately so an operator
-can see why `queue next` legitimately returned fewer segments than pending.
+Before selecting anything, the whole book's segments (every kind/tier, not
+just the ones matching this call's filters) get two passes, still inside
+the lock:
+
+1. Stale reset (spec 4.5's "interrupted session" edge case): any segment
+   `in_progress` for more than `owlsperch.queue.ladder.STALE_AFTER` (60
+   minutes) is reset to `pending` with `in_progress_since` cleared.
+2. Lazy escalation (`owlsperch.queue.ladder.escalate_existing_attempt`): a
+   pending segment already carrying a failed/malformed attempt at its own
+   current tier -- either a single same-tier `needs_context` retry (left
+   alone) or anything else, including B8-pre-dating data that was written
+   before tier escalation existed at all -- is advanced along the ladder (or
+   moved to `human/`) so it converges onto the same state machine a fresh
+   failure would have produced. This is what makes `--tier` selection safe
+   to reuse across a schema/behavior upgrade: nothing is ever skipped
+   forever waiting on a tier bump that never happens.
+
+Only after both passes does `select_and_mark` pick segments to run: pending,
+matching `tier` and `kind`, in filename (book) order. `tier=None` (the
+`queue next` default, criterion 6) picks the lowest tier in
+`owlsperch.queue.ladder.TIERS` that has at least one pending segment of
+`kind` for this book, after the two passes above -- if nothing is pending at
+any tier, `select_and_mark` returns `[]` without selecting anything.
 """
 
 from __future__ import annotations
@@ -23,12 +41,14 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
-from owlsperch.queue.common import has_attempt_at_tier, now_iso
-from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
+from owlsperch.queue.common import move_segment_to_human, now_iso
+from owlsperch.queue.ladder import TIER_MODELS, TIERS, escalate_existing_attempt, is_stale
+from owlsperch.queue.prompt import render_prompt_to_file
 from owlsperch.segment.runner import Segment
 
 #: Default timeout (seconds) `select_and_mark` waits to acquire the
@@ -78,6 +98,11 @@ class SelectedSegment:
     kind_hint: str
     #: Absolute path (as a string) to the rendered subagent prompt.
     prompt_path: str
+    #: The tier this segment was selected at (batch B8) -- the caller
+    #: (the `/extract` skill) launches its Agent-tool subagent with this as
+    #: `model`.
+    tier: str
+    model: str
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -85,32 +110,88 @@ class SelectedSegment:
             "segment_path": self.segment_path,
             "kind_hint": self.kind_hint,
             "prompt_path": self.prompt_path,
+            "tier": self.tier,
+            "model": self.model,
         }
+
+
+def _reset_stale_and_heal(data_dir: Path, seg_dir: Path, book_id: str) -> int:
+    """Walk every segment file for `book_id` (any kind/tier) once: reset a
+    stale `in_progress` segment back to `pending`, then lazily escalate a
+    pending segment that already has an attempt at its own tier. Returns the
+    number of segments reset from stale `in_progress`. Must be called while
+    holding the book's queue lock."""
+    now = datetime.now(UTC)
+    stale_count = 0
+
+    for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
+        segment = Segment.model_validate_json(path.read_text())
+        changed = False
+
+        if is_stale(segment, now):
+            segment.status = "pending"
+            segment.in_progress_since = None
+            changed = True
+            stale_count += 1
+
+        if segment.status == "pending":
+            result = escalate_existing_attempt(segment)
+            if result is not None:
+                if result.exhausted:
+                    move_segment_to_human(data_dir, path, segment, outcome="escalation_exhausted")
+                    changed = False  # already written by move_segment_to_human
+                else:
+                    changed = True
+
+        if changed:
+            atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+
+    return stale_count
+
+
+def _lowest_pending_tier(seg_dir: Path, book_id: str, kind: str) -> str | None:
+    pending_tiers: set[str] = set()
+    for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
+        segment = Segment.model_validate_json(path.read_text())
+        if segment.status == "pending" and segment.kind_hint == kind:
+            pending_tiers.add(segment.tier)
+    for candidate in TIERS:
+        if candidate in pending_tiers:
+            return candidate
+    return None
 
 
 def select_and_mark(
     book_id: str,
     *,
     data_dir: Path,
-    tier: str = "haiku",
+    tier: str | None = None,
     limit: int,
     kind: str = "spell",
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
+    stats: dict[str, int] | None = None,
 ) -> list[SelectedSegment]:
     """Select up to `limit` segments of `book_id` that are `status ==
-    "pending"`, `tier == tier`, `kind_hint == kind` (default "spell" --
+    "pending"`, `tier == tier`, and `kind_hint == kind` (default "spell" --
     this batch only has a schema for that kind; other kinds are simply never
     selected, and show up in `owlsperch queue summary`'s per-kind counts
-    instead), and have no attempt already recorded at `tier` (those are
-    waiting for a tier escalation -- see module docstring and
-    `owlsperch.queue.summary`'s `awaiting_escalation` count). Each selected
-    segment is atomically marked `in_progress` with an `in_progress_since`
-    timestamp, and has its subagent prompt rendered to
-    `prompts/<book_id>/<seg_id>.md` before being returned -- an
+    instead). Each selected segment is atomically marked `in_progress` with
+    an `in_progress_since` timestamp, and has its subagent prompt rendered
+    to `prompts/<book_id>/<seg_id>.md` before being returned -- an
     already-`in_progress` segment is never reselected by a later call.
+
+    `tier=None` (the default) picks the lowest tier in
+    `owlsperch.queue.ladder.TIERS` with at least one pending `kind` segment,
+    after this call's own stale-reset and lazy-escalation passes (see
+    module docstring) -- if nothing is pending, returns `[]` without
+    selecting anything. `model=None` defaults to
+    `owlsperch.queue.ladder.TIER_MODELS[tier]` for whichever tier was
+    actually used. When `stats` is given, `stats["stale_reset"]` is set to
+    the number of segments reset from a stale `in_progress` (spec 4.5) --
+    `owlsperch.queue.runner.run_queue_next` uses this to print a note.
 
     The whole operation holds an exclusive lock on
     `segments/<book_id>/.queue.lock` (see `_book_lock`); `LockTimeoutError`
@@ -125,6 +206,17 @@ def select_and_mark(
         return []
 
     with _book_lock(seg_dir, timeout=lock_timeout):
+        stale_reset_count = _reset_stale_and_heal(data_dir, seg_dir, book_id)
+        if stats is not None:
+            stats["stale_reset"] = stale_reset_count
+
+        resolved_tier = tier if tier is not None else _lowest_pending_tier(seg_dir, book_id, kind)
+        if resolved_tier is None:
+            return []
+        resolved_model = (
+            model if model is not None else TIER_MODELS.get(resolved_tier, resolved_tier)
+        )
+
         selected: list[SelectedSegment] = []
         for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
             if len(selected) >= limit:
@@ -133,9 +225,8 @@ def select_and_mark(
             segment = Segment.model_validate_json(path.read_text())
             if (
                 segment.status != "pending"
-                or segment.tier != tier
+                or segment.tier != resolved_tier
                 or segment.kind_hint != kind
-                or has_attempt_at_tier(segment, tier)
             ):
                 continue
 
@@ -144,7 +235,7 @@ def select_and_mark(
             # Authoritative record of the model this wave's prompt was
             # rendered for -- `owlsperch queue complete` copies it into an
             # accepted record's `extraction.model` (B5 follow-up 3).
-            segment.model = model
+            segment.model = resolved_model
             atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
 
             prompt_path = render_prompt_to_file(
@@ -152,7 +243,7 @@ def select_and_mark(
                 data_dir=data_dir,
                 manifest_path=manifest_path,
                 schemas_dir=schemas_dir,
-                model=model,
+                model=resolved_model,
             )
             selected.append(
                 SelectedSegment(
@@ -160,6 +251,8 @@ def select_and_mark(
                     segment_path=path.relative_to(data_dir).as_posix(),
                     kind_hint=segment.kind_hint,
                     prompt_path=str(prompt_path),
+                    tier=resolved_tier,
+                    model=resolved_model,
                 )
             )
 

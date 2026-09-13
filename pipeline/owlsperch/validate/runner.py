@@ -38,10 +38,16 @@ Validation writes back to the originating segment (skipped for `--stale`,
 and for a record whose segment can't be resolved at all): PASS sets the
 segment `status` to `"done"` and `outcome` to `"validated"`, and appends the
 record's path (relative to `$OWLSPERCH_DATA`) to the segment's `records`
-list. FAIL appends `{tier, timestamp, errors}` to the segment's `attempts`
-and leaves `status` as `"pending"`. Both are idempotent: rerunning on an
-unchanged record does not add a duplicate record path or a duplicate
-identical attempt.
+list. FAIL appends `{tier, timestamp, errors, kind: "validation"}` to the
+segment's `attempts` and advances it along the escalation ladder (batch B8,
+`owlsperch.queue.ladder`): `tier` haiku -> sonnet -> opus, one attempt per
+tier; a FAIL recorded while already on opus moves the segment to
+`human/<book_id>/` instead (`status: "human"`, `outcome:
+"escalation_exhausted"`), keeping every attempt. Both PASS and FAIL are
+idempotent: rerunning on an unchanged record does not add a duplicate
+record path, a duplicate identical attempt, or advance the ladder twice for
+the same failure -- see `_write_back_fail` and `owlsperch.queue.ladder`'s
+module docstring for the stale-re-validation case this guards against.
 
 Batch B5's extract skill (`owlsperch queue complete`) records a subagent's
 claimed record paths under the segment's `pending_records`, not `records`,
@@ -55,11 +61,12 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
+from owlsperch.queue.common import finish_after_failure
+from owlsperch.queue.ladder import record_failure
 from owlsperch.segment.runner import Segment
 from owlsperch.text.runner import default_data_dir
 from owlsperch.validate.checks import (
@@ -76,10 +83,6 @@ from owlsperch.validate.loader import (
     load_segment,
     segment_path,
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _schema_errors(validator: Any, instance: Any, *, prefix: str) -> list[str]:
@@ -198,21 +201,40 @@ def _write_back_fail(
     errors: list[str],
     record_rel_path: str | None = None,
 ) -> None:
+    """Record a validation FAIL onto its originating segment and advance the
+    escalation ladder (batch B8, `owlsperch.queue.ladder.record_failure`):
+    `tier` haiku -> sonnet -> opus, with the failing record's own
+    `extraction.tier` as the attempt's tier (so a stale re-validation of an
+    old-tier record -- one whose `extraction.tier` is behind the segment's
+    current tier -- never double-advances the ladder; see the ladder module
+    docstring). A FAIL recorded while already on opus moves the segment to
+    `human/<book_id>/` instead (`outcome: "escalation_exhausted"`), keeping
+    every attempt.
+
+    `record_rel_path`, if given and still listed in the segment's
+    `pending_records` (i.e. claimed by `owlsperch queue complete` but never
+    promoted to `records` by a prior PASS), is both dropped from
+    `pending_records` *and* deleted from disk -- a wrong-slug or otherwise
+    bogus file from a failed attempt must not linger forever to be picked
+    up (or silently skipped) by a later `owlsperch build-db`. A path already
+    in `records` (a previously-validated record failing only now, e.g. after
+    a schema change) is never deleted -- only dropped from `pending_records`
+    if for some reason it was listed in both.
+    """
     path = segment_path(data_dir, book_id, segment_id)
     segment_model = Segment.model_validate_json(path.read_text())
-    attempts = segment_model.attempts
-    last = attempts[-1] if attempts else None
-    already_recorded = isinstance(last, dict) and last.get("errors") == errors
-    if not already_recorded:
-        attempts = [*attempts, {"tier": tier, "timestamp": _now_iso(), "errors": errors}]
-    segment_model.attempts = attempts
-    # B5: a record that failed validation never becomes a real record -- drop
-    # it from pending_records instead of leaving it stuck there forever.
+
     if record_rel_path is not None and record_rel_path in segment_model.pending_records:
         segment_model.pending_records = [
             p for p in segment_model.pending_records if p != record_rel_path
         ]
-    atomic_write_text(path, segment_model.model_dump_json(indent=2) + "\n")
+        if record_rel_path not in segment_model.records:
+            record_file = data_dir / record_rel_path
+            if record_file.is_file():
+                record_file.unlink()
+
+    result = record_failure(segment_model, errors, kind="validation", tier=tier)
+    finish_after_failure(data_dir, path, segment_model, result)
 
 
 def validate_record(

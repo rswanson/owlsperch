@@ -19,17 +19,17 @@ from owlsperch.queue.complete import QueueError, complete_segment
 from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
 from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT, LockTimeoutError, select_and_mark
 from owlsperch.queue.summary import compute_summary
-from owlsperch.segment.runner import Segment
+from owlsperch.segment.runner import SEGMENT_TIER, Segment
 from owlsperch.text.runner import default_data_dir
 
 
 def run_queue_next(
     book_id: str,
     *,
-    tier: str = "haiku",
+    tier: str | None = None,
     limit: int,
     kind: str = "spell",
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
     json_output: bool = False,
     data_dir: Path | None = None,
@@ -40,6 +40,7 @@ def run_queue_next(
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
 
+    stats: dict[str, int] = {}
     try:
         selected = select_and_mark(
             book_id,
@@ -51,19 +52,25 @@ def run_queue_next(
             schemas_dir=schemas_dir,
             model=model,
             lock_timeout=lock_timeout,
+            stats=stats,
         )
     except LockTimeoutError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    stale_reset = stats.get("stale_reset", 0)
+    if stale_reset:
+        print(f"reset {stale_reset} stale in_progress segment(s)", file=sys.stderr)
 
     if json_output:
         print(json.dumps([s.to_json() for s in selected]), file=out)
         return 0
 
     if not selected:
-        print(f"{book_id}: no pending '{kind}' segments at tier '{tier}'", file=out)
+        tier_label = tier if tier is not None else "any"
+        print(f"{book_id}: no pending '{kind}' segments at tier '{tier_label}'", file=out)
     for item in selected:
-        print(f"{item.seg_id} ({item.kind_hint}) -> {item.prompt_path}", file=out)
+        print(f"{item.seg_id} ({item.kind_hint}, tier {item.tier}) -> {item.prompt_path}", file=out)
     return 0
 
 
@@ -166,16 +173,23 @@ def run_queue_reset(
 ) -> int:
     """Reset one or more segments back to `status: "pending"` and clear
     `in_progress_since` -- for undoing a `queue next` mark by hand (e.g.
-    after a manual smoke test), not part of the normal extract loop. Stale
-    (>60 min) auto-reset is a future batch (B8); this is an explicit,
+    after a manual smoke test), not part of the normal extract loop.
+    Automatic stale (>60 min) reset happens inside `owlsperch queue next`
+    itself (batch B8, see `owlsperch.queue.select`); this is an explicit,
     operator-invoked undo.
 
+    A segment currently in `human/<book_id>/` (opus exhausted, or a
+    `proposed_type`, batch B8) is moved back to `segments/<book_id>/` as
+    `pending` on its current tier, with `outcome`/`outcome_reason`/
+    `proposal` cleared (they no longer describe an active segment).
+
     `--hard` additionally clears `attempts`, `pending_records`, `records`,
-    `notes`, `outcome`, and `outcome_reason` back to empty/`None`, and
-    deletes every record file named in `records`/`pending_records` (only
-    ones that actually resolve under `records/<book_id>/` -- see
+    `notes`, `outcome`, `outcome_reason`, and `context_seg_ids` back to
+    empty/`None`, resets `tier` back to haiku, and deletes every record
+    file named in `records`/`pending_records` (only ones that actually
+    resolve under `records/<book_id>/` -- see
     `_delete_record_file_under_book`) -- for fully discarding a trial run's
-    state, not just unsticking an in-progress segment.
+    state, not just unsticking an in-progress (or human) segment.
     """
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
@@ -189,6 +203,7 @@ def run_queue_reset(
             continue
 
         segment = Segment.model_validate_json(path.read_text())
+        was_human = path.parent.name == segment.book_id and path.parent.parent.name == "human"
         segment.status = "pending"
         segment.in_progress_since = None
 
@@ -201,8 +216,22 @@ def run_queue_reset(
             segment.notes = []
             segment.outcome = None
             segment.outcome_reason = None
+            segment.proposal = None
+            segment.context_seg_ids = []
+            segment.tier = SEGMENT_TIER
+        elif was_human:
+            segment.outcome = None
+            segment.outcome_reason = None
+            segment.proposal = None
 
-        atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+        target_path = data_dir / "segments" / segment.book_id / f"{seg_id}.json"
+        if was_human:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(target_path, segment.model_dump_json(indent=2) + "\n")
+            path.unlink()
+        else:
+            atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+
         suffix = " (hard)" if hard else ""
         print(f"{seg_id}: reset to pending{suffix}", file=out)
 
