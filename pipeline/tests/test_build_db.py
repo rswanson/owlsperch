@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from owlsperch.build_db.runner import build_db, run_build_db
+from owlsperch.build_db.runner import build_db, flatten_fields, run_build_db
 
 
 def _repo_schemas_dir() -> Path:
@@ -501,3 +501,146 @@ def test_cli_build_db_strict_flag_is_wired_up() -> None:
     parser = build_parser()
     assert parser.parse_args(["build-db"]).strict is False
     assert parser.parse_args(["build-db", "--strict"]).strict is True
+
+
+# ---------------------------------------------------------------------------
+# B10 criterion 10: `tables` SQLite table + `flatten_fields` exclusion of
+# list-of-lists values (e.g. table `rows`).
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_fields_excludes_list_of_lists() -> None:
+    """A list-of-lists (table `rows`) produces NO `record_fields` rows --
+    that grid content lives in the dedicated `tables` table instead."""
+    assert flatten_fields("rows", [["1", "Initiate"], ["2", "Adept"]]) == []
+
+
+def test_flatten_fields_still_flattens_list_of_scalars() -> None:
+    """Unaffected by the list-of-lists exclusion: a plain scalar array (e.g.
+    table `columns`, or spell `descriptors`) still gets one row per item."""
+    rows = flatten_fields("columns", ["Rank", "Title"])
+    assert [(r.key, r.text_value) for r in rows] == [("columns", "Rank"), ("columns", "Title")]
+
+
+def _valid_table_record(
+    *,
+    book_id: str = "book",
+    seg_id: str = "book-p0010-01",
+    pages: list[int] | None = None,
+    name: str = "Table 1-1: Sable Ranks",
+    slug: str = "table-1-1-sable-ranks",
+    columns: list[str] | None = None,
+    rows: list[list[str]] | None = None,
+    parent_record: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": f"table:{book_id}:{slug}",
+        "type": "table",
+        "name": name,
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": pages if pages is not None else [10],
+        "citation": "Test Book p. 10",
+        "text_md": "",
+        "fields": {
+            "caption": name,
+            "columns": columns if columns is not None else ["Rank", "Title"],
+            "rows": rows if rows is not None else [["1", "Initiate"], ["2", "Adept"]],
+            "parent_record": parent_record,
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "haiku",
+            "model": "claude-haiku-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def test_build_db_creates_tables_table(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "table", "table-1-1-sable-ranks", _valid_table_record())
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.counts_by_type == {"table": 1}
+
+    conn = _connect(result.db_path)
+    try:
+        table_names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            )
+        }
+        assert "tables" in table_names
+    finally:
+        conn.close()
+
+
+def test_build_db_tables_row_round_trips_columns_and_rows_as_json(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "table",
+        "table-1-1-sable-ranks",
+        _valid_table_record(
+            columns=["Rank", "Title"],
+            rows=[["1", "Initiate"], ["2", "Adept"]],
+            parent_record="rules_section:book:sable-rites",
+        ),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM tables WHERE record_id = ?", ("table:book:table-1-1-sable-ranks",)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row["book_id"] == "book"
+    assert row["caption"] == "Table 1-1: Sable Ranks"
+    assert json.loads(row["columns"]) == ["Rank", "Title"]
+    assert json.loads(row["rows"]) == [["1", "Initiate"], ["2", "Adept"]]
+    assert row["parent_record"] == "rules_section:book:sable-rites"
+
+
+def test_build_db_table_rows_produce_no_record_fields_rows(tmp_path: Path) -> None:
+    """The `rows` grid must not also be flattened into `record_fields` --
+    that would duplicate its content and defeat the point of the dedicated
+    `tables` table."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "table", "table-1-1-sable-ranks", _valid_table_record())
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    conn = _connect(result.db_path)
+    try:
+        rows_field_rows = conn.execute(
+            "SELECT * FROM record_fields WHERE record_id = ? AND key = 'rows'",
+            ("table:book:table-1-1-sable-ranks",),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows_field_rows == []
