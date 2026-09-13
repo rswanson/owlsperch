@@ -140,3 +140,27 @@ def test_every_type_examples_file_validates_against_its_schema() -> None:
         if field_check is not None:
             type_field_errors = field_check(record)
             assert not type_field_errors, f"{path}: type field errors: {type_field_errors}"
+
+
+def test_every_examples_file_has_a_slug_and_id_consistent_with_its_name() -> None:
+    """B10 retrospective follow-up (acceptance criterion 9): every
+    `schemas/examples/*.json` fixture's `slug` is `slugify(name)` and `id` is
+    `f"{type}:{book_id}:{slug}"` -- so a fixture that models a qualified name
+    (e.g. rules_section's `Class Features (Sable Knight)`) is caught if its
+    slug/id ever drift out of sync with the name."""
+    from owlsperch.validate.checks import slugify
+
+    schemas_dir = _repo_schemas_dir()
+    examples_dir = schemas_dir / "examples"
+    example_files = sorted(examples_dir.glob("*.json")) if examples_dir.is_dir() else []
+    assert example_files, "expected at least one schemas/examples/*.json fixture"
+
+    for path in example_files:
+        record = json.loads(path.read_text())
+        name = record["name"]
+        slug = record["slug"]
+        expected_slug = slugify(name)
+        assert slug == expected_slug, f"{path}: slug {slug!r} != slugify(name) {expected_slug!r}"
+
+        expected_id = f"{record['type']}:{record['book_id']}:{slug}"
+        assert record["id"] == expected_id, f"{path}: id {record['id']!r} != {expected_id!r}"
