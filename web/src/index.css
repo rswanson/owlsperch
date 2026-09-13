@@ -313,6 +313,51 @@ h1 {
   text-align: left;
 }
 
+.record-tables {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Wrap each table in its own horizontal-scroll container so a wide grid
+   never forces the page itself to scroll horizontally at the 400px mobile
+   width web/e2e/mobile.spec.ts runs at. */
+.record-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.record-table-scroll table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.record-table-scroll caption {
+  caption-side: top;
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 6px;
+}
+
+.record-table-scroll th,
+.record-table-scroll td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.record-table-scroll th {
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
+.table-pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 @media (max-width: 480px) {
   .field-row {
     flex-direction: column;

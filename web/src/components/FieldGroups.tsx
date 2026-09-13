@@ -4,6 +4,11 @@ import type { SchemaField } from "../api";
 interface FieldGroupsProps {
   fields: Record<string, unknown>;
   schemaFields: SchemaField[];
+  /** Field names to leave out of the rendered groups entirely (batch B10):
+   * a `type === "table"` record's own `columns`/`rows` are rendered as a
+   * real HTML grid by `RecordTables` instead of a comma-joined string here.
+   * Defaults to none. */
+  hiddenFields?: string[];
 }
 
 interface FieldRow {
@@ -64,10 +69,13 @@ export function formatFieldValue(value: unknown): string | null {
 export function buildFieldGroups(
   fields: Record<string, unknown>,
   schemaFields: SchemaField[],
+  hiddenFields: string[] = [],
 ): FieldGroup[] {
   const byGroup = new Map<string, FieldGroup>();
+  const hidden = new Set(hiddenFields);
 
   for (const schemaField of schemaFields) {
+    if (hidden.has(schemaField.name)) continue;
     const hint = schemaField["x-ui"] ?? {};
     const displayValue = formatFieldValue(fields[schemaField.name]);
     if (displayValue === null) continue;
@@ -105,8 +113,11 @@ export function formatGroupLabel(name: string): string {
     .join(" ");
 }
 
-export function FieldGroups({ fields, schemaFields }: FieldGroupsProps) {
-  const groups = useMemo(() => buildFieldGroups(fields, schemaFields), [fields, schemaFields]);
+export function FieldGroups({ fields, schemaFields, hiddenFields = [] }: FieldGroupsProps) {
+  const groups = useMemo(
+    () => buildFieldGroups(fields, schemaFields, hiddenFields),
+    [fields, schemaFields, hiddenFields],
+  );
 
   if (groups.length === 0) return null;
 
