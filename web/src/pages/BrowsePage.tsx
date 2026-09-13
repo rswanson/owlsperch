@@ -16,18 +16,6 @@ import { FacetSidebar } from "../components/FacetSidebar";
  * checkbox-selected-state map. */
 const RESERVED_PARAMS = new Set(["sort", "page", "page_size"]);
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | {
-      status: "ok";
-      items: BrowseItem[];
-      total: number;
-      page: number;
-      pageSize: number;
-      facets: Facet[];
-    };
-
 function filterParams(searchParams: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams();
   for (const [key, value] of searchParams.entries()) {
@@ -49,13 +37,27 @@ function selectedFromParams(searchParams: URLSearchParams): Record<string, strin
  * (`FacetSidebar`, generated from `GET /facets/{type}`), a sort control, a
  * paginated result list linking to `/r/:type/:slug`, and pagination
  * controls. All of it -- filters, sort, page -- lives in the URL's query
- * string via `useSearchParams`, so reload/back/forward restore the view. */
+ * string via `useSearchParams`, so reload/back/forward restore the view.
+ *
+ * Refetching (on any filter/sort/page change) keeps the previous facets and
+ * results mounted -- and the checkboxes checked according to the URL,
+ * which already reflects the change -- while the new page loads, showing a
+ * "Loading…" line alongside rather than tearing the sidebar down and
+ * rebuilding it (which briefly drops a just-checked checkbox from the DOM
+ * entirely). */
 export function BrowsePage() {
   const { type } = useParams<{ type: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [schemaFields, setSchemaFields] = useState<SchemaField[]>([]);
   const [typeLabel, setTypeLabel] = useState<string>(type ?? "");
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+
+  const [items, setItems] = useState<BrowseItem[]>([]);
+  const [facets, setFacets] = useState<Facet[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!type) return;
@@ -77,27 +79,24 @@ export function BrowsePage() {
   useEffect(() => {
     if (!type) return;
     const controller = new AbortController();
-    setState({ status: "loading" });
+    setLoading(true);
+    setErrorMessage(null);
     Promise.all([
       browseRecords(type, searchParams, controller.signal),
       getFacets(type, filterParams(searchParams), controller.signal),
     ])
       .then(([browse, facetsResponse]) => {
-        setState({
-          status: "ok",
-          items: browse.items,
-          total: browse.total,
-          page: browse.page,
-          pageSize: browse.page_size,
-          facets: facetsResponse.facets,
-        });
+        setItems(browse.items);
+        setTotal(browse.total);
+        setPage(browse.page);
+        setPageSize(browse.page_size);
+        setFacets(facetsResponse.facets);
+        setLoading(false);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        setState({
-          status: "error",
-          message: err instanceof ApiError ? err.message : "Failed to load results.",
-        });
+        setErrorMessage(err instanceof ApiError ? err.message : "Failed to load results.");
+        setLoading(false);
       });
     return () => controller.abort();
     // `searchParams` is re-derived from `searchKey` each render; depending on
@@ -133,9 +132,9 @@ export function BrowsePage() {
     });
   }
 
-  function handlePageChange(page: number) {
+  function handlePageChange(nextPage: number) {
     updateParams((next) => {
-      next.set("page", String(page));
+      next.set("page", String(nextPage));
     });
   }
 
@@ -146,9 +145,7 @@ export function BrowsePage() {
     <div className="browse-page">
       <h1>{typeLabel}</h1>
       <div className="browse-layout">
-        {state.status === "ok" && (
-          <FacetSidebar facets={state.facets} selected={selected} onToggle={handleToggle} />
-        )}
+        <FacetSidebar facets={facets} selected={selected} onToggle={handleToggle} />
         <div className="browse-main">
           <div className="browse-controls">
             <label className="sort-control">
@@ -176,45 +173,35 @@ export function BrowsePage() {
             </label>
           </div>
 
-          {state.status === "loading" && <p className="search-status">Loading…</p>}
-          {state.status === "error" && (
-            <p className="search-status search-error">{state.message}</p>
+          {loading && <p className="search-status">Loading…</p>}
+          {errorMessage && <p className="search-status search-error">{errorMessage}</p>}
+          {!loading && !errorMessage && items.length === 0 && (
+            <p className="search-status">No results.</p>
           )}
 
-          {state.status === "ok" && (
-            <>
-              {state.items.length === 0 ? (
-                <p className="search-status">No results.</p>
-              ) : (
-                <ul className="browse-results">
-                  {state.items.map((item) => (
-                    <li className="browse-result" key={item.id}>
-                      <Link to={`/r/${item.type}/${item.slug}`} className="browse-result-link">
-                        <span className="browse-result-name">{item.name}</span>
-                        {item.citation && (
-                          <span className="browse-result-citation">{item.citation}</span>
-                        )}
-                      </Link>
-                      <div className="browse-result-facets">
-                        {Object.entries(item.facets).map(([field, values]) => (
-                          <span className="browse-result-facet" key={field}>
-                            {values.join(", ")}
-                          </span>
-                        ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <Pagination
-                page={state.page}
-                pageSize={state.pageSize}
-                total={state.total}
-                onPageChange={handlePageChange}
-              />
-            </>
+          {items.length > 0 && (
+            <ul className="browse-results">
+              {items.map((item) => (
+                <li className="browse-result" key={item.id}>
+                  <Link to={`/r/${item.type}/${item.slug}`} className="browse-result-link">
+                    <span className="browse-result-name">{item.name}</span>
+                    {item.citation && (
+                      <span className="browse-result-citation">{item.citation}</span>
+                    )}
+                  </Link>
+                  <div className="browse-result-facets">
+                    {Object.entries(item.facets).map(([field, values]) => (
+                      <span className="browse-result-facet" key={field}>
+                        {values.join(", ")}
+                      </span>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
+
+          <Pagination page={page} pageSize={pageSize} total={total} onPageChange={handlePageChange} />
         </div>
       </div>
     </div>

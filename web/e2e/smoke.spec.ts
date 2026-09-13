@@ -11,8 +11,9 @@ test("search a prefix, press Enter, land on the record page", async ({ page }) =
   await expect(input).toBeFocused();
 
   await input.fill("fireb");
-  await expect(page.getByText("Fireball")).toBeVisible();
-  await expect(page.getByText("Spells", { exact: true })).toBeVisible();
+  const results = page.locator("#search-results");
+  await expect(results.getByText("Fireball")).toBeVisible();
+  await expect(results.getByText("Spells", { exact: true })).toBeVisible();
 
   await input.press("Enter");
 

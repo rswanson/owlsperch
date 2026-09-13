@@ -18,12 +18,14 @@ with a full haiku -> sonnet -> opus escalation ladder and a `human/` inbox
 for what opus can't resolve (see "Architecture" below), `build-db` (builds
 `db/owlsperch.sqlite` from validated records), `serve` (starts the
 `owlsperch_server` FastAPI app -- `/search`, `/records/{type}/{slug}`,
-`/schemas`, `/health`, `/stats`), `dev` (runs `serve` and `web/`'s Vite dev
-server together), `fixture-db <dir>` (builds a small synthetic database for
-local UI/e2e testing), and `web/` (the search-box + record-page frontend).
-CI. Everything else is a future-batch stub (`check-completeness`,
-`coverage`, `schema review`, `sample`, and `web/`'s own `/browse`,
-`/tools/*` routes from spec 4.10).
+`/records/{type}` and `/facets/{type}` (batch B9 -- filtered/sorted/
+paginated browse lists and their facet counts), `/schemas`, `/health`,
+`/stats`), `dev` (runs `serve` and `web/`'s Vite dev server together),
+`fixture-db <dir>` (builds a small synthetic database for local UI/e2e
+testing), and `web/` (search box, record page, and -- batch B9 --
+`/browse/:type` with a facet sidebar). CI. Everything else is a
+future-batch stub (`check-completeness`, `coverage`, `schema review`,
+`sample`, and `web/`'s own `/tools/*` routes from spec 4.10).
 
 ### Commands
 
@@ -254,17 +256,35 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   latest-published book's as the main response -- and placeholder `links`/
   `referenced_by`/`tables` for later batches), `/schemas` (reusing
   `owlsperch.schemas`), `/stats` (canonical record counts by type, for the
-  web UI's home-page hint), and `/health`. The database is opened read-only
+  web UI's home-page hint), `/health`, plus (batch B9) `/records/{type}`
+  and `/facets/{type}` -- the SQL/param-parsing for both lives in
+  `browse.py`, kept out of `app.py`. Filterable/sortable fields come only
+  from the type schema's `x-ui` hints (`name` is always an allowed/default
+  sort key even though it's an envelope field, not a `fields` one; `source`
+  is a built-in pseudo-field backed by `records.book_id`, not
+  `record_fields`); an array-of-object filterable field (spell `levels`,
+  items `class`/`level`) exposes each item sub-property as its own query
+  param, derived generically from `items.properties` -- given two or more
+  of a parent's sub-params at once, they must describe the SAME item, so
+  that's matched against `build_db.runner.flatten_fields`'s *combined*
+  `record_fields` row (`levels` -> `"Cleric 3"`) rather than ANDing
+  independent single-field matches. `/records/{type}` returns
+  `{type, total, page, page_size, items}`, each item carrying a `facets`
+  map read straight off `record_fields` (school, levels, etc., without
+  loading the full record JSON); `/facets/{type}` returns distinct values
+  + counts per filterable field (one facet per sub-property for an
+  array-of-object field) plus `source`, each facet's counts honoring every
+  current filter except its own field. The database is opened read-only
   (`mode=ro` URI) once per request, not pooled (spec D1: single-user,
   localhost only). A missing database makes `/search`,
-  `/records/{type}/{slug}`, and `/stats` answer 503 naming `owlsperch
-  build-db`; a present but corrupt database file (one `sqlite3.connect`
-  opens fine but that raises `sqlite3.DatabaseError` on the first real
-  read, since SQLite only validates the file header lazily) answers 503
-  with a distinct "database unreadable" detail naming the same rebuild
-  command, via the `_query_db` helper every data endpoint routes its DB
-  work through; `/health` and `/schemas` don't touch the database and
-  always answer normally.
+  `/records/{type}/{slug}`, `/records/{type}`, `/facets/{type}`, and
+  `/stats` answer 503 naming `owlsperch build-db`; a present but corrupt
+  database file (one `sqlite3.connect` opens fine but that raises
+  `sqlite3.DatabaseError` on the first real read, since SQLite only
+  validates the file header lazily) answers 503 with a distinct "database
+  unreadable" detail naming the same rebuild command, via the `_query_db`
+  helper every data endpoint routes its DB work through; `/health` and
+  `/schemas` don't touch the database and always answer normally.
 - `pipeline/owlsperch/dev.py` -- the `dev` subcommand (spec 4.10, batch B7):
   `build_dev_commands` decides what to run (`python -m owlsperch serve`,
   then `npm run dev` in `web/`) and where; `run_dev` spawns both as child
@@ -276,29 +296,44 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
 - `pipeline/owlsperch/fixture_db.py` -- `owlsperch fixture-db <dir>` (spec
   4.10, batch B7): a pytest-free equivalent of
   `server/tests/conftest.py`'s `built_data_dir` fixture -- writes a small
-  synthetic, schema-valid manifest/segment/record set into `<dir>` and
-  builds `<dir>/db/owlsperch.sqlite` from it via
-  `owlsperch.build_db.runner.build_db`. Used by `web/e2e/serve-fixture.py`
-  (the Playwright smoke test's backend) and usable standalone for poking at
-  the UI locally without the real PDF corpus.
-- `web/` -- the frontend (spec 4.10, batch B7): Vite + React 18 +
-  TypeScript, React Router for `/` (search) and `/r/:type/:slug` (record
-  detail). `src/api.ts` has typed wrappers for every server endpoint;
+  synthetic, schema-valid manifest/segment/record set (three spells --
+  Fireball/Evocation, Alarm/Abjuration, and, since batch B9, Summon Monster
+  III/Conjuration with a Cleric-3 `levels` item, for the browse Playwright
+  spec's facet-filter flow) into `<dir>` and builds
+  `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
+  Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
+  usable standalone for poking at the UI locally without the real PDF corpus.
+- `web/` -- the frontend (spec 4.10, batch B7, plus `/browse/:type` from
+  B9): Vite + React 18 + TypeScript, React Router for `/` (search),
+  `/browse/:type` (browse + facets), and `/r/:type/:slug` (record detail).
+  `src/api.ts` has typed wrappers for every server endpoint;
   `src/components/SearchBox.tsx` is the debounced (150ms), cancellable
   (`AbortController`), keyboard-navigable (arrows/Enter/Escape) typeahead;
   `src/components/FieldGroups.tsx` renders a record's `fields` grouped and
   ordered by `/schemas`'s `x-ui` hints (`buildFieldGroups`/
   `formatFieldValue` are plain functions, unit tested separately from the
   component); `src/pages/RecordPage.tsx` renders `text_md` with
-  `react-markdown` + `remark-gfm` (no raw HTML). `vite.config.ts`'s dev
-  server proxies `/api/*` to the FastAPI server on 127.0.0.1:8000 (path
-  rewrite strips `/api`) and binds `127.0.0.1` explicitly (Node's default
-  `"localhost"` host can resolve to the IPv6 loopback only on some systems,
-  which breaks anything that probes `127.0.0.1` directly, e.g. Playwright's
-  `webServer.url` check). `web/e2e/` has one Playwright smoke test
-  (`smoke.spec.ts`, flow A: type a prefix, Enter, land on the record page)
-  run by `playwright.config.ts`'s `webServer` against two freshly started
-  servers: `e2e/serve-fixture.py` (the fixture DB + FastAPI, see
+  `react-markdown` + `remark-gfm` (no raw HTML). `src/pages/BrowsePage.tsx`
+  (batch B9) keeps every filter/sort/page value in the URL query string via
+  `useSearchParams` (reload/back restore the view), fetches `/records/{type}`
+  and `/facets/{type}` on every change, and keeps the previous facets/results
+  mounted (a `loading` flag, not a full state-machine swap) while a refetch
+  is in flight -- so a just-checked checkbox never briefly disappears from
+  the DOM; `src/components/FacetSidebar.tsx` renders one checkbox group per
+  facet, labeling `source` values with the book title instead of its raw
+  `book_id`. `src/components/Layout.tsx`'s header nav lists every
+  registered type from `/schemas`, linking to `/browse/<type>`.
+  `vite.config.ts`'s dev server proxies `/api/*` to the FastAPI server on
+  127.0.0.1:8000 (path rewrite strips `/api`) and binds `127.0.0.1`
+  explicitly (Node's default `"localhost"` host can resolve to the IPv6
+  loopback only on some systems, which breaks anything that probes
+  `127.0.0.1` directly, e.g. Playwright's `webServer.url` check). `web/e2e/`
+  has Playwright specs -- `smoke.spec.ts` (flow A: type a prefix, Enter,
+  land on the record page), `mobile.spec.ts` (flow A at 400px width), and
+  (batch B9) `browse.spec.ts` (flow B: nav to Spells, check Cleric/3/
+  Conjuration in the facet sidebar, sort by name, open the one matching
+  spell) -- run by `playwright.config.ts`'s `webServer` against two freshly
+  started servers: `e2e/serve-fixture.py` (the fixture DB + FastAPI, see
   `fixture_db.py` above) and `npm run dev` (Vite, which proxies to it).
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope

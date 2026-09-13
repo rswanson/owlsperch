@@ -117,7 +117,11 @@ def load_type_browse_schema(registry: Registry, type_name: str) -> TypeBrowseSch
 
         sub_fields: list[SubField] = []
         items = prop.get("items")
-        if prop.get("type") == "array" and isinstance(items, dict) and items.get("type") == "object":
+        if (
+            prop.get("type") == "array"
+            and isinstance(items, dict)
+            and items.get("type") == "object"
+        ):
             for subname, subschema in (items.get("properties") or {}).items():
                 subtype = subschema.get("type")
                 types = subtype if isinstance(subtype, list) else [subtype]
@@ -258,7 +262,9 @@ def build_filter_clauses(
             value_lists: list[list[str]] = []
             for sf in parent_field.sub_fields:
                 values = filters[sf.name]
-                value_lists.append([_normalize_numeric_str(v) for v in values] if sf.numeric else values)
+                value_lists.append(
+                    [_normalize_numeric_str(v) for v in values] if sf.numeric else values
+                )
             combos = _cross_product(value_lists)
             placeholders = ", ".join("?" for _ in combos)
             clauses.append(
@@ -381,7 +387,10 @@ def list_records(
 
 
 def _facet_values_simple(
-    conn: sqlite3.Connection, schema: TypeBrowseSchema, filters: dict[str, list[str]], field_name: str
+    conn: sqlite3.Connection,
+    schema: TypeBrowseSchema,
+    filters: dict[str, list[str]],
+    field_name: str,
 ) -> list[dict[str, Any]]:
     clauses, params = build_filter_clauses(schema, filters, exclude=field_name)
     where_sql = " AND ".join(["r.type = ?", "r.canonical = 1", *clauses])
@@ -435,7 +444,10 @@ def _facet_values_source(
 
 
 def compute_facets(
-    conn: sqlite3.Connection, type_name: str, schema: TypeBrowseSchema, filters: dict[str, list[str]]
+    conn: sqlite3.Connection,
+    type_name: str,
+    schema: TypeBrowseSchema,
+    filters: dict[str, list[str]],
 ) -> dict[str, Any]:
     """Every filterable field's distinct values + counts (one facet per
     sub-property for an array-of-object field, never the combined row),
@@ -446,7 +458,11 @@ def compute_facets(
     for f in schema.filterable:
         if not f.sub_fields:
             facets.append(
-                {"field": f.name, "label": f.label, "values": _facet_values_simple(conn, schema, filters, f.name)}
+                {
+                    "field": f.name,
+                    "label": f.label,
+                    "values": _facet_values_simple(conn, schema, filters, f.name),
+                }
             )
         else:
             for sf in f.sub_fields:
@@ -459,7 +475,11 @@ def compute_facets(
                 )
 
     facets.append(
-        {"field": "source", "label": "Source", "values": _facet_values_source(conn, schema, filters)}
+        {
+            "field": "source",
+            "label": "Source",
+            "values": _facet_values_source(conn, schema, filters),
+        }
     )
 
     return {"type": type_name, "facets": facets}

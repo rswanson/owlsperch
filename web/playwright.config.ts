@@ -20,7 +20,11 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testMatch: /smoke\.spec\.ts/ },
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: /(smoke|browse)\.spec\.ts/,
+    },
     {
       name: "mobile-400",
       // Acceptance criterion 6 (400px layout, finding 3): a dedicated

@@ -14,8 +14,9 @@ test("flow A fits without horizontal scrolling at 400px width", async ({ page })
     .toBeLessThanOrEqual(400);
 
   await input.fill("fireb");
-  await expect(page.getByText("Fireball")).toBeVisible();
-  await expect(page.getByText("Spells", { exact: true })).toBeVisible();
+  const results = page.locator("#search-results");
+  await expect(results.getByText("Fireball")).toBeVisible();
+  await expect(results.getByText("Spells", { exact: true })).toBeVisible();
 
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
