@@ -133,8 +133,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     queue_next_parser.add_argument(
         "--kind",
-        default="spell",
-        help="Only select segments with this kind_hint (default: spell).",
+        default=None,
+        help="Only select segments with this kind_hint "
+        "(default: every kind_hint with a registered schema).",
     )
     queue_next_parser.add_argument(
         "--model",
@@ -222,7 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="Cap total subagent calls across every wave."
     )
     queue_run_parser.add_argument(
-        "--kind", default="spell", help="Only run segments with this kind_hint (default: spell)."
+        "--kind",
+        default=None,
+        help="Only run segments with this kind_hint "
+        "(default: every kind_hint with a registered schema).",
     )
     queue_run_parser.add_argument(
         "--json", action="store_true", help="Print the final summary as JSON instead."

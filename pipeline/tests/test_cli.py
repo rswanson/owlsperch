@@ -55,6 +55,19 @@ def test_fixture_db_subcommand_builds_a_database(tmp_path: Path) -> None:
     assert "spell: 3" in result.stdout
 
 
+def test_queue_next_and_run_kind_default_to_none() -> None:
+    """B10 criterion 6: `--kind` on `queue next`/`queue run` now defaults to
+    `None` (every registered kind) instead of the hard-coded `"spell"`."""
+    from owlsperch.cli import build_parser
+
+    parser = build_parser()
+    next_args = parser.parse_args(["queue", "next", "book", "--limit", "1"])
+    assert next_args.kind is None
+
+    run_args = parser.parse_args(["queue", "run", "book", "--dry-run"])
+    assert run_args.kind is None
+
+
 def test_console_script_help_lists_manifest_command() -> None:
     owlsperch = shutil.which("owlsperch")
     if owlsperch is None:

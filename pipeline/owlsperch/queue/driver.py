@@ -105,7 +105,7 @@ def drive_dry_run(
     data_dir: Path,
     tier: str | None = None,
     limit: int | None = None,
-    kind: str = "spell",
+    kind: str | None = None,
     schemas_dir: Path | None = None,
     manifest_path: Path | None = None,
 ) -> DriveResult:
@@ -159,7 +159,7 @@ def run_queue_run(
     fixtures_dir: Path | None = None,
     tier: str | None = None,
     limit: int | None = None,
-    kind: str = "spell",
+    kind: str | None = None,
     data_dir: Path | None = None,
     schemas_dir: Path | None = None,
     manifest_path: Path | None = None,

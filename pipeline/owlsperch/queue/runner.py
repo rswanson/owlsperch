@@ -29,7 +29,7 @@ def run_queue_next(
     *,
     tier: str | None = None,
     limit: int,
-    kind: str = "spell",
+    kind: str | None = None,
     model: str | None = None,
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
     json_output: bool = False,
@@ -69,7 +69,8 @@ def run_queue_next(
 
     if not selected:
         tier_label = tier if tier is not None else "any"
-        print(f"{book_id}: no pending '{kind}' segments at tier '{tier_label}'", file=out)
+        kind_label = kind if kind is not None else "any registered kind"
+        print(f"{book_id}: no pending '{kind_label}' segments at tier '{tier_label}'", file=out)
     for item in selected:
         print(f"{item.seg_id} ({item.kind_hint}, tier {item.tier}) -> {item.prompt_path}", file=out)
     return 0
