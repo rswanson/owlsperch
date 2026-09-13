@@ -286,6 +286,32 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   and read the `### Tables belonging to this entity` block.
 - **Touches:** `pipeline/owlsperch/queue/prompt.py`, tests, `CLAUDE.md`.
 
+## B10-imp2: expose pending counts by kind and tier in `queue summary`
+- **Status:** merged
+- **Follow-up to:** B10 (the extraction wave loop -- `queue summary` was the
+  only read-only view of progress, and it had no pending-only breakdown).
+- **User-visible outcome:** a wave planner can size the next wave from
+  `uv run owlsperch queue summary <book_id>` alone, instead of abusing
+  `queue next --limit 100000 --kind <k> --json` as a counter -- which
+  selects and flips every matching segment to `in_progress`, each needing a
+  full `queue reset` to undo.
+- **Acceptance criteria:**
+  1. `QueueSummary` gains `pending_by_kind` and `pending_by_tier`, counted
+     over segments whose `status` is `pending` only (not the done+pending
+     total `counts_by_kind`/`counts_by_tier` report).
+  2. Both render in `queue summary`'s text output (`pending by kind_hint`,
+     `pending by tier`) and in `--json`.
+  3. They are computed from the segments `compute_summary` already loads --
+     no extra scan, no new I/O, no mutation of any segment file.
+  4. A unit test covers a mixed pending/done/`human/` fixture and asserts
+     the pending-only split plus both render lines.
+  5. `.claude/skills/extract/SKILL.md` points wave planning at the new
+     fields and says explicitly not to use `queue next` for counting.
+- **How to observe:** `uv run owlsperch queue summary phb1` and read the
+  `pending by kind_hint` / `pending by tier` lines.
+- **Touches:** `pipeline/owlsperch/queue/summary.py`, tests,
+  `.claude/skills/extract/SKILL.md`, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
