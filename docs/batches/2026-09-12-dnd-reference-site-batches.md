@@ -485,7 +485,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `.claude/skills/extract/SKILL.md`, `CLAUDE.md`.
 
 ## B10b: Rules taxonomy from tables of contents
-- **Status:** in-progress
+- **Status:** merged
 - **Why (user feedback, 2026-09-13):** "The rules section of this site is
   terrible. The contents has a mix of actual rules and random assortments
   from things that should be their own sections (such as classes, equipment,
