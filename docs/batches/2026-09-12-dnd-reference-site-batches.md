@@ -241,7 +241,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `server/`, `web/`, tests.
 
 ## B10: Feat, rules section, and table types
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** feats and rules sections are searchable and
   browsable; tables render as HTML tables on the records that own them.
 - **Acceptance criteria:**
