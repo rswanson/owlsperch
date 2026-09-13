@@ -377,9 +377,7 @@ def test_run_queue_audit_json(tmp_path: Path) -> None:
     )
     record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
     record_path.parent.mkdir(parents=True, exist_ok=True)
-    record_path.write_text(
-        json.dumps({"extraction": {"segment_id": "book-p0011-01"}})
-    )
+    record_path.write_text(json.dumps({"extraction": {"segment_id": "book-p0011-01"}}))
 
     out = io.StringIO()
     exit_code = run_queue_audit("book", fix=False, json_output=True, data_dir=data_dir, out=out)
@@ -414,9 +412,7 @@ def test_run_queue_audit_fix_soft_resets_and_reports_it(tmp_path: Path) -> None:
     )
     record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
     record_path.parent.mkdir(parents=True, exist_ok=True)
-    record_path.write_text(
-        json.dumps({"extraction": {"segment_id": "book-p0011-01"}})
-    )
+    record_path.write_text(json.dumps({"extraction": {"segment_id": "book-p0011-01"}}))
 
     out = io.StringIO()
     exit_code = run_queue_audit("book", fix=True, json_output=False, data_dir=data_dir, out=out)
