@@ -35,11 +35,20 @@ def run_queue_next(
     model: str | None = None,
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
     json_output: bool = False,
+    dry_run: bool = False,
     data_dir: Path | None = None,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
     out: Any = None,
 ) -> int:
+    """Run `select_and_mark` and print its selection. `dry_run=True`
+    (`queue next --dry-run`, B10-mand3) previews the exact same selection
+    with no write side effects -- nothing marked `in_progress`, no prompts
+    rendered (see `select_and_mark`'s module docstring) -- for inspecting
+    the queue without disturbing it, unlike a real `queue next` used only
+    to look. `--json` output is byte-for-byte what a real call would print
+    (the same seg_ids/prompt_paths); the dry-run notices go to stderr only,
+    so existing `--json` consumers are unaffected."""
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
 
@@ -56,6 +65,7 @@ def run_queue_next(
             model=model,
             lock_timeout=lock_timeout,
             stats=stats,
+            dry_run=dry_run,
         )
     except LockTimeoutError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -63,7 +73,19 @@ def run_queue_next(
 
     stale_reset = stats.get("stale_reset", 0)
     if stale_reset:
-        print(f"reset {stale_reset} stale in_progress segment(s)", file=sys.stderr)
+        if dry_run:
+            print(
+                f"(dry run) would reset {stale_reset} stale in_progress segment(s)",
+                file=sys.stderr,
+            )
+        else:
+            print(f"reset {stale_reset} stale in_progress segment(s)", file=sys.stderr)
+
+    if dry_run:
+        print(
+            "(dry run) nothing was marked in_progress; no prompts were written",
+            file=sys.stderr,
+        )
 
     if json_output:
         print(json.dumps([s.to_json() for s in selected]), file=out)
@@ -73,6 +95,8 @@ def run_queue_next(
         tier_label = tier if tier is not None else "any"
         kind_label = kind if kind is not None else "any registered kind"
         print(f"{book_id}: no pending '{kind_label}' segments at tier '{tier_label}'", file=out)
+    elif dry_run:
+        print("(dry run) preview only -- nothing was marked in_progress:", file=out)
     for item in selected:
         print(f"{item.seg_id} ({item.kind_hint}, tier {item.tier}) -> {item.prompt_path}", file=out)
     return 0

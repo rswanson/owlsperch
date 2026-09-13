@@ -48,7 +48,7 @@ uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
-uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json]
+uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json] [--dry-run]
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
@@ -207,8 +207,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   can mix kinds this way, each `SelectedSegment` still carrying its own
   `kind_hint`), marking them `in_progress` under an exclusive `flock` on
   `segments/<book_id>/.queue.lock` (`--lock-timeout`, default 30s) so two
-  concurrent `queue next` runs can't race on the same segment; `prompt.py`
-  renders a segment's subagent prompt (book metadata, segment text, the
+  concurrent `queue next` runs can't race on the same segment.
+  `select_and_mark(..., dry_run=True)` (`queue next --dry-run`, B10-mand3)
+  previews the exact same selection -- including whatever the stale-reset/
+  lazy-escalation heal pass would un-stick or escalate -- with no write
+  side effects at all: nothing is marked `in_progress` and no prompts are
+  rendered, so inspecting the queue (e.g. `--limit 100000` to see
+  everything pending) no longer flips real work into `in_progress` the way
+  a plain `queue next` used as a look-only inspector did during B10;
+  `prompt.py` renders a segment's subagent prompt (book metadata, segment text, the
   candidate schema(s) -- including nested `object`/array-of-object
   properties -- rendered live from `schemas/`, a complete EXAMPLE RECORD
   loaded from `schemas/examples/<kind>.json` when one exists, a
@@ -331,7 +338,11 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   regardless of `skipped_invalid` unless `--strict` is passed (then exit 1
   on any skip); either way, a nonzero `skipped_invalid` always prints a
   WARNING to stderr naming the count and the first 5 skipped paths with
-  each one's first error, so a skip is never silent.
+  each one's first error, so a skip is never silent. A record that passes
+  `validate_record` on its own but collides on `id` with one already
+  loaded (B10-mand3 -- the corpus has genuine name/slug collisions across
+  segments) is caught as `sqlite3.IntegrityError` around `_insert_record`
+  and counted the same way, rather than aborting the whole build.
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be

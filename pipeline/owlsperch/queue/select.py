@@ -31,6 +31,19 @@ matching `tier` and `kind`, in filename (book) order. `tier=None` (the
 `owlsperch.queue.ladder.TIERS` that has at least one pending segment of
 `kind` for this book, after the two passes above -- if nothing is pending at
 any tier, `select_and_mark` returns `[]` without selecting anything.
+
+`dry_run=True` (B10-mand3, `queue next --dry-run`) previews this exact
+selection with no write side effects. The stale-reset/lazy-escalation pass
+still runs -- entirely in memory -- so the preview is faithful: it shows
+whatever a real call with the same arguments would un-stick or escalate
+before selecting, including a segment that pass would move to `human/`
+(excluded from the preview either way, since a real run would have made it
+unselectable). The selection loop then builds the same `SelectedSegment`s
+without mutating a `Segment`, writing it back, or rendering its prompt --
+`prompt_path` still names where `owlsperch.queue.prompt.prompt_path_for`
+would render it, which may not exist on disk yet. The per-book queue lock
+is still taken in dry-run mode (for a consistent snapshot); its `.queue.lock`
+file is the one filesystem effect dry-run mode has.
 """
 
 from __future__ import annotations
@@ -48,7 +61,7 @@ from typing import Any
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import move_segment_to_human, now_iso
 from owlsperch.queue.ladder import TIER_MODELS, TIERS, escalate_existing_attempt, is_stale
-from owlsperch.queue.prompt import render_prompt_to_file
+from owlsperch.queue.prompt import prompt_path_for, render_prompt_to_file
 from owlsperch.schemas import load_registry
 from owlsperch.segment.runner import Segment
 
@@ -116,14 +129,27 @@ class SelectedSegment:
         }
 
 
-def _reset_stale_and_heal(data_dir: Path, seg_dir: Path, book_id: str) -> int:
+def _reset_stale_and_heal(
+    data_dir: Path, seg_dir: Path, book_id: str, *, dry_run: bool = False
+) -> tuple[int, list[tuple[Path, Segment]]]:
     """Walk every segment file for `book_id` (any kind/tier) once: reset a
     stale `in_progress` segment back to `pending`, then lazily escalate a
-    pending segment that already has an attempt at its own tier. Returns the
-    number of segments reset from stale `in_progress`. Must be called while
-    holding the book's queue lock."""
+    pending segment that already has an attempt at its own tier. Returns
+    `(stale_count, segments)`, where `segments` is the post-heal
+    `(path, Segment)` list still living in `seg_dir` (i.e. never moved to
+    `human/`), in filename order -- callers select from this list instead of
+    re-globbing/re-reading. Must be called while holding the book's queue
+    lock.
+
+    `dry_run=True` runs the exact same in-memory logic (so the returned
+    `segments` reflect what a real call would have healed) but performs no
+    filesystem writes: no `atomic_write_text`, no `move_segment_to_human`. A
+    segment that would have been moved to `human/` (exhausted) is still
+    omitted from the returned list either way, since a real run would have
+    made it unselectable."""
     now = datetime.now(UTC)
     stale_count = 0
+    segments: list[tuple[Path, Segment]] = []
 
     for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
         segment = Segment.model_validate_json(path.read_text())
@@ -135,27 +161,37 @@ def _reset_stale_and_heal(data_dir: Path, seg_dir: Path, book_id: str) -> int:
             changed = True
             stale_count += 1
 
+        exhausted = False
         if segment.status == "pending":
             result = escalate_existing_attempt(segment)
             if result is not None:
                 if result.exhausted:
-                    move_segment_to_human(data_dir, path, segment, outcome="escalation_exhausted")
-                    changed = False  # already written by move_segment_to_human
+                    exhausted = True
+                    if not dry_run:
+                        move_segment_to_human(
+                            data_dir, path, segment, outcome="escalation_exhausted"
+                        )
+                    changed = False  # already written by move_segment_to_human (real run)
                 else:
                     changed = True
 
-        if changed:
+        if exhausted:
+            continue  # moved to human/ (or would be under dry_run) -- never selectable
+
+        if changed and not dry_run:
             atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
 
-    return stale_count
+        segments.append((path, segment))
+
+    return stale_count, segments
 
 
-def _lowest_pending_tier(seg_dir: Path, book_id: str, kinds: set[str]) -> str | None:
-    pending_tiers: set[str] = set()
-    for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
-        segment = Segment.model_validate_json(path.read_text())
-        if segment.status == "pending" and segment.kind_hint in kinds:
-            pending_tiers.add(segment.tier)
+def _lowest_pending_tier(segments: list[tuple[Path, Segment]], kinds: set[str]) -> str | None:
+    pending_tiers = {
+        segment.tier
+        for _, segment in segments
+        if segment.status == "pending" and segment.kind_hint in kinds
+    }
     for candidate in TIERS:
         if candidate in pending_tiers:
             return candidate
@@ -174,6 +210,7 @@ def select_and_mark(
     model: str | None = None,
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
     stats: dict[str, int] | None = None,
+    dry_run: bool = False,
 ) -> list[SelectedSegment]:
     """Select up to `limit` segments of `book_id` that are `status ==
     "pending"`, `tier == tier`, and whose `kind_hint` is in the resolved
@@ -202,6 +239,9 @@ def select_and_mark(
     stale `in_progress` (spec 4.5) -- `owlsperch.queue.runner.run_queue_next`
     uses this to print a note.
 
+    `dry_run=True` (B10-mand3) previews the exact same selection with no
+    write side effects -- see the module docstring.
+
     The whole operation holds an exclusive lock on
     `segments/<book_id>/.queue.lock` (see `_book_lock`); `LockTimeoutError`
     is raised if it can't be acquired within `lock_timeout` seconds.
@@ -217,11 +257,13 @@ def select_and_mark(
     kinds = {kind} if kind is not None else set(load_registry(schemas_dir).types)
 
     with _book_lock(seg_dir, timeout=lock_timeout):
-        stale_reset_count = _reset_stale_and_heal(data_dir, seg_dir, book_id)
+        stale_reset_count, healed_segments = _reset_stale_and_heal(
+            data_dir, seg_dir, book_id, dry_run=dry_run
+        )
         if stats is not None:
             stats["stale_reset"] = stale_reset_count
 
-        resolved_tier = tier if tier is not None else _lowest_pending_tier(seg_dir, book_id, kinds)
+        resolved_tier = tier if tier is not None else _lowest_pending_tier(healed_segments, kinds)
         if resolved_tier is None:
             return []
         resolved_model = (
@@ -229,16 +271,31 @@ def select_and_mark(
         )
 
         selected: list[SelectedSegment] = []
-        for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
+        for path, segment in healed_segments:
             if len(selected) >= limit:
                 break
 
-            segment = Segment.model_validate_json(path.read_text())
             if (
                 segment.status != "pending"
                 or segment.tier != resolved_tier
                 or segment.kind_hint not in kinds
             ):
+                continue
+
+            if dry_run:
+                # Preview only: no mutation, no write-back, no prompt
+                # rendered -- `prompt_path_for`'s result may not exist on
+                # disk yet.
+                selected.append(
+                    SelectedSegment(
+                        seg_id=segment.seg_id,
+                        segment_path=path.relative_to(data_dir).as_posix(),
+                        kind_hint=segment.kind_hint,
+                        prompt_path=str(prompt_path_for(data_dir, segment.book_id, segment.seg_id)),
+                        tier=resolved_tier,
+                        model=resolved_model,
+                    )
+                )
                 continue
 
             segment.status = "in_progress"

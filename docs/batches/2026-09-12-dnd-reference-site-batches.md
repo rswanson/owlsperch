@@ -426,6 +426,61 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `pipeline/owlsperch/queue/runner.py`, `pipeline/owlsperch/cli.py`,
   tests, `CLAUDE.md`.
 
+## B10-mand3: `queue next --dry-run` and a `build-db` duplicate-id guard
+- **Status:** merged
+- **Follow-up to:** B10 (the B10 extraction-wave retrospective -- proposals
+  3 and 5: the two remaining `apply_now` chores).
+- **User-visible outcome:** the queue can be inspected without being
+  disturbed (`uv run owlsperch queue next <book_id> --limit N --dry-run`
+  previews exactly what a real call would pick, marking nothing
+  `in_progress` -- during B10 a wave agent twice used `queue next
+  --limit 100000` as a look-only inspector and flipped 729, then 547, real
+  pending segments to `in_progress`), and `owlsperch build-db` no longer
+  dies on the corpus's genuine `id` collisions: a duplicate record `id`
+  is skipped and counted like any other invalid record instead of
+  aborting the whole build with an unhandled `sqlite3.IntegrityError`.
+- **Acceptance criteria:**
+  1. `queue next` takes `--dry-run` (default off), threaded through
+     `run_queue_next` to `select_and_mark(..., dry_run=True)`.
+  2. A dry run has no write side effects: no segment is marked
+     `in_progress`, no segment file is rewritten by the stale-reset/
+     lazy-escalation heal pass, nothing is moved to `human/`, and no
+     prompt file is rendered. The per-book `.queue.lock` file (taken for a
+     consistent snapshot) is the only filesystem effect.
+  3. The preview is faithful: the heal pass still runs in memory, so a
+     stale `in_progress` segment a real call would reset back to `pending`
+     appears in the preview, a lazily escalated segment previews at its
+     escalated tier, and a segment the pass would exhaust into `human/`
+     is omitted -- the same selection, tier and model a real call would
+     resolve.
+  4. `--dry-run --json` prints byte-for-byte what the same real call would
+     print (same seg_ids, prompt_paths, tiers, models); the dry-run
+     notices go to stderr only, so `--json` consumers are unaffected.
+     `prompt_path` names where the prompt *would* be rendered
+     (`prompt_path_for`), which need not exist on disk.
+  5. `build-db` catches `sqlite3.IntegrityError` around `_insert_record`
+     for a record that passes `validate_record` on its own but collides on
+     `id` with one already loaded, counting it in `skipped_invalid` with a
+     `duplicate record id ...` message -- so it flows through the existing
+     stderr WARNING, `--strict` exit-1, and non-strict exit-0 behavior
+     like any other skip. The `records` INSERT (id TEXT PRIMARY KEY) runs
+     first, so nothing partial is left in the child tables.
+  6. Tests cover: the `--dry-run` flag parsing/default, a dry run's JSON
+     matching the real selection while writing nothing, a dry-run preview
+     including a stale `in_progress` segment, and the duplicate-id skip at
+     both the `build_db` and `run_build_db` (`--strict` and default)
+     levels.
+  7. `.claude/skills/extract/SKILL.md` points wave planning at
+     `queue summary` first and at `queue next --dry-run` when `queue
+     next`'s own view is genuinely needed.
+- **How to observe:** `uv run owlsperch queue next phb1 --limit 5 --dry-run
+  --json`, then `uv run owlsperch queue summary phb1` -- `in_progress` is
+  still 0.
+- **Touches:** `pipeline/owlsperch/queue/select.py`,
+  `pipeline/owlsperch/queue/runner.py`, `pipeline/owlsperch/cli.py`,
+  `pipeline/owlsperch/build_db/runner.py`, tests,
+  `.claude/skills/extract/SKILL.md`, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical

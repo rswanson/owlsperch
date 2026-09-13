@@ -72,8 +72,13 @@ them and launches subagents.
      prints per-tier pass/escalated counts plus `needs_context_retries` and
      `human`, plus `pending by kind_hint` / `pending by tier` (`--json`'s
      `pending_by_kind`/`pending_by_tier`), the pending-only breakdown. Use
-     this, not `queue next`, to size and plan the next wave, since `queue
-     next` selects and marks segments `in_progress`.
+     this, not `queue next`, to size and plan the next wave, since a plain
+     `queue next` selects and marks segments `in_progress` -- if you do
+     need `queue next`'s own view of what it would pick (e.g. its resolved
+     tier/model, or a segment the heal pass would un-stick), pass
+     `--dry-run` (B10-mand3): it previews the identical selection with no
+     write side effects at all, instead of flipping real segments to
+     `in_progress` just to look.
    - Subtract the wave size from the remaining `--limit` (if set); if the
      wave from step 2 was smaller than requested, or `--limit` is now 0,
      go to step 6. Otherwise go back to step 1.

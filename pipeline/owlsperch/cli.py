@@ -155,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     queue_next_parser.add_argument(
         "--json", action="store_true", help="Print a JSON array instead of human-readable lines."
     )
+    queue_next_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the same selection with no write side effects: nothing is marked "
+        "in_progress and no prompts are rendered.",
+    )
 
     queue_prompt_parser = queue_subparsers.add_parser(
         "prompt", help="Render (or re-render) one segment's subagent prompt and print its path."
@@ -348,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             lock_timeout=args.lock_timeout,
             json_output=args.json,
+            dry_run=args.dry_run,
         )
 
     if args.command == "queue" and args.queue_command == "prompt":
