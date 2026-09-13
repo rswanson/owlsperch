@@ -1118,6 +1118,62 @@ def test_claim_on_a_path_owned_by_another_segments_pending_records_is_a_collisio
     ]
 
 
+def test_a_differently_spelled_claim_on_an_owned_path_is_still_a_collision(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0026-01",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(data_dir, "book", "book-p0148-01")
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    original_body = json.dumps(
+        {
+            "extraction": {
+                "tier": "haiku",
+                "model": "claude-haiku-4-5",
+                "segment_id": "book-p0026-01",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            },
+            "pages": [26],
+            "book_id": "book",
+        },
+        indent=2,
+    )
+    record_path.write_text(original_body)
+
+    result = json.dumps(
+        {
+            "seg_id": "book-p0148-01",
+            "records": ["records/book/rules_section/../rules_section/class-features.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0148-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    assert record_path.read_text() == original_body
+
+    victim = _read_segment(data_dir, "book", "book-p0148-01")
+    assert victim["pending_records"] == []
+    assert victim["tier"] == "sonnet"
+    assert len(victim["attempts"]) == 1
+    assert victim["attempts"][0]["kind"] == "malformed"
+    assert victim["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/rules_section/../rules_section/"
+        "class-features.json is owned by segment book-p0026-01"
+    ]
+
+    owner = _read_segment(data_dir, "book", "book-p0026-01")
+    assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
 def test_segment_reclaiming_its_own_already_owned_path_is_not_a_collision(
     tmp_path: Path,
 ) -> None:
