@@ -260,6 +260,25 @@ uv run owlsperch queue reset <seg_id>...
   timeout is a future batch (B8).
 
 ```sh
+uv run owlsperch toc <book_id|all> [--force]
+```
+
+Parses a text-layer book's own table of contents into
+`$OWLSPERCH_DATA/toc/<book_id>.json`: dotted-leader entries ("Title ...
+122") on the first ~12 pages become a chapter/section tree with pdf page
+spans, and each entry gets a player-facing `category` (Character creation,
+Races, Classes, Skills, Feats, Equipment, Combat, Adventuring, Magic,
+Monsters, Running the game, Game basics, or Uncategorized -- the committed
+list in `schemas/categories.json`) resolved from a generic title-pattern
+table plus small per-book overrides in `pipeline/owlsperch/toc/categories.py`.
+A book whose contents page can't be found, or that yields too few entries,
+is reported as failed rather than writing an empty file. Idempotent;
+`--force` re-parses. `build-db` (below) uses this to derive every record's
+`category`/`chapter`/`section` -- run `toc` before (or after) `build-db`,
+in either order, but a book with records and no toc file just means every
+one of its records comes back `uncategorized` until you do.
+
+```sh
 uv run owlsperch build-db [--strict]
 ```
 
@@ -284,13 +303,16 @@ situation exit 1 instead.
 
 Tables (spec 4.8): `books` (one row per manifest entry, regardless of
 whether it has records yet); `records` (id, type, name, slug, book_id,
-canonical, macro_eligible, the full record as `json`); `record_fields`
-(the record's `fields` flattened to one row per scalar value -- a list of
-scalars is one row per element, and a list of objects like spell `levels`
-is one row per sub-field, e.g. `levels.class`/`levels.level`, plus one
-combined `levels` row like `"Cleric 3"` so class+level pairs stay
-queryable together); `record_pages` (one row per cited page); `names_fts`
-(FTS5 over name + aliases, for `/search`).
+canonical, macro_eligible, the full record as `json`, plus the derived
+`toc_category`/`toc_chapter`/`toc_section`/`toc_path` columns -- built-in
+pseudo-fields like `book_id`, resolved from `toc/<book_id>.json` per record,
+never `record_fields` rows); `record_fields` (the record's `fields`
+flattened to one row per scalar value -- a list of scalars is one row per
+element, and a list of objects like spell `levels` is one row per
+sub-field, e.g. `levels.class`/`levels.level`, plus one combined `levels`
+row like `"Cleric 3"` so class+level pairs stay queryable together);
+`record_pages` (one row per cited page); `names_fts` (FTS5 over name +
+aliases, for `/search`).
 
 ```sh
 uv run owlsperch serve [--host 127.0.0.1] [--port 8000]
@@ -328,8 +350,19 @@ canonical only; grouped by type. `q` shorter than 2 characters is a 400.
 (other canonical records sharing type+slug across books, before batch
 B11's precedence resolution collapses them -- the one from the
 latest-published book wins the main response) and placeholder `links`,
-`referenced_by`, `tables` for later batches. Unknown type or slug is a 404
+`referenced_by`, `tables` for later batches, plus (batch B10b) `book_title`
+and a `toc` block (`category`, `category_label`, `chapter`, `section`,
+`path`) derived from `toc/<book_id>.json`. Unknown type or slug is a 404
 with a JSON `{"detail": ...}` body.
+
+`GET /records/{type}` and `GET /facets/{type}` (filtered/sorted/paginated
+browse lists and their facet counts, per the type schema's `x-ui` hints)
+additionally accept `category=`/`chapter=` alongside the built-in `source=`
+pseudo-field (batch B10b); `/facets/{type}` gains a `category` facet
+ordered by `schemas/categories.json`'s own order, not by count. There is
+deliberately no `chapter` facet -- the web UI's `/browse/rules_section`
+category -> chapter -> section tree (`?view=tree`, the default for
+`rules_section`, available for any type) is the chapter navigator instead.
 
 A missing (not yet built) database makes `/search` and
 `/records/{type}/{slug}` answer 503 with `{"detail": "database not built;
@@ -339,7 +372,11 @@ database and always answer normally (`/health`'s `db` field is `false`).
 ## Running the site
 
 `web/` is a Vite + React + TypeScript app (spec 4.10, batch B7): `/` is a
-search box, `/r/:type/:slug` is a spell's record page.
+search box, `/browse/:type` a filtered/sorted/paginated list with a facet
+sidebar (batch B9) -- or, for `/browse/rules_section` (batch B10b), a
+category -> chapter -> section tree instead, with a "Rules" link and
+category quick links in the header nav -- and `/r/:type/:slug` a record
+page with a `Book > Chapter > Section` breadcrumb.
 
 ```sh
 uv run owlsperch dev

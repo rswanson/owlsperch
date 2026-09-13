@@ -108,3 +108,34 @@ def test_search_finds_the_real_extracted_power_attack_feat(tmp_path: Path) -> No
 
     assert isinstance(record["fields"].get("benefit"), str)
     assert record["fields"]["benefit"].strip()
+
+
+@pytest.mark.corpus
+def test_attacks_of_opportunity_detail_resolves_to_combat_category(tmp_path: Path) -> None:
+    """Batch B10b criterion 5: once `uv run owlsperch toc phb1` has run,
+    `/records/rules_section/attacks-of-opportunity` (if the record has been
+    extracted) resolves to `toc.category == "combat"`. Skipped (not failed)
+    until both the toc file and the record exist."""
+    real_data_dir = default_data_dir()
+    toc_path = real_data_dir / "toc" / "phb1.json"
+    if not toc_path.is_file():
+        pytest.skip("toc/phb1.json not present -- run `uv run owlsperch toc phb1` first")
+
+    record_path = (
+        real_data_dir / "records" / "phb1" / "rules_section" / "attacks-of-opportunity.json"
+    )
+    if not record_path.is_file():
+        pytest.skip("records/phb1/rules_section/attacks-of-opportunity.json not extracted yet")
+
+    tmp_data_dir = tmp_path / "data"
+    shutil.copytree(real_data_dir / "records", tmp_data_dir / "records")
+    if (real_data_dir / "segments").is_dir():
+        shutil.copytree(real_data_dir / "segments", tmp_data_dir / "segments")
+    shutil.copytree(real_data_dir / "toc", tmp_data_dir / "toc")
+
+    build_db(data_dir=tmp_data_dir, manifest_path=default_manifest_path())
+
+    client = TestClient(create_app(data_dir=tmp_data_dir))
+    response = client.get("/records/rules_section/attacks-of-opportunity")
+    assert response.status_code == 200
+    assert response.json()["toc"]["category"] == "combat"

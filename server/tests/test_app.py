@@ -152,6 +152,46 @@ def test_record_detail_duplicate_slug_returns_latest_and_lists_variant(
 
 
 # ---------------------------------------------------------------------------
+# /records/{type}/{slug} `toc`/`book_title` (batch B10b, design decision D11)
+# ---------------------------------------------------------------------------
+
+
+def test_record_detail_includes_toc_and_book_title_when_book_has_a_toc(
+    built_data_dir: Path,
+) -> None:
+    # `book-a` has a synthetic toc (conftest.py's `_write_toc`): one chapter,
+    # "Chapter 1: Magic", category "magic", covering every page book-a's
+    # fixture records use.
+    response = _client(built_data_dir).get("/records/spell/fireball")
+    body = response.json()
+    assert body["book_title"] == "BA"
+    assert body["toc"] == {
+        "category": "magic",
+        "category_label": "Magic",
+        "chapter": "Chapter 1: Magic",
+        "section": None,
+        "path": ["Chapter 1: Magic"],
+    }
+
+
+def test_record_detail_toc_is_uncategorized_when_book_has_no_toc(built_data_dir: Path) -> None:
+    # `book-b` has no toc file at all -- the winning "acid-fog" record
+    # (book-b, published later) must resolve to uncategorized/null, never a
+    # 500 or a missing key.
+    response = _client(built_data_dir).get("/records/spell/acid-fog")
+    body = response.json()
+    assert body["id"] == "spell:book-b:acid-fog"
+    assert body["book_title"] == "BB"
+    assert body["toc"] == {
+        "category": "uncategorized",
+        "category_label": "Uncategorized",
+        "chapter": None,
+        "section": None,
+        "path": [],
+    }
+
+
+# ---------------------------------------------------------------------------
 # /records/{type}/{slug} `tables` resolution (B10 criterion 11)
 # ---------------------------------------------------------------------------
 

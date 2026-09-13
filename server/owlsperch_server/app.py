@@ -5,7 +5,12 @@ hint), `/records/{type}` and `/facets/{type}` (batch B9 -- filtered/sorted/
 paginated browse lists and their facet counts, per the type schema's
 `x-ui` hints; the SQL and param parsing live in `owlsperch_server.browse`,
 kept out of this module), reading the SQLite database `owlsperch build-db`
-produces (`owlsperch.build_db.runner`).
+produces (`owlsperch.build_db.runner`). `/records/{type}/{slug}` also
+carries a `toc` block (`category`, `category_label`, `chapter`, `section`,
+`path`) and `book_title`, derived by `build-db` from `toc/<book_id>.json`
+(batch B10b) -- `category` is always a real key (`"uncategorized"` at
+worst); `chapter`/`section`/`path` are `null`/`[]` when unresolved, but
+always present as keys (design decision D18).
 
 The DB is opened read-only (`mode=ro` URI) once per request and closed
 again -- this is a single-user localhost app (spec D1), so a connection pool
@@ -36,7 +41,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 
 from owlsperch.build_db.runner import default_db_path
-from owlsperch.schemas import load_registry
+from owlsperch.schemas import load_categories, load_registry
 from owlsperch.text.runner import default_data_dir
 from owlsperch_server.browse import (
     BrowseError,
@@ -334,7 +339,8 @@ def _resolve_tables(conn: sqlite3.Connection, table_ids: list[Any]) -> list[dict
 def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[str, Any] | None:
     rows = list(
         conn.execute(
-            "SELECT r.id, r.json, b.published FROM records r "
+            "SELECT r.id, r.json, r.toc_category, r.toc_chapter, r.toc_section, r.toc_path, "
+            "b.published, COALESCE(b.short_title, b.title) AS book_title FROM records r "
             "LEFT JOIN books b ON b.book_id = r.book_id "
             "WHERE r.type = ? AND r.slug = ? AND r.canonical = 1",
             (type_name, slug),
@@ -347,12 +353,22 @@ def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[
     # more than one canonical record can share type+slug across books --
     # pick the one from the latest-published book, list the rest as variants.
     rows.sort(key=lambda row: row["published"] or "", reverse=True)
+    row = rows[0]
 
-    winner: dict[str, Any] = json.loads(rows[0]["json"])
-    winner["variants"] = [row["id"] for row in rows[1:]]
+    winner: dict[str, Any] = json.loads(row["json"])
+    winner["variants"] = [r["id"] for r in rows[1:]]
     winner["links"] = []
     winner["referenced_by"] = []
     winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])
+    winner["book_title"] = row["book_title"]
+    category_labels = {c.key: c.label for c in load_categories()}
+    winner["toc"] = {
+        "category": row["toc_category"],
+        "category_label": category_labels.get(row["toc_category"], row["toc_category"]),
+        "chapter": row["toc_chapter"],
+        "section": row["toc_section"],
+        "path": json.loads(row["toc_path"]) if row["toc_path"] is not None else [],
+    }
     return winner
 
 

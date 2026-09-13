@@ -74,6 +74,52 @@ def _load_json(path: Path, *, what: str) -> dict[str, Any]:
     return raw
 
 
+@dataclass(frozen=True)
+class Category:
+    """One `schemas/categories.json` entry (batch B10b, design decision D8):
+    a player-facing rules-taxonomy bucket (`character-creation`, `combat`,
+    ...) that `owlsperch.toc.categories` resolves table-of-contents entries
+    into, and that `owlsperch_server.browse` reuses for the `category`
+    facet's order and labels."""
+
+    key: str
+    label: str
+    order: int
+    description: str
+    record_types: list[str]
+
+
+def load_categories(schemas_dir: Path | None = None) -> list[Category]:
+    """Load `categories.json` from `schemas_dir` (default:
+    `default_schemas_dir()`), sorted by `order` (categories.json's own
+    array order already matches `order`, but callers shouldn't rely on
+    that)."""
+    schemas_dir = schemas_dir if schemas_dir is not None else default_schemas_dir()
+    raw = _load_json(schemas_dir / "categories.json", what="categories file")
+    raw_categories = raw.get("categories", [])
+    if not isinstance(raw_categories, list):
+        raise SchemaError("categories.json 'categories' must be an array")
+
+    categories: list[Category] = []
+    for entry in raw_categories:
+        try:
+            categories.append(
+                Category(
+                    key=entry["key"],
+                    label=entry["label"],
+                    order=entry["order"],
+                    description=entry.get("description", ""),
+                    record_types=list(entry.get("record_types", [])),
+                )
+            )
+        except (KeyError, TypeError) as exc:
+            raise SchemaError(
+                f"categories.json: an entry is missing a required field: {exc}"
+            ) from exc
+
+    return sorted(categories, key=lambda c: c.order)
+
+
 def load_registry(schemas_dir: Path | None = None) -> Registry:
     """Load `registry.json` and `envelope.json` from `schemas_dir` (default:
     `default_schemas_dir()`)."""

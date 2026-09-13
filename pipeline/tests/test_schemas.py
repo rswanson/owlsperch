@@ -86,10 +86,16 @@ def test_every_type_schema_field_has_complete_x_ui() -> None:
             assert not missing, f"{type_name}.{field_name} missing x-ui keys: {missing}"
 
 
+#: Files under `schemas/` that aren't JSON Schema type/envelope files and so
+#: carry no top-level `version`: `registry.json` (the type index) and
+#: `categories.json` (batch B10b's plain rules-taxonomy data file, D8).
+_NON_SCHEMA_FILES = {"registry.json", "categories.json"}
+
+
 def test_every_schema_has_a_top_level_integer_version() -> None:
     schemas_dir = _repo_schemas_dir()
     for path in sorted(schemas_dir.glob("*.json")):
-        if path.name == "registry.json":
+        if path.name in _NON_SCHEMA_FILES:
             continue
         schema = json.loads(path.read_text())
         assert isinstance(schema.get("version"), int)

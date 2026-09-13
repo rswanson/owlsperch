@@ -1,9 +1,9 @@
 """The `owlsperch` command-line entry point.
 
-`manifest check`, `text`, `segment`, `validate`, `queue`, `schema show`,
-`build-db`, and `serve` are implemented; the other subcommands listed in the
-spec (check-completeness, coverage, schema review, sample) are future-batch
-stubs.
+`manifest check`, `text`, `segment`, `validate`, `queue`, `toc`,
+`schema show`, `build-db`, and `serve` are implemented; the other
+subcommands listed in the spec (check-completeness, coverage, schema
+review, sample) are future-batch stubs.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from owlsperch.schemas import SchemaError, load_registry, render_schema_show
 from owlsperch.segment.runner import run_segment
 from owlsperch.serve import DEFAULT_HOST, DEFAULT_PORT, run_serve
 from owlsperch.text.runner import run_text
+from owlsperch.toc.runner import run_toc
 from owlsperch.validate.runner import run_validate
 
 
@@ -253,6 +254,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Print the final summary as JSON instead."
     )
 
+    toc_parser = subparsers.add_parser(
+        "toc",
+        help="Parse a book's own table of contents into toc/<book_id>.json (batch B10b).",
+    )
+    toc_parser.add_argument("book_id", help="Manifest book_id, or 'all'.")
+    toc_parser.add_argument(
+        "--force", action="store_true", help="Re-parse and overwrite an existing toc file."
+    )
+
     schema_parser = subparsers.add_parser("schema", help="Inspect record type schemas.")
     schema_parser.set_defaults(schema_parser=schema_parser)
     schema_subparsers = schema_parser.add_subparsers(dest="schema_command")
@@ -386,6 +396,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "queue":
         args.queue_parser.print_help()
         return 0
+
+    if args.command == "toc":
+        try:
+            return run_toc(args.book_id, force=args.force)
+        except ManifestError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     if args.command == "schema" and args.schema_command == "show":
         try:

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
@@ -53,6 +53,14 @@ function makeRecord(overrides: Partial<api.RecordDetail> = {}): api.RecordDetail
     variants: [],
     links: [],
     referenced_by: [],
+    book_title: "PHB",
+    toc: {
+      category: "magic",
+      category_label: "Magic",
+      chapter: "Chapter 10: Magic",
+      section: "Spell Descriptions",
+      path: ["Chapter 10: Magic", "Spell Descriptions"],
+    },
     ...overrides,
   };
 }
@@ -60,6 +68,52 @@ function makeRecord(overrides: Partial<api.RecordDetail> = {}): api.RecordDetail
 describe("RecordPage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  // ---------------------------------------------------------------------
+  // Breadcrumb (batch B10b, design decision D15)
+  // ---------------------------------------------------------------------
+
+  it("renders a Book > Chapter > Section breadcrumb", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord());
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const breadcrumb = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    const bookLink = within(breadcrumb).getByRole("link", { name: "PHB" });
+    expect(bookLink).toHaveAttribute("href", "/browse/spell?source=phb1");
+    const chapterLink = within(breadcrumb).getByRole("link", { name: "Chapter 10: Magic" });
+    expect(chapterLink).toHaveAttribute(
+      "href",
+      "/browse/spell?category=magic&chapter=Chapter%2010%3A%20Magic",
+    );
+    expect(within(breadcrumb).getByText("Spell Descriptions")).toBeInTheDocument();
+  });
+
+  it("renders just the book crumb when the chapter is unresolved", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        toc: { category: "uncategorized", category_label: "Uncategorized", chapter: null, section: null, path: [] },
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const breadcrumb = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "PHB" })).toBeInTheDocument();
+    expect(within(breadcrumb).queryByText(/Chapter/)).not.toBeInTheDocument();
+  });
+
+  it("renders no breadcrumb at all when book_title is null", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord({ book_title: null }));
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
   });
 
   it("renders name, citation, text_md as Markdown, and field groups in schema x-ui order", async () => {

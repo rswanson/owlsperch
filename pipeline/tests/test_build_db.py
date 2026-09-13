@@ -720,3 +720,206 @@ def test_build_db_table_rows_produce_no_record_fields_rows(tmp_path: Path) -> No
     finally:
         conn.close()
     assert rows_field_rows == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10b (design decision D10): derived toc_category/toc_chapter/
+# toc_section/toc_path columns, and the missing-toc WARNING.
+# ---------------------------------------------------------------------------
+
+
+def _write_toc(data_dir: Path, book_id: str, entries: list[dict[str, Any]]) -> None:
+    toc_dir = data_dir / "toc"
+    toc_dir.mkdir(parents=True, exist_ok=True)
+    toc = {
+        "book_id": book_id,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "contents_pages": [1],
+        "entries": entries,
+    }
+    (toc_dir / f"{book_id}.json").write_text(json.dumps(toc, indent=2))
+
+
+_CHAPTER_ENTRY = {
+    "title": "Chapter 1: Magic",
+    "level": 1,
+    "printed_page": 1,
+    "pdf_page_start": 1,
+    "pdf_page_end": 20,
+    "path": ["Chapter 1: Magic"],
+    "category": "magic",
+}
+_SECTION_ENTRY = {
+    "title": "Fireball Rules",
+    "level": 2,
+    "printed_page": 5,
+    "pdf_page_start": 5,
+    "pdf_page_end": 5,
+    "path": ["Chapter 1: Magic", "Fireball Rules"],
+    "category": "magic",
+}
+
+
+def test_build_db_derives_toc_category_chapter_section_for_a_page_inside_a_section(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.toc_missing_books == []
+
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT toc_category, toc_chapter, toc_section, toc_path FROM records WHERE id = ?",
+            ("spell:book:fireball",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["toc_category"] == "magic"
+    assert row["toc_chapter"] == "Chapter 1: Magic"
+    assert row["toc_section"] == "Fireball Rules"
+    assert json.loads(row["toc_path"]) == ["Chapter 1: Magic", "Fireball Rules"]
+
+
+def test_build_db_derives_chapter_only_when_page_has_no_deeper_section(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    # Page 12 is inside the chapter's span (1-20) but outside the one
+    # section's span (5-5) -- the deepest containing entry is the chapter
+    # itself.
+    _write_segment(data_dir, "book", "book-p0010-01", [12])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[12]),
+    )
+    _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT toc_category, toc_chapter, toc_section FROM records WHERE id = ?",
+            ("spell:book:fireball",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["toc_category"] == "magic"
+    assert row["toc_chapter"] == "Chapter 1: Magic"
+    assert row["toc_section"] is None
+
+
+def test_build_db_no_toc_file_yields_uncategorized_and_records_missing_book(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    # No toc/book.json written at all.
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.toc_missing_books == ["book"]
+
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT toc_category, toc_chapter, toc_section, toc_path FROM records WHERE id = ?",
+            ("spell:book:fireball",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["toc_category"] == "uncategorized"
+    assert row["toc_chapter"] is None
+    assert row["toc_section"] is None
+    assert row["toc_path"] is None
+
+
+def test_run_build_db_warns_once_per_book_with_no_toc_file(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "alarm",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5], name="Alarm", slug="alarm"),
+    )
+
+    out, err = io.StringIO(), io.StringIO()
+    run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    warnings = [line for line in err.getvalue().splitlines() if "no toc/book.json" in line]
+    assert len(warnings) == 1
+    assert "uv run owlsperch toc book" in warnings[0]
+
+
+def test_build_db_does_not_write_record_fields_rows_for_toc_columns(tmp_path: Path) -> None:
+    """The derived toc columns must never leak into `record_fields` -- that
+    would collide with the extractor-written `rules_section.fields.chapter`
+    key (D10)."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    conn = _connect(result.db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM record_fields WHERE key IN ('category', 'chapter', 'section')"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == []

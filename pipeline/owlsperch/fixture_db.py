@@ -88,6 +88,25 @@ _SEGMENT_3: dict[str, Any] = {
     "created_at": "2026-01-01T00:00:00+00:00",
 }
 
+#: A fourth segment (batch B10b, design decision D16) for a second
+#: rules_section under the fixture toc's "Chapter 3: Equipment" -- so the
+#: `/browse/rules_section?view=tree` tree has two populated categories
+#: (combat: Grapple Ranks, equipment: Hauling Gear) for Playwright's flow C
+#: to expand and navigate.
+_SEGMENT_4: dict[str, Any] = {
+    "seg_id": "fixture-book-p0004-01",
+    "book_id": "fixture-book",
+    "pages": [4],
+    "printed_pages": [4],
+    "kind_hint": "rules_section",
+    "heading": "Hauling Gear",
+    "text": ("Hauling Gear\n\nA pack animal or cart can carry far more than a single adventurer."),
+    "status": "pending",
+    "tier": "haiku",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
 _SPELLS: list[dict[str, Any]] = [
     {
         "id": "spell:fixture-book:fireball",
@@ -317,6 +336,104 @@ _TABLE: dict[str, Any] = {
     },
 }
 
+#: (batch B10b, design decision D16) A second, invented rules_section under
+#: the fixture toc's "Chapter 3: Equipment" -- so the tree
+#: (`/browse/rules_section?view=tree`) has a second populated category
+#: (equipment) alongside "Grapple Ranks" (combat), for Playwright's flow C
+#: to expand Combat, open a section, and see the breadcrumb.
+_HAULING_GEAR: dict[str, Any] = {
+    "id": "rules_section:fixture-book:hauling-gear",
+    "type": "rules_section",
+    "name": "Hauling Gear",
+    "slug": "hauling-gear",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [4],
+    "citation": "FB p. 4",
+    "text_md": "A pack animal or cart can carry far more than a single adventurer.",
+    "fields": {"topic": "Hauling Gear"},
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-p0004-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (batch B10b) `toc/fixture-book.json` (design decision D16): three
+#: chapters -- Magic (pdf 1-2), Combat (pdf 3-3), Equipment (pdf 4-4) -- each
+#: with one level-2 section. "Grapple Ranks" (combat, p.3) and "Hauling
+#: Gear" (equipment, p.4) above are the section-level records that land
+#: under two different categories, so the web tree has more than one
+#: populated branch to expand.
+_TOC: dict[str, Any] = {
+    "book_id": "fixture-book",
+    "generated_at": "2026-01-01T00:00:00+00:00",
+    "contents_pages": [0],
+    "entries": [
+        {
+            "title": "Chapter 1: Magic",
+            "level": 1,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 2,
+            "path": ["Chapter 1: Magic"],
+            "category": "magic",
+        },
+        {
+            "title": "Spell Descriptions",
+            "level": 2,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 1,
+            "path": ["Chapter 1: Magic", "Spell Descriptions"],
+            "category": "magic",
+        },
+        {
+            "title": "Chapter 2: Combat",
+            "level": 1,
+            "printed_page": 3,
+            "pdf_page_start": 3,
+            "pdf_page_end": 3,
+            "path": ["Chapter 2: Combat"],
+            "category": "combat",
+        },
+        {
+            "title": "Grapple Ranks",
+            "level": 2,
+            "printed_page": 3,
+            "pdf_page_start": 3,
+            "pdf_page_end": 3,
+            "path": ["Chapter 2: Combat", "Grapple Ranks"],
+            "category": "combat",
+        },
+        {
+            "title": "Chapter 3: Equipment",
+            "level": 1,
+            "printed_page": 4,
+            "pdf_page_start": 4,
+            "pdf_page_end": 4,
+            "path": ["Chapter 3: Equipment"],
+            "category": "equipment",
+        },
+        {
+            "title": "Hauling Gear",
+            "level": 2,
+            "printed_page": 4,
+            "pdf_page_start": 4,
+            "pdf_page_end": 4,
+            "path": ["Chapter 3: Equipment", "Hauling Gear"],
+            "category": "equipment",
+        },
+    ],
+}
+
 
 def write_fixture_data(data_dir: Path) -> BuildResult:
     """Write the synthetic manifest/segment/record files under `data_dir`
@@ -330,7 +447,7 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
 
     seg_dir = data_dir / "segments" / "fixture-book"
     seg_dir.mkdir(parents=True, exist_ok=True)
-    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3):
+    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3, _SEGMENT_4):
         (seg_dir / f"{segment['seg_id']}.json").write_text(json.dumps(segment, indent=2))
 
     records_dir = data_dir / "records" / "fixture-book" / "spell"
@@ -338,10 +455,14 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
     for spell in _SPELLS:
         (records_dir / f"{spell['slug']}.json").write_text(json.dumps(spell, indent=2))
 
-    for record in (_FEAT, _RULES_SECTION, _TABLE):
+    for record in (_FEAT, _RULES_SECTION, _TABLE, _HAULING_GEAR):
         type_dir = data_dir / "records" / "fixture-book" / record["type"]
         type_dir.mkdir(parents=True, exist_ok=True)
         (type_dir / f"{record['slug']}.json").write_text(json.dumps(record, indent=2))
+
+    toc_dir = data_dir / "toc"
+    toc_dir.mkdir(parents=True, exist_ok=True)
+    (toc_dir / "fixture-book.json").write_text(json.dumps(_TOC, indent=2))
 
     return build_db(data_dir=data_dir, manifest_path=manifest_path)
 

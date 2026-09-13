@@ -200,6 +200,34 @@ def _table_record(
     }
 
 
+def _write_toc(data_dir: Path, book_id: str) -> None:
+    """A minimal `toc/<book_id>.json` (batch B10b, design decision D17):
+    one chapter spanning every page this fixture's records use, so every
+    `book_id` record resolves to `category="magic"`,
+    `chapter="Chapter 1: Magic"`, `section=None`. Only `book-a` gets one --
+    `book-b` is left without a toc file on purpose, to exercise the
+    no-toc/`uncategorized`/WARNING path through a real server test."""
+    toc_dir = data_dir / "toc"
+    toc_dir.mkdir(parents=True, exist_ok=True)
+    toc = {
+        "book_id": book_id,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "contents_pages": [1],
+        "entries": [
+            {
+                "title": "Chapter 1: Magic",
+                "level": 1,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 5,
+                "path": ["Chapter 1: Magic"],
+                "category": "magic",
+            }
+        ],
+    }
+    (toc_dir / f"{book_id}.json").write_text(json.dumps(toc, indent=2))
+
+
 @pytest.fixture
 def built_data_dir(tmp_path: Path) -> Path:
     """A temp `$OWLSPERCH_DATA`-shaped directory with `db/owlsperch.sqlite`
@@ -219,9 +247,13 @@ def built_data_dir(tmp_path: Path) -> Path:
       `/records/rules_section/sable-rites`'s tables resolution.
     - `rules_section:book-a:pending-table-section` (B10) -- names a table id
       with no matching `tables` row, for the "table pending" edge case.
+    - `toc/book-a.json` (B10b) -- every book-a record resolves to category
+      "magic"/chapter "Chapter 1: Magic"; `book-b` has no toc file, so its
+      records resolve to "uncategorized"/null (see `_write_toc`).
     """
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
+    _write_toc(data_dir, "book-a")
 
     _write_segment(data_dir, "book-a", "book-a-p0001-01", [1])
     _write_segment(data_dir, "book-b", "book-b-p0001-01", [1])

@@ -60,6 +60,8 @@ function _recordDetail(overrides: Partial<RecordDetail> = {}): RecordDetail {
     variants: [],
     links: [],
     referenced_by: [],
+    book_title: "Fixture Book",
+    toc: { category: "combat", category_label: "Combat", chapter: null, section: null, path: [] },
     ...overrides,
   };
 }

@@ -71,6 +71,18 @@ export interface RecordTable {
   book_id: string | null;
 }
 
+/** A record's derived rules-taxonomy placement (batch B10b, design decision
+ * D11/D18): `category` is always a real key (`"uncategorized"` at worst);
+ * `chapter`/`section`/`path` are `null`/`[]` when unresolved (no toc file
+ * for the book, or the record's page falls before the toc's first entry)
+ * but always present as keys. */
+export interface RecordToc {
+  category: string;
+  category_label: string;
+  chapter: string | null;
+  section: string | null;
+}
+
 export interface RecordDetail {
   id: string;
   type: string;
@@ -92,6 +104,8 @@ export interface RecordDetail {
   variants: string[];
   links: unknown[];
   referenced_by: unknown[];
+  book_title: string | null;
+  toc: RecordToc & { path: string[] };
 }
 
 /** Raised for any non-2xx response; `status` is the HTTP status code and
@@ -165,6 +179,12 @@ export interface BrowseItem {
   book_id: string;
   citation: string | null;
   facets: Record<string, string[]>;
+  /** Derived rules-taxonomy placement (batch B10b) -- see `RecordToc`. */
+  toc: RecordToc;
+  /** The record's first page, or `null` when it has none -- lets the tree
+   * (`RecordTree.tsx`) order chapter/section groups deterministically
+   * without a second request. */
+  page: number | null;
 }
 
 export interface BrowseResponse {

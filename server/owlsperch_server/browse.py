@@ -33,6 +33,21 @@ sub-property name, not schema declaration order). A partial subset (2 of 3+
 sub-properties, not currently reachable -- `levels` only has two) falls back
 to ANDing each given sub-property's own single-field match; that's an
 approximation for a case no current schema exercises.
+
+`category` and `chapter` (batch B10b, design decision D11) are two more
+built-in pseudo-fields, alongside `source`: `category` is backed by
+`records.toc_category` (exact key match) and `chapter` by
+`records.toc_chapter` (case-insensitive, like every other text filter here).
+Both are derived by `owlsperch.build_db.runner` from a book's
+`toc/<book_id>.json`, not from anything in `record_fields` -- see that
+module's docstring. `category`, unlike `source`, gets a dedicated facet
+ordered by `schemas/categories.json`'s own `order` (not by count, so the
+sidebar always lists Combat before Adventuring regardless of which has more
+records this build); there is deliberately NO `chapter` facet -- chapter
+stays filterable (the record detail's breadcrumb and the tree's own filter
+links use it) but the category -> chapter -> section tree itself is the
+chapter navigator, so a second, redundant facet would just clutter the
+sidebar.
 """
 
 from __future__ import annotations
@@ -42,13 +57,18 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from owlsperch.schemas import Registry
+from owlsperch.schemas import Registry, load_categories
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
 #: Query params that never name a filter field.
 _RESERVED_PARAMS = {"sort", "page", "page_size"}
+
+#: Built-in pseudo-fields backed directly by a `records` column, never by
+#: `record_fields` -- `source` (`book_id`), and (batch B10b) `category`/
+#: `chapter` (`toc_category`/`toc_chapter`). See module docstring.
+_PSEUDO_FIELDS = {"source", "category", "chapter"}
 
 
 class BrowseError(ValueError):
@@ -89,7 +109,7 @@ class TypeBrowseSchema:
     sortable: list[str]
 
     def allowed_params(self) -> set[str]:
-        names: set[str] = {"source", *_RESERVED_PARAMS}
+        names: set[str] = {*_PSEUDO_FIELDS, *_RESERVED_PARAMS}
         for f in self.filterable:
             if f.sub_fields:
                 names.update(sf.name for sf in f.sub_fields)
@@ -245,6 +265,18 @@ def build_filter_clauses(
         clauses.append(f"r.book_id IN ({placeholders})")
         params.extend(values)
 
+    if "category" in filters and exclude != "category":
+        values = filters["category"]
+        placeholders = ", ".join("?" for _ in values)
+        clauses.append(f"r.toc_category IN ({placeholders})")
+        params.extend(values)
+
+    if "chapter" in filters and exclude != "chapter":
+        values = filters["chapter"]
+        placeholders = ", ".join("?" for _ in values)
+        clauses.append(f"LOWER(r.toc_chapter) IN ({placeholders})")
+        params.extend(v.lower() for v in values)
+
     for f in schema.filterable:
         if f.sub_fields:
             continue
@@ -332,7 +364,8 @@ def build_list_sql(
     order_sql, order_params = _order_by_sql(parsed)
     offset = (parsed.page - 1) * parsed.page_size
     page_sql = (
-        "SELECT r.id, r.type, r.name, r.slug, r.book_id, r.json FROM records r "
+        "SELECT r.id, r.type, r.name, r.slug, r.book_id, r.json, "
+        "r.toc_category, r.toc_chapter, r.toc_section FROM records r "
         f"WHERE {where_sql} {order_sql} LIMIT ? OFFSET ?"
     )
     page_params = [*base_params, *order_params, parsed.page_size, offset]
@@ -360,6 +393,10 @@ def _item_facets(
     return out
 
 
+def _category_labels() -> dict[str, str]:
+    return {c.key: c.label for c in load_categories()}
+
+
 def list_records(
     conn: sqlite3.Connection, type_name: str, schema: TypeBrowseSchema, parsed: ParsedQuery
 ) -> dict[str, Any]:
@@ -369,10 +406,14 @@ def list_records(
 
     ids = [row["id"] for row in rows]
     facets_by_id = _item_facets(conn, ids, schema.filterable_field_names())
+    category_labels = _category_labels()
 
     items = []
     for row in rows:
         record = json.loads(row["json"])
+        pages = record.get("pages")
+        numeric_pages = [p for p in pages if isinstance(p, int)] if isinstance(pages, list) else []
+        category = row["toc_category"]
         items.append(
             {
                 "id": row["id"],
@@ -382,6 +423,13 @@ def list_records(
                 "book_id": row["book_id"],
                 "citation": record.get("citation"),
                 "facets": facets_by_id.get(row["id"], {}),
+                "toc": {
+                    "category": category,
+                    "category_label": category_labels.get(category, category),
+                    "chapter": row["toc_chapter"],
+                    "section": row["toc_section"],
+                },
+                "page": min(numeric_pages) if numeric_pages else None,
             }
         )
 
@@ -451,6 +499,29 @@ def _facet_values_source(
     return [{"value": row["value"], "count": row["cnt"], "label": row["label"]} for row in rows]
 
 
+def _facet_values_category(
+    conn: sqlite3.Connection, schema: TypeBrowseSchema, filters: dict[str, list[str]]
+) -> list[dict[str, Any]]:
+    """Distinct `toc_category` values + counts, ordered by
+    `schemas/categories.json`'s own `order` -- NOT by count, unlike every
+    other facet here -- so the sidebar's category list always reads
+    Character creation, Races, Classes, ..., Uncategorized regardless of
+    which category has the most records in this particular build (D11)."""
+    clauses, params = build_filter_clauses(schema, filters, exclude="category")
+    where_sql = " AND ".join(["r.type = ?", "r.canonical = 1", *clauses])
+    sql = (
+        "SELECT r.toc_category AS value, COUNT(*) AS cnt FROM records r "
+        f"WHERE {where_sql} GROUP BY r.toc_category"
+    )
+    rows = conn.execute(sql, [schema.type_name, *params])
+    counts = {row["value"]: row["cnt"] for row in rows}
+    return [
+        {"value": category.key, "count": counts[category.key], "label": category.label}
+        for category in load_categories()
+        if category.key in counts
+    ]
+
+
 def compute_facets(
     conn: sqlite3.Connection,
     type_name: str,
@@ -459,8 +530,8 @@ def compute_facets(
 ) -> dict[str, Any]:
     """Every filterable field's distinct values + counts (one facet per
     sub-property for an array-of-object field, never the combined row),
-    plus `source`. Each facet's counts honor every current filter EXCEPT its
-    own field (see module docstring)."""
+    plus `source` and (batch B10b) `category`. Each facet's counts honor
+    every current filter EXCEPT its own field (see module docstring)."""
     facets: list[dict[str, Any]] = []
 
     for f in schema.filterable:
@@ -482,6 +553,13 @@ def compute_facets(
                     }
                 )
 
+    facets.append(
+        {
+            "field": "category",
+            "label": "Category",
+            "values": _facet_values_category(conn, schema, filters),
+        }
+    )
     facets.append(
         {
             "field": "source",
