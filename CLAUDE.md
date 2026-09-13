@@ -363,9 +363,19 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   category}]}`) and prints a report (contents page(s) found, chapter/
   section counts, table-index entries dropped, entries fallen through to
   `uncategorized`); a book whose contents page can't be found, or that
-  yields too few entries, is reported as failed rather than writing an
-  empty file. Verified against the real PHB: 16 chapters, 77 sections,
-  zero fall-through to `uncategorized`.
+  yields fewer than 5 USABLE entries, is reported as failed rather than
+  writing an empty file -- the minimum-entry guard (B10b mandated
+  follow-up) is applied AFTER the table-index filter, not on the raw
+  dotted-leader match count, so a contents-like page that is entirely a
+  numbered-tables index fails this guard too instead of parsing to a
+  silent `entries: []`. `owlsperch toc <book_id>` (an explicit id) exits
+  non-zero for either a parse failure or a missing `text/<book_id>/`
+  directory; `owlsperch toc all` only fails the run for a parse failure,
+  still printing a skip line (exit 0) for a book with no text yet. Note:
+  `--force` never deletes a stale empty toc file left behind by a FAILED
+  re-parse -- the non-zero exit plus the parse error is the intended
+  signal, not automatic cleanup. Verified against the real PHB: 16
+  chapters, 77 sections, zero fall-through to `uncategorized`.
 - `pipeline/owlsperch/build_db/` -- the `build-db` subcommand (spec 4.8,
   batch B6): `runner.py` re-validates every `records/<book_id>/<type>/
   *.json` file with `owlsperch.validate.runner.validate_record` (a pure,
@@ -407,9 +417,11 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   these are built-in pseudo-fields like `book_id`, never `record_fields`
   rows (a `record_fields` row keyed `chapter` would collide with the
   extractor-written `rules_section.fields.chapter`). A book with records
-  but no `toc/<book_id>.json` yields `uncategorized`/`NULL` for all of them
-  plus exactly one `WARNING` line on stderr naming `uv run owlsperch toc
-  <book_id>`.
+  but no USABLE `toc/<book_id>.json` -- missing entirely, OR present but
+  parsed to zero entries (B10b mandated follow-up) -- yields
+  `uncategorized`/`NULL` for all of them plus exactly one `WARNING` line on
+  stderr naming `uv run owlsperch toc <book_id> --force` (plain `owlsperch
+  toc <book_id>` is a no-op once an, even empty, toc file already exists).
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be

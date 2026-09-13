@@ -103,9 +103,7 @@ def test_parse_book_toc_raises_when_only_table_index_entries_survive_filtering(
     the guard applies to the FILTERED (post-`_TABLE_INDEX_RE`) count, or
     the book silently gets an all-empty `entries: []` toc (the bug this
     test guards against)."""
-    entries = "\n".join(
-        f"Table 1–{i}: Some Index Row .......... {10 + i}" for i in range(1, 8)
-    )
+    entries = "\n".join(f"Table 1–{i}: Some Index Row .......... {10 + i}" for i in range(1, 8))
     _write_page(tmp_path, 1, entries)
     with pytest.raises(TocParseError):
         parse_book_toc(tmp_path, book_id="testbook")
