@@ -82,11 +82,11 @@ describe("RecordPage", () => {
 
     const breadcrumb = await screen.findByRole("navigation", { name: "Breadcrumb" });
     const bookLink = within(breadcrumb).getByRole("link", { name: "PHB" });
-    expect(bookLink).toHaveAttribute("href", "/browse/spell?source=phb1");
+    expect(bookLink).toHaveAttribute("href", "/browse/spell?source=phb1&view=tree");
     const chapterLink = within(breadcrumb).getByRole("link", { name: "Chapter 10: Magic" });
     expect(chapterLink).toHaveAttribute(
       "href",
-      "/browse/spell?category=magic&chapter=Chapter%2010%3A%20Magic",
+      "/browse/spell?category=magic&chapter=Chapter%2010%3A%20Magic&view=tree",
     );
     expect(within(breadcrumb).getByText("Spell Descriptions")).toBeInTheDocument();
   });
