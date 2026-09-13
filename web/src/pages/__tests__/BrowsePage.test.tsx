@@ -42,6 +42,8 @@ const BROWSE_RESPONSE: api.BrowseResponse = {
       book_id: "book-a",
       citation: "BA p. 1",
       facets: { school: ["Evocation"] },
+      toc: { category: "magic", category_label: "Magic", chapter: null, section: null },
+      page: 1,
     },
     {
       id: "spell:book-a:alarm",
@@ -51,6 +53,8 @@ const BROWSE_RESPONSE: api.BrowseResponse = {
       book_id: "book-a",
       citation: "BA p. 2",
       facets: { school: ["Abjuration"] },
+      toc: { category: "magic", category_label: "Magic", chapter: null, section: null },
+      page: 2,
     },
   ],
 };

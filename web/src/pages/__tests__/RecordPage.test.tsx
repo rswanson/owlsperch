@@ -53,6 +53,14 @@ function makeRecord(overrides: Partial<api.RecordDetail> = {}): api.RecordDetail
     variants: [],
     links: [],
     referenced_by: [],
+    book_title: "PHB",
+    toc: {
+      category: "magic",
+      category_label: "Magic",
+      chapter: "Chapter 10: Magic",
+      section: "Spell Descriptions",
+      path: ["Chapter 10: Magic", "Spell Descriptions"],
+    },
     ...overrides,
   };
 }
