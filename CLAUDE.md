@@ -20,18 +20,28 @@ for what opus can't resolve, `queue complete` refusing to let one segment's
 claimed record path silently overwrite a record another segment already
 owns (a B10 mandated follow-up), and `queue audit <book_id> [--fix]` to
 find and (re-)recover segments this already happened to before that guard
-existed (see "Architecture" below), `build-db` (builds
-`db/owlsperch.sqlite` from validated records), `serve` (starts the
-`owlsperch_server` FastAPI app -- `/search`, `/records/{type}/{slug}`,
-`/records/{type}` and `/facets/{type}` (batch B9 -- filtered/sorted/
-paginated browse lists and their facet counts), `/schemas`, `/health`,
-`/stats`), `dev` (runs `serve` and `web/`'s Vite dev server together),
-`fixture-db <dir>` (builds a small synthetic database for local UI/e2e
-testing), and `web/` (search box, record page, and -- batch B9 --
-`/browse/:type` with a facet sidebar). Batch B10 adds the feat/table/
-rules_section record types end to end: schemas, per-kind extraction
-rules, a `tables` SQLite table, record-detail table resolution, and
-web rendering of a record's owned tables (see "Architecture" below).
+existed (see "Architecture" below), `toc <book_id|all>` (batch B10b --
+parses a book's own table of contents into `toc/<book_id>.json`, a
+chapter/section tree with a player-facing `category` per entry, per
+`schemas/categories.json`), `build-db` (builds `db/owlsperch.sqlite` from
+validated records, deriving each record's `category`/`chapter`/`section`
+from its book's toc), `serve` (starts the `owlsperch_server` FastAPI app --
+`/search`, `/records/{type}/{slug}`, `/records/{type}` and `/facets/{type}`
+(batch B9 -- filtered/sorted/paginated browse lists and their facet
+counts; batch B10b adds `category`/`chapter` filters and a `category`
+facet), `/schemas`, `/health`, `/stats`), `dev` (runs `serve` and `web/`'s
+Vite dev server together), `fixture-db <dir>` (builds a small synthetic
+database for local UI/e2e testing), and `web/` (search box, record page
+with a `Book > Chapter > Section` breadcrumb, and -- batch B9 --
+`/browse/:type` with a facet sidebar, or -- batch B10b, `?view=tree` and
+the default for `/browse/rules_section` -- a category -> chapter ->
+section tree, plus a "Rules" link and category quick links in the header
+nav). Batch B10 adds the feat/table/rules_section record types end to
+end: schemas, per-kind extraction rules, a `tables` SQLite table,
+record-detail table resolution, and web rendering of a record's owned
+tables (see "Architecture" below). Batch B10b reorganizes
+`/browse/rules_section` around each book's own table of contents instead
+of the flat, extractor-guessed `chapter` field (which stops being a facet).
 CI. Everything else is a future-batch stub (`check-completeness`,
 `coverage`, `schema review`, `sample`, and `web/`'s own `/tools/*`
 routes from spec 4.10).
@@ -55,6 +65,7 @@ uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
 uv run owlsperch queue audit <book_id> [--fix] [--json]
 uv run owlsperch queue run <book_id> --dry-run --fixtures DIR [--tier T] [--limit N] [--kind K] [--json]
+uv run owlsperch toc <book_id|all> [--force]  # parses toc/<book_id>.json (batch B10b)
 uv run owlsperch build-db [--strict] # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
 uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
 uv run owlsperch dev                  # serve + `npm run dev` in web/, together (Ctrl-C stops both)
@@ -164,6 +175,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   and checked against its own schema by a self-test in `test_schemas.py` --
   the rules_section and table examples cross-reference each other via
   `tables`/`fields.parent_record`, modeling the convention below.
+  `schemas/categories.json` (batch B10b) is a separate, plain (non-JSON-
+  Schema) data file: the committed, book-agnostic player-facing rules
+  taxonomy (`key`, `label`, `order`, `description`, `record_types`) --
+  character-creation, races, classes, skills, feats, equipment, combat,
+  adventuring, magic, monsters, running-the-game, basics, uncategorized (in
+  that `order`) -- loaded by `owlsperch.schemas.load_categories` and reused
+  by `owlsperch.toc.categories`' resolution and by
+  `owlsperch_server.browse`'s `category` facet (for its order and labels).
+  `rules_section.json`'s `chapter` field is `x-ui.filterable: false` as of
+  B10b -- the derived `toc_chapter` column (see `build_db/` below) is the
+  single source of truth for chapter filtering now.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -309,6 +331,41 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the logic that can be unit tested lives in `queue/` instead of the skill
   doc.
 
+- `pipeline/owlsperch/toc/` -- the `toc` subcommand (batch B10b): `parser.py`
+  scans pdf pages 1-12 of `text/<book_id>/` for a page with >= 3
+  `"Title ..... N"` dotted-leader matches (a contents page), parses every
+  such page's entries, drops the numbered-table index (`Table N–M`,
+  EN DASH, matched anywhere in the title -- column repair glues the list's
+  own header onto its first entry), and inverts `text/<book_id>/pages.json`
+  (which maps **pdf page -> printed page**, easy to get backwards) into
+  printed -> pdf using the book's MODAL `pdf - printed` offset, so a
+  misdetected page number or one missing mapping doesn't shift the whole
+  book. Nesting comes from PRINTED PAGE ORDER, never the reading order
+  column repair emits entries in (a book's later chapters routinely appear
+  before earlier ones in the raw text): a level-1 entry is a `"Chapter N:"`
+  line or a top-level name (Introduction, Appendix, Glossary, Index,
+  Character Sheet, ...); every level-2 entry is assigned to the LAST
+  level-1 entry whose printed page is <= its own. `categories.py` then
+  resolves each entry's player-facing `category`: a chapter tries a
+  per-book override, then a generic title-pattern table (most specific
+  first, e.g. `Classes|Class Descriptions|Prestige Class` -> `classes`),
+  then falls back to `uncategorized`; a SECTION tries its own override,
+  then **its already-resolved chapter's category**, THEN the generic
+  pattern table -- deliberately in that order, so e.g. "Movement, Position,
+  And Distance" (a Combat-chapter section that would otherwise generically
+  match Adventuring's "Movement" pattern) stays under Combat, matching
+  where a player at the table would actually look for it. `lookup.py`
+  (`load_toc`, `entry_for_page`) is the read side `build_db` uses --
+  `entry_for_page` picks the DEEPEST entry (greatest level, then greatest
+  `pdf_page_start`) containing a page. `runner.py` writes
+  `toc/<book_id>.json` (`{book_id, generated_at, contents_pages, entries:
+  [{title, level, printed_page, pdf_page_start, pdf_page_end, path,
+  category}]}`) and prints a report (contents page(s) found, chapter/
+  section counts, table-index entries dropped, entries fallen through to
+  `uncategorized`); a book whose contents page can't be found, or that
+  yields too few entries, is reported as failed rather than writing an
+  empty file. Verified against the real PHB: 16 chapters, 77 sections,
+  zero fall-through to `uncategorized`.
 - `pipeline/owlsperch/build_db/` -- the `build-db` subcommand (spec 4.8,
   batch B6): `runner.py` re-validates every `records/<book_id>/<type>/
   *.json` file with `owlsperch.validate.runner.validate_record` (a pure,
@@ -342,7 +399,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `validate_record` on its own but collides on `id` with one already
   loaded (B10-mand3 -- the corpus has genuine name/slug collisions across
   segments) is caught as `sqlite3.IntegrityError` around `_insert_record`
-  and counted the same way, rather than aborting the whole build.
+  and counted the same way, rather than aborting the whole build. Batch
+  B10b adds four more `records` columns -- `toc_category` (`NOT NULL
+  DEFAULT 'uncategorized'`), `toc_chapter`, `toc_section`, `toc_path` (a
+  JSON array) -- derived, per record, from `owlsperch.toc.lookup.load_toc`
+  (cached per book_id) and `entry_for_page` against `min(record["pages"])`;
+  these are built-in pseudo-fields like `book_id`, never `record_fields`
+  rows (a `record_fields` row keyed `chapter` would collide with the
+  extractor-written `rules_section.fields.chapter`). A book with records
+  but no `toc/<book_id>.json` yields `uncategorized`/`NULL` for all of them
+  plus exactly one `WARNING` line on stderr naming `uv run owlsperch toc
+  <book_id>`.
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be
@@ -382,13 +449,25 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   of a parent's sub-params at once, they must describe the SAME item, so
   that's matched against `build_db.runner.flatten_fields`'s *combined*
   `record_fields` row (`levels` -> `"Cleric 3"`) rather than ANDing
-  independent single-field matches. `/records/{type}` returns
+  independent single-field matches. `category` and `chapter` (batch B10b)
+  are two more built-in pseudo-fields alongside `source`, backed by
+  `records.toc_category`/`toc_chapter` (chapter matched case-insensitively)
+  -- never `record_fields`. `/records/{type}` returns
   `{type, total, page, page_size, items}`, each item carrying a `facets`
   map read straight off `record_fields` (school, levels, etc., without
-  loading the full record JSON); `/facets/{type}` returns distinct values
-  + counts per filterable field (one facet per sub-property for an
-  array-of-object field) plus `source`, each facet's counts honoring every
-  current filter except its own field. The database is opened read-only
+  loading the full record JSON), plus (B10b) a `toc` block (`category`,
+  `category_label`, `chapter`, `section`) and the record's first `page`
+  (int or null, so the web tree can order chapter/section groups without a
+  second request); `/facets/{type}` returns distinct values + counts per
+  filterable field (one facet per sub-property for an array-of-object
+  field) plus `source` and (B10b) `category` -- the latter ordered by
+  `schemas/categories.json`'s own `order`, NOT by count, so the sidebar's
+  category list always reads in the same player-facing order; there is
+  deliberately no `chapter` facet, since the web tree itself is the chapter
+  navigator. `/records/{type}/{slug}` gains (B10b) `book_title`
+  (`COALESCE(short_title, title)`) and a `toc` block with a `path` array
+  too. Every facet's counts honor every current filter except its own
+  field. The database is opened read-only
   (`mode=ro` URI) once per request, not pooled (spec D1: single-user,
   localhost only). A missing database makes `/search`,
   `/records/{type}/{slug}`, `/records/{type}`, `/facets/{type}`, and
@@ -416,7 +495,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   spec's facet-filter flow; plus, since batch B10, an invented feat
   ("Power Strike"), a rules_section ("Grapple Ranks") that owns a table via
   its `tables` list, and that table record, for the smoke Playwright spec's
-  rendered-table flow) into `<dir>` and builds
+  rendered-table flow; plus, since batch B10b, a second rules_section
+  ("Hauling Gear") and a matching `toc/fixture-book.json` -- three chapters
+  (Magic pdf 1-2, Combat pdf 3-3, Equipment pdf 4-4), each with one
+  level-2 section -- so "Grapple Ranks" resolves to category combat and
+  "Hauling Gear" to equipment, giving the web tree two populated branches
+  for the tree Playwright spec's flow C) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.
@@ -440,15 +524,41 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `RecordTables.buildOwnTable` prepends a table built from the record's
   own `fields.caption`/`columns`/`rows`, and `RecordPage` hides those two
   field names from `FieldGroups` so the grid isn't also dumped as text.
-  `src/pages/BrowsePage.tsx` (batch B9) keeps every filter/sort/page value in the URL query string via
+  Batch B10b adds a `Book > Chapter > Section` breadcrumb above the heading
+  (`RecordBreadcrumb`, built from the record's `book_title`/`toc`): Book
+  links to `/browse/<type>?source=<book_id>`, Chapter to `/browse/<type>
+  ?category=<category>&chapter=<chapter>`, Section is plain text; a record
+  with no resolved chapter shows just the book crumb, and one with no
+  `book_title` shows no breadcrumb at all.
+  `src/pages/BrowsePage.tsx` (batch B9) keeps every filter/sort/page/view value in the URL query string via
   `useSearchParams` (reload/back restore the view), fetches `/records/{type}`
   and `/facets/{type}` on every change, and keeps the previous facets/results
   mounted (a `loading` flag, not a full state-machine swap) while a refetch
   is in flight -- so a just-checked checkbox never briefly disappears from
   the DOM; `src/components/FacetSidebar.tsx` renders one checkbox group per
   facet, labeling `source` values with the book title instead of its raw
-  `book_id`. `src/components/Layout.tsx`'s header nav lists every
-  registered type from `/schemas`, linking to `/browse/<type>`.
+  `book_id`. Batch B10b adds `?view=tree`: the effective view is
+  `searchParams.get("view") ?? (type === "rules_section" ? "tree" : "list")`,
+  with a List/Tree toggle that writes `?view=`; `"view"` is in
+  `RESERVED_PARAMS` so it's never forwarded to `/records/{type}`/
+  `/facets/{type}` (an unrecognized param is a 400). Tree mode fetches
+  every matching record across sequential `page_size=200` pages (capped at
+  2000; a "showing the first N of M" line beyond the cap) instead of the
+  user-facing page size, then hands them to
+  `src/components/RecordTree.tsx`: `buildTree` (pure, unit tested like
+  `buildFieldGroups`) groups items into category -> chapter -> section,
+  categories in the `category` facet's own order, chapters/sections by
+  minimum page then title, an "(Unsectioned)" leaf for a missing chapter/
+  section; `RecordTree` renders nested `<details>/<summary>` groups with
+  per-group counts, auto-expanding when exactly one category is selected in
+  the URL. `src/components/Layout.tsx`'s header nav lists every registered
+  type EXCEPT `rules_section` from `/schemas`, linking to `/browse/<type>`;
+  batch B10b adds a dedicated "Rules" link (`/browse/rules_section`) plus
+  quick links -- fetched once from `/facets/rules_section`'s `category`
+  facet -- for whichever of classes/equipment/skills/races have count > 0,
+  as `/browse/rules_section?category=<key>`; either fetch failing just
+  leaves that part of the nav empty, same defensive pattern as the existing
+  `/schemas` fetch.
   `vite.config.ts`'s dev server proxies `/api/*` to the FastAPI server on
   127.0.0.1:8000 (path rewrite strips `/api`) and binds `127.0.0.1`
   explicitly (Node's default `"localhost"` host can resolve to the IPv6
@@ -457,12 +567,16 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   has Playwright specs -- `smoke.spec.ts` (flow A: type a prefix, Enter,
   land on the record page; plus, batch B10, opening the fixture
   rules_section record and asserting its owned table renders as a real
-  `<table>` below the text), `mobile.spec.ts` (flow A at 400px width), and
+  `<table>` below the text), `mobile.spec.ts` (flow A at 400px width),
   (batch B9) `browse.spec.ts` (flow B: nav to Spells, check Cleric/3/
   Conjuration in the facet sidebar, sort by name, open the one matching
-  spell) -- run by `playwright.config.ts`'s `webServer` against two freshly
-  started servers: `e2e/serve-fixture.py` (the fixture DB + FastAPI, see
-  `fixture_db.py` above) and `npm run dev` (Vite, which proxies to it).
+  spell), and (batch B10b) `tree.spec.ts` (flow C: follow the header nav's
+  "Rules" link, expand Combat and its chapter, open "Grapple Ranks", see
+  the breadcrumb; plus a header quick-link into a pre-filtered, auto-
+  expanded category) -- run by `playwright.config.ts`'s `webServer` against
+  two freshly started servers: `e2e/serve-fixture.py` (the fixture DB +
+  FastAPI, see `fixture_db.py` above) and `npm run dev` (Vite, which
+  proxies to it).
 
 See `docs/specs/2026-09-12-dnd-reference-site-spec.md` (especially "Scope
 boundaries" and sections 4.1-4.4) for the full design, and
