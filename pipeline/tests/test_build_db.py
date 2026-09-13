@@ -254,6 +254,38 @@ def test_build_db_flattens_array_of_object_levels_field(tmp_path: Path) -> None:
     assert {"key": "levels", "text_value": "Wizard 3", "num_value": None} in combined
 
 
+def test_build_db_combined_row_uses_sorted_subkey_order_not_json_key_order(
+    tmp_path: Path,
+) -> None:
+    """Regression for the B9 review finding: an item written with `level`
+    before `class` in its own JSON must still produce the combined row
+    `"Cleric 3"` (sorted subkey order: class < level), not `"3 Cleric"`."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(levels=[{"level": 3, "class": "Cleric"}]),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    conn = _connect(result.db_path)
+    try:
+        rows = conn.execute(
+            "SELECT text_value FROM record_fields WHERE record_id = ? AND key = 'levels'",
+            ("spell:book:fireball",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert [r["text_value"] for r in rows] == ["Cleric 3"]
+
+
 def test_build_db_skips_invalid_records(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)

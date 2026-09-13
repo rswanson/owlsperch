@@ -130,6 +130,83 @@ describe("BrowsePage", () => {
     });
   });
 
+  it("disables Previous on page 1 and Next on the last page", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS);
+    vi.spyOn(api, "browseRecords").mockResolvedValue({
+      ...BROWSE_RESPONSE,
+      total: 120,
+      page: 1,
+      page_size: 50,
+    });
+    vi.spyOn(api, "getFacets").mockResolvedValue(FACETS_RESPONSE);
+
+    renderBrowsePage();
+
+    await screen.findByText("Fireball");
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled();
+  });
+
+  it("disables Next on the last page", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS);
+    vi.spyOn(api, "browseRecords").mockResolvedValue({
+      ...BROWSE_RESPONSE,
+      total: 120,
+      page: 3,
+      page_size: 50,
+    });
+    vi.spyOn(api, "getFacets").mockResolvedValue(FACETS_RESPONSE);
+
+    renderBrowsePage("/browse/spell?page=3");
+
+    await screen.findByText("Fireball");
+    expect(screen.getByRole("button", { name: "Previous" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("clicking Next updates the page query param and refetches with page=2", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS);
+    const browseSpy = vi.spyOn(api, "browseRecords").mockResolvedValue({
+      ...BROWSE_RESPONSE,
+      total: 120,
+      page: 1,
+      page_size: 50,
+    });
+    vi.spyOn(api, "getFacets").mockResolvedValue(FACETS_RESPONSE);
+
+    renderBrowsePage();
+
+    await screen.findByText("Fireball");
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => {
+      const lastCall = browseSpy.mock.calls[browseSpy.mock.calls.length - 1];
+      expect(lastCall[1].get("page")).toBe("2");
+    });
+  });
+
+  it("resets the page query param when a filter changes", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS);
+    const browseSpy = vi.spyOn(api, "browseRecords").mockResolvedValue({
+      ...BROWSE_RESPONSE,
+      total: 120,
+      page: 3,
+      page_size: 50,
+    });
+    vi.spyOn(api, "getFacets").mockResolvedValue(FACETS_RESPONSE);
+
+    renderBrowsePage("/browse/spell?page=3");
+
+    await screen.findByText("Fireball");
+    await userEvent.click(await screen.findByLabelText(/Evocation/));
+
+    await waitFor(() => {
+      const lastCall = browseSpy.mock.calls[browseSpy.mock.calls.length - 1];
+      expect(lastCall[1].has("page")).toBe(false);
+      expect(lastCall[1].getAll("school")).toEqual(["Evocation"]);
+    });
+  });
+
   it("shows an error message when the request fails", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS);
     vi.spyOn(api, "browseRecords").mockRejectedValue(new api.ApiError(500, "boom"));

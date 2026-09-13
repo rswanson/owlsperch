@@ -53,4 +53,25 @@ describe("FacetSidebar", () => {
     const { container } = render(<FacetSidebar facets={[]} selected={{}} onToggle={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("builds a valid, matching id/htmlFor pair for a value with spaces and punctuation", () => {
+    const facetsWithSpaces: Facet[] = [
+      {
+        field: "range",
+        label: "Range",
+        values: [{ value: "Close (25 ft.)", count: 1 }],
+      },
+    ];
+    const { container } = render(
+      <FacetSidebar facets={facetsWithSpaces} selected={{}} onToggle={vi.fn()} />,
+    );
+
+    const checkbox = screen.getByLabelText(/Close \(25 ft\.\)/);
+    const label = container.querySelector("label");
+    expect(label).not.toBeNull();
+    expect(label?.getAttribute("for")).toBe(checkbox.id);
+    // A valid HTML id: no whitespace or characters that break CSS
+    // selectors/URL fragments.
+    expect(checkbox.id).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
+  });
 });

@@ -25,9 +25,22 @@ under `records/<book_id>/<type>/*.json`:
    element (same key); a list of objects (e.g. spell `levels`) is one row
    per sub-field, keyed `"<key>.<subkey>"` (e.g. `levels.class`,
    `levels.level`), plus one *combined* row keyed `"<key>"` joining that
-   object's values with spaces (e.g. `"Cleric 3"`) so class+level pairs can
-   be filtered together later; a plain nested object (e.g. spell `costs`) is
-   flattened one level, `"<key>.<subkey>"`.
+   object's non-null values with spaces (e.g. `"Cleric 3"`) so class+level
+   pairs can be filtered together later; a plain nested object (e.g. spell
+   `costs`) is flattened one level, `"<key>.<subkey>"`.
+
+   The combined row's values are joined in SORTED subkey order, not the
+   record JSON's own key order -- JSON Schema doesn't guarantee `items`'
+   `properties` are declared (or an extracted record's keys written) in any
+   particular order, so both sides of this contract need an order that
+   needs no schema: `flatten_fields` here, and
+   `owlsperch_server.browse.load_type_browse_schema`/`build_filter_clauses`
+   on the read side, independently sort an item's sub-properties by name.
+   For spell `levels` (`class` < `level` alphabetically) this happens to
+   match the schema's declared order already, so no rebuild of existing
+   records is required by this change -- it only matters if a future
+   array-of-object field's sub-properties sort differently than declared,
+   or a record's own JSON key order varies between items.
 5. `record_pages` -- one row per page the record cites.
 6. `names_fts` -- an FTS5 table over `name`/`aliases`, external-content
    linked to `records` by rowid (`content='records'`, `content_rowid`), with
@@ -160,7 +173,9 @@ def _scalar_row(key: str, value: Any) -> _FieldRow | None:
 
 def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
     """Flatten one `fields` entry into `record_fields` rows, per this
-    module's docstring point 4."""
+    module's docstring point 4. The combined row for an array-of-object
+    field is built from each item's non-null sub-values in SORTED subkey
+    order -- see the docstring's note on that contract."""
     if value is None:
         return []
 
@@ -174,11 +189,14 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
         if all(isinstance(item, dict) for item in value):
             # Array-of-object (e.g. spell `levels`): one row per sub-field,
             # plus one combined row so pairs (e.g. class+level) stay
-            # queryable together.
+            # queryable together. Sorted subkey order (not the item's own
+            # JSON key order) keeps the combined value canonical -- see
+            # module docstring.
             rows: list[_FieldRow] = []
             for item in value:
                 parts: list[str] = []
-                for subkey, subvalue in item.items():
+                for subkey in sorted(item):
+                    subvalue = item[subkey]
                     if subvalue is None:
                         continue
                     rows.extend(flatten_fields(f"{key}.{subkey}", subvalue))

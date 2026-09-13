@@ -173,11 +173,18 @@ export function BrowsePage() {
             </label>
           </div>
 
-          {loading && <p className="search-status">Loading…</p>}
-          {errorMessage && <p className="search-status search-error">{errorMessage}</p>}
-          {!loading && !errorMessage && items.length === 0 && (
-            <p className="search-status">No results.</p>
-          )}
+          {/* aria-live="polite" so assistive tech is told when the list
+           * finishes loading or the result count changes, without having to
+           * poll focus/DOM changes itself. */}
+          <div className="browse-status" aria-live="polite" role="status">
+            {loading && <p className="search-status">Loading…</p>}
+            {errorMessage && <p className="search-status search-error">{errorMessage}</p>}
+            {!loading && !errorMessage && (
+              <p className="search-status">
+                {items.length === 0 ? "No results." : `${total} ${typeLabel.toLowerCase()}`}
+              </p>
+            )}
+          </div>
 
           {items.length > 0 && (
             <ul className="browse-results">

@@ -13,6 +13,20 @@ interface FacetSidebarProps {
  * distinct value, count, and (for `source`) the book's title instead of its
  * raw `book_id`. Checked state and toggling are fully controlled by the
  * parent (`BrowsePage`), which keeps it all in the URL query string. */
+/** A value used as an HTML `id` must not contain whitespace or other
+ * characters a CSS selector/URL fragment would choke on -- a raw facet
+ * value (e.g. "Close (25 ft.)") can contain both. Slugify to
+ * lowercase-hyphenated, and the caller appends an index so two values that
+ * happen to slugify the same (e.g. "A/B" and "A B") still get distinct
+ * ids. */
+function slugifyFacetValue(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "value";
+}
+
 export function FacetSidebar({ facets, selected, onToggle }: FacetSidebarProps) {
   if (facets.length === 0) return null;
 
@@ -22,10 +36,10 @@ export function FacetSidebar({ facets, selected, onToggle }: FacetSidebarProps) 
         <fieldset className="facet-group" key={facet.field}>
           <legend>{facet.label}</legend>
           {facet.values.length === 0 && <p className="facet-empty">No values.</p>}
-          {facet.values.map((facetValue) => {
+          {facet.values.map((facetValue, index) => {
             const checked = (selected[facet.field] ?? []).includes(facetValue.value);
             const displayLabel = facetValue.label ?? facetValue.value;
-            const inputId = `facet-${facet.field}-${facetValue.value}`;
+            const inputId = `facet-${facet.field}-${slugifyFacetValue(facetValue.value)}-${index}`;
             return (
               <div className="facet-option" key={facetValue.value}>
                 <input

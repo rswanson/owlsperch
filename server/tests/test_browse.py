@@ -28,7 +28,9 @@ import yaml
 from fastapi.testclient import TestClient
 
 from owlsperch.build_db.runner import build_db
+from owlsperch.schemas import Registry, TypeInfo
 from owlsperch_server.app import create_app
+from owlsperch_server.browse import build_filter_clauses, load_type_browse_schema
 
 _REPO_SCHEMAS_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
 
@@ -155,6 +157,61 @@ def _names(body: dict[str, Any]) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# load_type_browse_schema / build_filter_clauses -- unit-level regressions
+# ---------------------------------------------------------------------------
+
+
+def test_load_type_browse_schema_handles_nullable_array_of_object_type(tmp_path: Path) -> None:
+    """Regression: a filterable field typed `["array", "null"]` (how JSON
+    Schema commonly expresses an optional array-of-object field) must still
+    get sub-field/pair handling, not be treated as an opaque scalar with no
+    sub-fields at all."""
+    schema = {
+        "properties": {
+            "levels": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "class": {"type": "string"},
+                        "level": {"type": ["integer", "null"]},
+                    },
+                },
+                "x-ui": {"label": "Levels", "filterable": True, "sortable": False},
+            }
+        }
+    }
+    (tmp_path / "widget.json").write_text(json.dumps(schema))
+    registry = Registry(
+        schemas_dir=tmp_path,
+        types={
+            "widget": TypeInfo(
+                type_name="widget",
+                schema_file="widget.json",
+                label="Widget",
+                plural_label="Widgets",
+                version=1,
+            )
+        },
+        envelope_schema={},
+    )
+
+    browse_schema = load_type_browse_schema(registry, "widget")
+    field = browse_schema.filterable[0]
+    assert field.name == "levels"
+    assert [sf.name for sf in field.sub_fields] == ["class", "level"]
+    assert {"class", "level"} <= browse_schema.allowed_params()
+
+    # Both sub-properties given together must take the combined-row pair
+    # path (one clause keyed by the parent field name), not the fallback
+    # single-field ANDing path a missing `sub_fields` list would force.
+    clauses, params = build_filter_clauses(browse_schema, {"class": ["Cleric"], "level": ["3"]})
+    assert len(clauses) == 1
+    assert params[0] == "levels"
+    assert "cleric 3" in params
+
+
+# ---------------------------------------------------------------------------
 # GET /records/{type} -- filtering
 # ---------------------------------------------------------------------------
 
@@ -215,6 +272,37 @@ def test_filter_single_subparam_uses_num_value(browse_data_dir: Path) -> None:
     response = _client(browse_data_dir).get("/records/spell", params={"level": "1"})
     assert response.status_code == 200
     assert _names(response.json()) == {"Alarm", "Sanctuary"}
+
+
+def test_filter_matches_combined_row_regardless_of_json_key_order(tmp_path: Path) -> None:
+    """Regression: `build_db.runner.flatten_fields`'s combined row must be
+    built in sorted subkey order, not the record JSON's own key order, so a
+    `levels` item written with `level` before `class` still matches
+    `class=Cleric&level=3`. Uses its own isolated data dir rather than
+    `browse_data_dir` so it doesn't perturb that fixture's exact counts."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book-a", "book-a-p0001-01")
+
+    record = _record(
+        book_id="book-a",
+        name="Reordered Spell",
+        seg_id="book-a-p0001-01",
+        school="Divination",
+        levels=[],
+    )
+    # Deliberately reversed key order within the item, unlike `_record`'s
+    # own `{"class": cls, "level": lvl}` construction.
+    record["fields"]["levels"] = [{"level": 3, "class": "Cleric"}]
+    out_dir = data_dir / "records" / "book-a" / "spell"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{record['slug']}.json").write_text(json.dumps(record, indent=2))
+
+    build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_REPO_SCHEMAS_DIR)
+
+    response = _client(data_dir).get("/records/spell", params={"class": "Cleric", "level": "3"})
+    assert response.status_code == 200
+    assert _names(response.json()) == {"Reordered Spell"}
 
 
 def test_filter_source(browse_data_dir: Path) -> None:

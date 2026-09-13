@@ -23,12 +23,16 @@ once, they must describe the SAME item (`class=Cleric&level=3` must not
 match a spell whose only Cleric level is 3 in one `levels` entry and a
 different class at level 3 in another) -- so that case matches the parent
 field's *combined* `record_fields` row instead (`levels` -> `"Cleric 3"`,
-built by `build_db.runner.flatten_fields` in the item's schema property
-order), expanding to the cross product of combined values when any
-sub-param has repeated (OR) values. A partial subset (2 of 3+ sub-properties,
-not currently reachable -- `levels` only has two) falls back to ANDing each
-given sub-property's own single-field match; that's an approximation for a
-case no current schema exercises.
+built by `build_db.runner.flatten_fields` in SORTED sub-property name order
+-- a canonical order both modules agree on independently of the schema's
+declared property order, since JSON Schema doesn't guarantee one; see that
+module's docstring), expanding to the cross product of combined values when
+any sub-param has repeated (OR) values. This module builds its own combos in
+that same sorted order (`FilterableField.sub_fields` below is sorted by
+sub-property name, not schema declaration order). A partial subset (2 of 3+
+sub-properties, not currently reachable -- `levels` only has two) falls back
+to ANDing each given sub-property's own single-field match; that's an
+approximation for a case no current schema exercises.
 """
 
 from __future__ import annotations
@@ -67,8 +71,9 @@ class FilterableField:
     name: str
     label: str
     #: Non-empty only for an array-of-object field; its item's sub-properties,
-    #: in schema property order (the same order `flatten_fields` joins them
-    #: in for the combined row).
+    #: in SORTED sub-property-name order (the same canonical order
+    #: `flatten_fields` joins them in for the combined row -- see that
+    #: function's docstring).
     sub_fields: list[SubField]
 
 
@@ -117,12 +122,15 @@ def load_type_browse_schema(registry: Registry, type_name: str) -> TypeBrowseSch
 
         sub_fields: list[SubField] = []
         items = prop.get("items")
-        if (
-            prop.get("type") == "array"
-            and isinstance(items, dict)
-            and items.get("type") == "object"
-        ):
-            for subname, subschema in (items.get("properties") or {}).items():
+        prop_type = prop.get("type")
+        prop_types = prop_type if isinstance(prop_type, list) else [prop_type]
+        if "array" in prop_types and isinstance(items, dict) and items.get("type") == "object":
+            # Sorted by sub-property name (not schema declaration order): the
+            # canonical order this module and `build_db.runner.flatten_fields`
+            # both independently agree on for the combined row (see module
+            # docstring and `flatten_fields`'s docstring).
+            for subname in sorted(items.get("properties") or {}):
+                subschema = (items.get("properties") or {})[subname]
                 subtype = subschema.get("type")
                 types = subtype if isinstance(subtype, list) else [subtype]
                 numeric = any(t in ("integer", "number") for t in types)
