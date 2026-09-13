@@ -20,25 +20,31 @@ type LoadState =
 
 /** `Book > Chapter > Section` above the heading (batch B10b, design
  * decision D15): Book links back into this type's browse list filtered to
- * the record's own book (`?source=<book_id>`); Chapter links into the
- * tree's chapter (`?category=<category>&chapter=<chapter>`); Section is
- * plain text, never a link (there's no `?section=` filter). No crumb
- * renders for a piece that's missing -- a record with no resolved chapter
- * shows just the book crumb, per D18's "null when unresolved" contract. */
+ * the record's own book (`?source=<book_id>&view=tree`); Chapter links
+ * into the tree's chapter (`?category=<category>&chapter=<chapter>&view=
+ * tree`); Section is plain text, never a link (there's no `?section=`
+ * filter). Both links force `view=tree` (B10b-mand2) because `/browse/:type`
+ * defaults to the flat, paginated `list` view for every type except
+ * `rules_section` -- without it, a spell/feat/table breadcrumb would bounce
+ * the user out of the tree they came from. `view` is stripped before the
+ * params reach the API, and it's a harmless no-op on `rules_section`, whose
+ * default is already `tree`. No crumb renders for a piece that's missing
+ * -- a record with no resolved chapter shows just the book crumb, per
+ * D18's "null when unresolved" contract. */
 function RecordBreadcrumb({ record }: { record: RecordDetail }) {
   if (!record.book_title) return null;
 
   const { toc } = record;
   return (
     <nav className="record-breadcrumb" aria-label="Breadcrumb">
-      <Link to={`/browse/${record.type}?source=${encodeURIComponent(record.book_id)}`}>
+      <Link to={`/browse/${record.type}?source=${encodeURIComponent(record.book_id)}&view=tree`}>
         {record.book_title}
       </Link>
       {toc.chapter && (
         <>
           <span className="breadcrumb-sep">›</span>
           <Link
-            to={`/browse/${record.type}?category=${encodeURIComponent(toc.category)}&chapter=${encodeURIComponent(toc.chapter)}`}
+            to={`/browse/${record.type}?category=${encodeURIComponent(toc.category)}&chapter=${encodeURIComponent(toc.chapter)}&view=tree`}
           >
             {toc.chapter}
           </Link>

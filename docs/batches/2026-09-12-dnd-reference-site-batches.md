@@ -623,6 +623,46 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `pipeline/owlsperch/toc/runner.py`,
   `pipeline/owlsperch/build_db/runner.py`, tests, `CLAUDE.md`.
 
+## B10b-mand2: record breadcrumbs link back into the tree view
+- **Status:** merged
+- **Follow-up to:** B10b (its acceptance criterion 4 promised the record
+  page's `Book > Chapter > Section` breadcrumb links back into the tree
+  view; neither link carried `view=tree`).
+- **User-visible outcome:** clicking the Book or Chapter crumb on a spell,
+  feat, or table record lands in the browse *tree*, not the flat paginated
+  list. `/browse/:type` defaults to `view=list` for every type except
+  `rules_section`, so before this the crumb bounced the reader out of the
+  tree they came from.
+- **Acceptance criteria:**
+  1. Both `RecordBreadcrumb` links append `view=tree`: Book ->
+     `/browse/<type>?source=<book_id>&view=tree`, Chapter ->
+     `/browse/<type>?category=<category>&chapter=<chapter>&view=tree`. The
+     Section crumb stays plain text (there is no `?section=` filter).
+  2. Web-only, minimal change: `BrowsePage.tsx`'s `RESERVED_PARAMS` and
+     view-default logic, `FacetSidebar.tsx`, `Layout.tsx`,
+     `RecordTree.tsx`, `server/`, and `pipeline/` are all untouched --
+     `view` is already stripped before params reach `/records/{type}` /
+     `/facets/{type}`, so no API change is involved.
+  3. A vitest regression test asserts both exact hrefs (red before the
+     fix, green after); the existing "just the book crumb" and "no
+     breadcrumb when `book_title` is null" cases keep passing.
+  4. A Playwright test in `web/e2e/smoke.spec.ts` exercises the defect end
+     to end on a *spell* record (a `rules_section` record would pass even
+     unfixed): open the record, click the chapter crumb, assert the URL
+     carries `view=tree` and that the tree -- not the paginated list --
+     renders. No fixture-DB change needed.
+  5. CLAUDE.md documents both link targets with `view=tree` and why (the
+     per-type default view), noting it is a harmless no-op on
+     `rules_section`.
+  6. Full gate suite green: ruff, ruff format, mypy, pytest, and web
+     lint/typecheck/vitest/Playwright.
+- **How to observe:** open a spell record page, click its chapter crumb:
+  the browse page opens in tree view with that chapter expanded, instead
+  of the flat list.
+- **Touches:** `web/src/pages/RecordPage.tsx`,
+  `web/src/pages/__tests__/RecordPage.test.tsx`, `web/e2e/smoke.spec.ts`,
+  `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical

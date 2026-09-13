@@ -538,10 +538,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   field names from `FieldGroups` so the grid isn't also dumped as text.
   Batch B10b adds a `Book > Chapter > Section` breadcrumb above the heading
   (`RecordBreadcrumb`, built from the record's `book_title`/`toc`): Book
-  links to `/browse/<type>?source=<book_id>`, Chapter to `/browse/<type>
-  ?category=<category>&chapter=<chapter>`, Section is plain text; a record
-  with no resolved chapter shows just the book crumb, and one with no
-  `book_title` shows no breadcrumb at all.
+  links to `/browse/<type>?source=<book_id>&view=tree`, Chapter to
+  `/browse/<type>?category=<category>&chapter=<chapter>&view=tree`, Section
+  is plain text; a record with no resolved chapter shows just the book
+  crumb, and one with no `book_title` shows no breadcrumb at all. Both
+  links carry `&view=tree` (batch B10b-mand2) because `/browse/:type`
+  defaults to the flat, paginated `list` view for every type except
+  `rules_section` -- without it, a spell/feat/table crumb would land on the
+  list instead of the tree; it's a harmless no-op on `rules_section`, whose
+  default is already `tree`.
   `src/pages/BrowsePage.tsx` (batch B9) keeps every filter/sort/page/view value in the URL query string via
   `useSearchParams` (reload/back restore the view), fetches `/records/{type}`
   and `/facets/{type}` on every change, and keeps the previous facets/results

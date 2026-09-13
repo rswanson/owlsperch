@@ -50,3 +50,21 @@ test("a rules_section record renders its owned table below the text", async ({ p
   expect(tableBox).not.toBeNull();
   expect(tableBox!.y).toBeGreaterThan(textBox!.y);
 });
+
+// Batch B10b-mand2: every breadcrumb link forces `view=tree`, since
+// `/browse/:type` defaults to the flat, paginated `list` view for every
+// type except `rules_section`. Exercised on a spell (not rules_section,
+// which would pass even unfixed since its default is already the tree).
+test("a spell record's chapter breadcrumb lands in the tree view, not the list", async ({
+  page,
+}) => {
+  await page.goto("/r/spell/fireball");
+
+  const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+  await breadcrumb.getByRole("link", { name: "Chapter 1: Magic" }).click();
+
+  await expect(page).toHaveURL(/\/browse\/spell\?.*view=tree/);
+  await expect(page.locator(".record-tree")).toBeVisible();
+  await expect(page.locator(".record-tree summary", { hasText: /^Magic\s/ })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Pagination" })).not.toBeVisible();
+});
