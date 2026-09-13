@@ -260,6 +260,32 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `schemas/`, `pipeline/owlsperch/validate/`,
   `.claude/skills/extract/`, `server/`, `web/`.
 
+## B10-imp1: render the table schema into every non-table prompt
+- **Status:** merged
+- **Follow-up to:** B10 (criterion 3 -- the "tables belonging to this
+  entity" cross-link convention).
+- **User-visible outcome:** a feat/rules_section/spell subagent that is told
+  to write a second, `table`-typed record is now shown that type's own
+  `fields` schema, `schema_version`, extraction rules, and example record,
+  instead of having to invent the shape from an output directory and a few
+  cross-link bullets.
+- **Acceptance criteria:**
+  1. A non-`table` prompt renders the `table` type's `fields` schema live
+     from `schemas/` (never hand-copied), so `columns`/`rows` are named.
+  2. `_KIND_RULES["table"]` and `schemas/examples/table.json` are rendered
+     into the same prompt, in the existing EXAMPLE RECORD style.
+  3. A `table` segment's own prompt is unchanged (the convention block is
+     still omitted entirely for `kind_hint == "table"`).
+  4. The cross-linked table record's own `schema_version` is stated
+     explicitly as the registry's `table` version, distinct from the owning
+     record's.
+  5. A missing `table` type in a custom `$OWLSPERCH_SCHEMAS` still renders a
+     prompt instead of crashing; a generic test asserts every kind told to
+     write a `table` record is also shown the table schema.
+- **How to observe:** `uv run owlsperch queue prompt <rules_section seg_id>`
+  and read the `### Tables belonging to this entity` block.
+- **Touches:** `pipeline/owlsperch/queue/prompt.py`, tests, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
