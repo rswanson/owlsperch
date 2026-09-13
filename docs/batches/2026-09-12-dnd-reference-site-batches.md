@@ -219,7 +219,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `.claude/skills/extract/`, `pipeline/owlsperch/queue/`, tests.
 
 ## B9: Browse pages and facets from schema hints
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** `/browse/spell` lists spells with a facet
   sidebar (class, level, school, source) and sort controls.
 - **Acceptance criteria:**
@@ -241,7 +241,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `server/`, `web/`, tests.
 
 ## B10: Feat, rules section, and table types
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** feats and rules sections are searchable and
   browsable; tables render as HTML tables on the records that own them.
 - **Acceptance criteria:**
