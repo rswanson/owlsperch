@@ -7,6 +7,9 @@ Batches are strictly serial. Batch N assumes batches 1..N−1 are merged.
 means `$OWLSPERCH_PDFS` (default `~/D_D`). CLI commands run as
 `uv run owlsperch ...` from the repo root.
 
+B10b was inserted on 2026-09-13 from direct user feedback, out of the
+original numbering, and is built before B11.
+
 Conventions for every batch: ruff, mypy, and pytest pass in CI; from B7 on,
 eslint, tsc, vitest, and Playwright also pass. Tests use synthetic fixtures
 only. Tests that need the real PDF dir are marked `@pytest.mark.corpus` and
@@ -480,6 +483,101 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `pipeline/owlsperch/queue/runner.py`, `pipeline/owlsperch/cli.py`,
   `pipeline/owlsperch/build_db/runner.py`, tests,
   `.claude/skills/extract/SKILL.md`, `CLAUDE.md`.
+
+## B10b: Rules taxonomy from tables of contents
+- **Status:** in-progress
+- **Why (user feedback, 2026-09-13):** "The rules section of this site is
+  terrible. The contents has a mix of actual rules and random assortments
+  from things that should be their own sections (such as classes, equipment,
+  etc). You should be able to use each book's tables of contents for some
+  rough direction on categories and then use judgement for emergent groupings
+  that may be useful to a player."
+- **User-visible outcome:** `/browse/rules_section` is organized the way a
+  player thinks: a tree of player-facing categories (Character creation,
+  Races, Classes, Skills, Feats, Equipment, Combat, Adventuring, Magic,
+  Running the game, ...) -> the book's own chapters -> the book's own
+  sections -> records. Class write-ups sit under Classes, gear under
+  Equipment, and Combat contains only combat rules. The header nav offers
+  quick links into the categories that today hold content that will later
+  become its own record type (Classes, Equipment, Skills, Races). Every
+  record page shows a breadcrumb: Book > Chapter > Section.
+- **Acceptance criteria:**
+  1. `owlsperch toc <book_id|all>` parses a text-layer book's table of
+     contents (scan the first ~12 pages of `text/<book_id>/` for the
+     "Contents" page(s); entries are `Title ....... <printed page>` runs,
+     often two or more per line after column repair, sometimes with a
+     "Chapter N:" prefix; nesting comes from the chapter prefix and, where
+     available, `.meta.json` font sizes / indentation, else every
+     non-chapter entry is a level-2 section of the preceding chapter) into
+     `$OWLSPERCH_DATA/toc/<book_id>.json`: an ordered list of entries
+     `{title, level, printed_page, pdf_page_start, pdf_page_end, path}`
+     where pdf pages come from `text/<book_id>/pages.json` (printed ->
+     pdf), `pdf_page_end` is derived from the next entry at the same or
+     shallower level, and `path` is the chapter/section title chain. Books
+     whose contents page can't be found or yields < 5 entries are reported
+     (not silently empty). Idempotent; `--force` re-parses.
+  2. A committed, book-agnostic category list `schemas/categories.json`
+     (`key`, `label`, `order`, `description`, and which record types it is a
+     natural home for) covering at least: character-creation, races,
+     classes, skills, feats, equipment, combat, adventuring, magic,
+     running-the-game, monsters, uncategorized. A committed rule table
+     (Python module or YAML under `pipeline/owlsperch/toc/`) maps TOC
+     entry titles to categories: generic title patterns first
+     (e.g. "Combat" -> combat, "Equipment"/"Goods and Services" ->
+     equipment, "Abilities"/"Description"/"Alignment" -> character-creation,
+     "Magic"/"Spells" -> magic, "Adventuring"/"Movement"/"Exploration" ->
+     adventuring), then optional per-book overrides keyed by `book_id` +
+     entry title. Use judgment for emergent, player-useful groupings (this
+     is the "judgement" half of the feedback): e.g. a chapter that mixes
+     gear and services can still be one category; sections that a player
+     looks up in play (conditions, actions in combat, saving throws, resting,
+     carrying capacity) must land where a player would look for them, even if
+     the book's own chapter placement is odd. Every phb1 chapter and every
+     phb1 TOC section resolves to a category (fallback: the chapter's
+     category; last resort: uncategorized, and `owlsperch toc` prints how many
+     fell through). Only chapter/section TITLES and page numbers may be
+     committed as test fixtures -- never body text (public repo).
+  3. `build-db` derives, for EVERY record of every type, `category`,
+     `chapter`, and `section` from the record's first page and the book's
+     `toc/<book_id>.json` (deepest TOC entry containing that page), without
+     mutating record files and without a schema_version bump: these are
+     built-in derived facets like `source`, exposed by `/records/{type}`
+     items, `/facets/{type}`, and the record detail (`toc: {category,
+     chapter, section, path}`), filterable via `category=`/`chapter=` query
+     params. A book with no toc file yields `uncategorized`/null and
+     build-db prints a WARNING naming `owlsperch toc <book_id>`. The
+     extractor-written `rules_section.fields.chapter` stops being a facet
+     (x-ui filterable false) so the derived one is the single source of truth.
+  4. Web: `/browse/rules_section` renders the category -> chapter ->
+     section -> records tree (collapsible groups, counts per group, the
+     existing facet sidebar keeps `source` and gains `category`; a chosen
+     category or chapter filter narrows the tree). The same tree component
+     works for any type when `?view=tree` is set, and the flat list stays the
+     default for the other types. The header nav gets "Rules" plus quick
+     links to `/browse/rules_section?category=classes|equipment|skills|races`
+     (rendered only for categories that have records). Record pages show a
+     `Book > Chapter > Section` breadcrumb linking back into the tree.
+  5. Tests: unit tests for the TOC parser on synthetic contents text (dotted
+     leaders, two entries per line, "Chapter N:" prefixes, a missing printed
+     page), for page -> entry lookup (boundaries, nested levels, page before
+     the first entry), and for the category rule table (patterns, per-book
+     override, fallback); server tests for the derived facets/filters and the
+     detail `toc` block; vitest for the tree grouping function; Playwright
+     flow C on the fixture DB (fixture-db gains a small synthetic toc):
+     open Rules, expand Combat, open a section, see the breadcrumb. A
+     `corpus` test: phb1's toc has a Combat chapter and the record
+     `rules_section/attacks-of-opportunity` (if present) resolves to
+     category combat.
+  6. CLAUDE.md "Current state" documents `toc`, the categories file, the
+     derived facets, and the tree view.
+- **How to observe:** `uv run owlsperch toc phb1 && uv run owlsperch
+  build-db`, then http://localhost:5173/browse/rules_section shows PHB
+  rules grouped by category; Classes contains the class sections and nothing
+  else; Combat contains only combat rules; a class section page shows
+  "Player's Handbook > Chapter 3: Classes > Barbarian".
+- **Touches:** `pipeline/owlsperch/toc/` (new), `schemas/categories.json`,
+  `pipeline/owlsperch/build_db/`, `pipeline/owlsperch/fixture_db.py`,
+  `server/`, `web/`, CLAUDE.md, README.
 
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
