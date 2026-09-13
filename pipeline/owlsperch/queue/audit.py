@@ -165,23 +165,27 @@ class AuditReport:
             lines.append(
                 f"  {len(self.collisions)} record path(s) claimed by more than one segment:"
             )
-            preview = self.collisions[:5]
-            for collision in preview:
-                lines.append(f"    {collision.path}: {', '.join(collision.claimants)}")
-            remaining = len(self.collisions) - len(preview)
-            if remaining > 0:
-                lines.append(f"    ... and {remaining} more")
+            for collision in self.collisions:
+                owner = (
+                    collision.on_disk_owner if collision.on_disk_owner is not None else "missing"
+                )
+                lines.append(
+                    f"    {collision.path}: claimed by {', '.join(collision.claimants)}"
+                    f" (on-disk owner: {owner})"
+                )
         else:
             lines.append("  no record paths claimed by more than one segment")
 
         if self.stale_claims:
-            by_status: dict[str, int] = {}
+            lines.append(f"  {len(self.stale_claims)} segment(s) carry a stale claim:")
             for claim in self.stale_claims:
-                by_status[claim.status] = by_status.get(claim.status, 0) + 1
-            status_summary = ", ".join(f"{k} {v}" for k, v in sorted(by_status.items()))
-            lines.append(
-                f"  {len(self.stale_claims)} segment(s) carry a stale claim ({status_summary})"
-            )
+                lines.append(
+                    f"    {claim.seg_id} (status={claim.status}, tier={claim.tier},"
+                    f" location={claim.location}):"
+                )
+                for entry in claim.paths:
+                    owner = entry.owner if entry.owner is not None else "missing"
+                    lines.append(f"      {entry.path}: {entry.reason} (owner: {owner})")
         else:
             lines.append("  no segments carry a stale claim")
         return "\n".join(lines)

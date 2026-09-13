@@ -271,6 +271,47 @@ def test_report_render_and_to_json_smoke(tmp_path: Path) -> None:
     assert payload["stale_claims"] == []
 
 
+def test_render_names_the_collision_claimants_and_on_disk_owner(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="done",
+        outcome="validated",
+        tier="haiku",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0011-01",
+        status="in_progress",
+        tier="sonnet",
+        pending_records=["records/book/rules_section/class-features.json"],
+    )
+    _write_record(
+        data_dir,
+        "records/book/rules_section/class-features.json",
+        segment_id="book-p0011-01",
+    )
+
+    text = audit_book("book", data_dir=data_dir).render()
+
+    # (a) collision line names the path, both claimants, and the on-disk owner.
+    assert "records/book/rules_section/class-features.json" in text
+    assert "book-p0010-01" in text
+    assert "book-p0011-01" in text
+    assert "book-p0011-01" in text.split("record path(s) claimed")[1].split("stale claim")[0]
+
+    # (b) stale-claim section names the specific segment, its status/tier, and
+    # the stale path -- not just an aggregate count.
+    assert "book-p0010-01" in text.split("stale claim")[1]
+    assert "status=done" in text
+    assert "tier=haiku" in text
+    assert "records/book/rules_section/class-features.json" in text.split("stale claim")[1]
+
+
 # ---------------------------------------------------------------------------
 # fix_book
 # ---------------------------------------------------------------------------
