@@ -922,7 +922,14 @@ def test_rules_section_example_fixture_models_the_qualification_convention() -> 
 # negative test is what proves it actually bites.
 # ---------------------------------------------------------------------------
 
-_REPLY_CONTRACT_KEYS = {"seg_id", "records", "no_content", "needs_context", "proposed_type", "notes"}
+_REPLY_CONTRACT_KEYS = {
+    "seg_id",
+    "records",
+    "no_content",
+    "needs_context",
+    "proposed_type",
+    "notes",
+}
 _JSON_LITERALS = {"null", "true", "false"}
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 _FIELD_TOKEN_RE = re.compile(r"^[a-z_][a-z0-9_]*(\[\])?(\.[a-z_][a-z0-9_]*)?$")
@@ -977,7 +984,9 @@ def _prompt_coverage_failures(kind: str, text: str, registry: Registry) -> list[
             failures.append(f"{kind}: fields property `{prop_name}` is not rendered in the prompt")
     for prop_name in sorted(envelope_props):
         if f"`{prop_name}`" not in text:
-            failures.append(f"{kind}: envelope property `{prop_name}` is not rendered in the prompt")
+            failures.append(
+                f"{kind}: envelope property `{prop_name}` is not rendered in the prompt"
+            )
 
     example_path = registry.schemas_dir / "examples" / f"{kind}.json"
     if not example_path.is_file():
@@ -985,7 +994,9 @@ def _prompt_coverage_failures(kind: str, text: str, registry: Registry) -> list[
     else:
         example = json.loads(example_path.read_text())
         if json.dumps(example, indent=2) not in text:
-            failures.append(f"{kind}: its own example record is not rendered verbatim in the prompt")
+            failures.append(
+                f"{kind}: its own example record is not rendered verbatim in the prompt"
+            )
 
     from owlsperch.queue.prompt import _KIND_RULES
 
@@ -995,8 +1006,8 @@ def _prompt_coverage_failures(kind: str, text: str, registry: Registry) -> list[
         failures.append(f"{kind}: '## Extraction rules for `{kind}`' heading is not rendered")
 
     mentioned_types = {t for t in registry.types if t != kind and f"`{t}`" in text}
-    grounded = type_props | envelope_props | _REPLY_CONTRACT_KEYS | _JSON_LITERALS | set(
-        registry.types
+    grounded = (
+        type_props | envelope_props | _REPLY_CONTRACT_KEYS | _JSON_LITERALS | set(registry.types)
     )
 
     for other in sorted(mentioned_types):
@@ -1079,6 +1090,4 @@ def test_coverage_guard_catches_a_missing_cross_type_example(tmp_path: Path) -> 
     assert "a `table` record" in text  # the cross-link instruction is still there
 
     failures = _prompt_coverage_failures("rules_section", text, registry)
-    assert any(
-        "cross-type `table`" in f and "examples/table.json" in f for f in failures
-    ), failures
+    assert any("cross-type `table`" in f and "examples/table.json" in f for f in failures), failures
