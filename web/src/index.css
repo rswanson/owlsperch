@@ -92,6 +92,10 @@ a {
 
 .site-header {
   margin-bottom: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
 }
 
 .site-title {
@@ -99,6 +103,22 @@ a {
   text-decoration: none;
   color: var(--text);
   font-size: 1.1rem;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.site-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.site-nav a:hover {
+  color: var(--text);
 }
 
 h1 {
@@ -301,5 +321,148 @@ h1 {
 
   .field-row dt {
     min-width: 0;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * /browse/:type (spec 4.10, batch B9)
+ * ---------------------------------------------------------------------- */
+
+.browse-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.facet-sidebar {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.facet-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.facet-group legend {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+.facet-option {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 0.9rem;
+}
+
+.facet-option label {
+  cursor: pointer;
+}
+
+.facet-count {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.browse-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.browse-controls {
+  margin-bottom: 12px;
+}
+
+.sort-control select {
+  margin-left: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.browse-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.browse-result {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+}
+
+.browse-result:last-child {
+  border-bottom: none;
+}
+
+.browse-result-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.browse-result-name {
+  font-weight: 500;
+}
+
+.browse-result-citation {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.browse-result-facets {
+  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.pagination-status {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .browse-layout {
+    flex-direction: column;
+  }
+
+  .facet-sidebar {
+    flex-basis: auto;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .facet-group {
+    flex: 1 1 auto;
+    min-width: 140px;
   }
 }

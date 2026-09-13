@@ -135,3 +135,62 @@ export function getRecord(
 ): Promise<RecordDetail> {
   return getJson(`/records/${encodeURIComponent(type)}/${encodeURIComponent(slug)}`, signal);
 }
+
+// ---------------------------------------------------------------------------
+// Browse (spec 4.9/4.10, batch B9): GET /records/{type} (filtered, sorted,
+// paginated list) and GET /facets/{type} (distinct filter values + counts).
+// ---------------------------------------------------------------------------
+
+export interface BrowseItem {
+  id: string;
+  type: string;
+  name: string;
+  slug: string;
+  book_id: string;
+  citation: string | null;
+  facets: Record<string, string[]>;
+}
+
+export interface BrowseResponse {
+  type: string;
+  total: number;
+  page: number;
+  page_size: number;
+  items: BrowseItem[];
+}
+
+export interface FacetValue {
+  value: string;
+  count: number;
+  /** Only present on the `source` facet (book_id -> book title). */
+  label?: string;
+}
+
+export interface Facet {
+  field: string;
+  label: string;
+  values: FacetValue[];
+}
+
+export interface FacetsResponse {
+  type: string;
+  facets: Facet[];
+}
+
+export function browseRecords(
+  type: string,
+  params: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<BrowseResponse> {
+  const qs = params.toString();
+  return getJson(`/records/${encodeURIComponent(type)}${qs ? `?${qs}` : ""}`, signal);
+}
+
+export function getFacets(
+  type: string,
+  params: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<FacetsResponse> {
+  const qs = params.toString();
+  return getJson(`/facets/${encodeURIComponent(type)}${qs ? `?${qs}` : ""}`, signal);
+}

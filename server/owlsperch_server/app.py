@@ -1,16 +1,19 @@
 """The `owlsperch_server` FastAPI app (spec 4.9, batch B6): `/search`,
 `/records/{type}/{slug}`, `/schemas`, `/health`, plus `/stats` (batch B7,
 spec 4.10 -- canonical record counts by type, for the web UI's home-page
-hint), reading the SQLite database `owlsperch build-db` produces
-(`owlsperch.build_db.runner`).
+hint), `/records/{type}` and `/facets/{type}` (batch B9 -- filtered/sorted/
+paginated browse lists and their facet counts, per the type schema's
+`x-ui` hints; the SQL and param parsing live in `owlsperch_server.browse`,
+kept out of this module), reading the SQLite database `owlsperch build-db`
+produces (`owlsperch.build_db.runner`).
 
 The DB is opened read-only (`mode=ro` URI) once per request and closed
 again -- this is a single-user localhost app (spec D1), so a connection pool
 would be pure ceremony. A missing (not yet built) database makes every
-data-serving endpoint (`/search`, `/records/{type}/{slug}`) answer 503 with
-a JSON body naming the build command; `/health` and `/schemas` don't touch
-the database at all (schemas come from the `schemas/` files, not the DB) and
-always answer normally.
+data-serving endpoint (`/search`, `/records/{type}/{slug}`, `/records/{type}`,
+`/facets/{type}`) answer 503 with a JSON body naming the build command;
+`/health` and `/schemas` don't touch the database at all (schemas come from
+the `schemas/` files, not the DB) and always answer normally.
 
 A *present but corrupt* database file is a different failure mode:
 `sqlite3.connect` alone never validates the file (SQLite only checks the
@@ -30,11 +33,18 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 
 from owlsperch.build_db.runner import default_db_path
 from owlsperch.schemas import load_registry
 from owlsperch.text.runner import default_data_dir
+from owlsperch_server.browse import (
+    BrowseError,
+    compute_facets,
+    list_records,
+    load_type_browse_schema,
+    parse_query,
+)
 
 #: Matches "words" (Unicode letters/digits/underscore runs) in a search
 #: query, tokenized the same way for the FTS5 prefix query.
@@ -85,6 +95,37 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def stats() -> dict[str, Any]:
         counts = _query_db(app.state.data_dir, _record_counts_by_type)
         return {"counts": counts}
+
+    @app.get("/records/{type_name}")
+    def records_list(type_name: str, request: Request) -> dict[str, Any]:
+        registry = load_registry()
+        if type_name not in registry.types:
+            raise HTTPException(status_code=404, detail="unknown type")
+        schema = load_type_browse_schema(registry, type_name)
+        try:
+            parsed = parse_query(schema, request.query_params.multi_items())
+        except BrowseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return _query_db(
+            app.state.data_dir, lambda conn: list_records(conn, type_name, schema, parsed)
+        )
+
+    @app.get("/facets/{type_name}")
+    def facets_for_type(type_name: str, request: Request) -> dict[str, Any]:
+        registry = load_registry()
+        if type_name not in registry.types:
+            raise HTTPException(status_code=404, detail="unknown type")
+        schema = load_type_browse_schema(registry, type_name)
+        try:
+            parsed = parse_query(schema, request.query_params.multi_items())
+        except BrowseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return _query_db(
+            app.state.data_dir,
+            lambda conn: compute_facets(conn, type_name, schema, parsed.filters),
+        )
 
     @app.get("/records/{type_name}/{slug}")
     def record_detail(type_name: str, slug: str) -> dict[str, Any]:
