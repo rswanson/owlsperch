@@ -4,7 +4,11 @@ Per book:
 
 1. Look the book up in the manifest (unknown `book_id` is a hard error, like
    `segment`); `all` considers only in-scope/override books and prints a
-   "no text output" skip line for one missing `text/<book_id>/` entirely.
+   "no text output" skip line for one missing `text/<book_id>/` entirely,
+   without failing the whole run for it. An explicit single `book_id` (not
+   `all`) treats that same missing `text/<book_id>/` as a failure instead
+   -- there's no "the rest of the run" to keep going for, so naming one
+   book directly should exit non-zero rather than silently no-op.
 2. Skip (print a note, exit 0) if `toc/<book_id>.json` already exists and
    `--force` wasn't given -- idempotent, like every other subcommand here.
 3. `owlsperch.toc.parser.parse_book_toc` does the actual parsing; a
@@ -56,15 +60,24 @@ def _now_iso() -> str:
 
 
 def toc_book(
-    entry: ManifestEntry, *, data_dir: Path, force: bool = False
+    entry: ManifestEntry,
+    *,
+    data_dir: Path,
+    force: bool = False,
+    missing_text_is_error: bool = False,
 ) -> tuple[BookTocSummary, bool]:
-    """Returns `(summary, failed)` -- `failed` is `True` only for a
-    `TocParseError` (an unknown book_id is a hard error the caller raises
-    itself, matching `owlsperch segment`)."""
+    """Returns `(summary, failed)` -- `failed` is `True` for a
+    `TocParseError`, or (when `missing_text_is_error` is set) for a missing
+    `text/<book_id>/` directory (an unknown book_id is a hard error the
+    caller raises itself, matching `owlsperch segment`). `run_toc`'s `all`
+    loop leaves `missing_text_is_error` at its default `False` -- a book
+    with no text output yet is just skipped, not a run failure -- while its
+    single-book-by-id path passes `True`, since there's no "the rest of the
+    run" to keep going for."""
     text_dir = data_dir / "text" / entry.book_id
     if not text_dir.is_dir():
         note = "no text output -- run `owlsperch text` first"
-        return BookTocSummary(entry.book_id, note=note), False
+        return BookTocSummary(entry.book_id, note=note), missing_text_is_error
 
     out_path = data_dir / "toc" / f"{entry.book_id}.json"
     if out_path.exists() and not force:
@@ -119,6 +132,8 @@ def run_toc(
         print(f"error: unknown book_id '{book_id}'", file=sys.stderr)
         return 1
 
-    summary, failed = toc_book(resolved_entry, data_dir=data_dir, force=force)
+    summary, failed = toc_book(
+        resolved_entry, data_dir=data_dir, force=force, missing_text_is_error=True
+    )
     print(summary.render(), file=out)
     return 1 if failed else 0

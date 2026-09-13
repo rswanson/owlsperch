@@ -58,12 +58,14 @@ under `records/<book_id>/<type>/*.json`:
    `facets` map). For every record, `owlsperch.toc.lookup.load_toc` is
    loaded once per book_id (cached) and `entry_for_page` is looked up
    against `min(record["pages"])` -- the deepest TOC entry containing that
-   page. A record with no `pages`, a book with no `toc/<book_id>.json`, or a
-   page before the TOC's first entry all resolve to
-   `toc_category = "uncategorized"` and null chapter/section/path. A book
-   with records but no toc file gets exactly one `WARNING` line (naming
-   `uv run owlsperch toc <book_id>`) from `run_build_db`, not a crash or a
-   per-record warning.
+   page. A record with no `pages`, a book with no USABLE
+   `toc/<book_id>.json` (missing, OR present but parsed to zero entries --
+   e.g. a book whose only contents-like page turned out to be a
+   numbered-table index), or a page before the TOC's first entry all
+   resolve to `toc_category = "uncategorized"` and null chapter/section/
+   path. A book with records but no usable toc file gets exactly one
+   `WARNING` line (naming `uv run owlsperch toc <book_id> --force`) from
+   `run_build_db`, not a crash or a per-record warning.
 
 Every record is `canonical = 1` and `macro_eligible = 0` in this batch --
 precedence (B11) and macro eligibility (B22) are future work.
@@ -287,8 +289,10 @@ class BuildResult:
     skipped: list[SkippedRecord] = field(default_factory=list)
     books: int = 0
     db_path: Path = field(default_factory=Path)
-    #: book_ids that had records but no `toc/<book_id>.json` (D10) --
-    #: `run_build_db` prints one WARNING per entry, naming `owlsperch toc`.
+    #: book_ids that had records but no USABLE `toc/<book_id>.json` --
+    #: missing entirely, or present with `entries == []` (D10) --
+    #: `run_build_db` prints one WARNING per entry, naming
+    #: `owlsperch toc <book_id> --force`.
     toc_missing_books: list[str] = field(default_factory=list)
 
     def render(self) -> str:
@@ -436,9 +440,16 @@ def _load_records(
 
     for book_id in discover_books_with_records(data_dir):
         if book_id not in toc_cache:
-            toc_cache[book_id] = load_toc(data_dir, book_id)
-            if toc_cache[book_id] is None:
+            loaded = load_toc(data_dir, book_id)
+            # A present-but-empty toc (entries == []) is treated exactly
+            # like a missing one -- both fall back to uncategorized/None
+            # via `_resolve_record_toc(None, ...)` below, and both get the
+            # one-line WARNING.
+            if loaded is None or not loaded.entries:
+                toc_cache[book_id] = None
                 result.toc_missing_books.append(book_id)
+            else:
+                toc_cache[book_id] = loaded
         toc = toc_cache[book_id]
 
         for path in discover_record_files(data_dir, book_id):
@@ -562,8 +573,9 @@ def run_build_db(
 
     for book_id in result.toc_missing_books:
         print(
-            f"WARNING: '{book_id}' has records but no toc/{book_id}.json -- "
-            f"every one of its records is uncategorized; run `uv run owlsperch toc {book_id}`",
+            f"WARNING: '{book_id}' has records but no usable toc/{book_id}.json "
+            "(missing, or present with no entries) -- every one of its records is "
+            f"uncategorized; run `uv run owlsperch toc {book_id} --force`",
             file=err,
         )
 
