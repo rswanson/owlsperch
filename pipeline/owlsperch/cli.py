@@ -16,6 +16,7 @@ from owlsperch.build_db.runner import run_build_db
 from owlsperch.dev import run_dev
 from owlsperch.fixture_db import run_fixture_db
 from owlsperch.manifest import ManifestError, run_check
+from owlsperch.queue.driver import run_queue_run
 from owlsperch.queue.prompt import DEFAULT_MODEL
 from owlsperch.queue.runner import (
     run_queue_complete,
@@ -123,7 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     queue_next_parser.add_argument("book_id", help="Manifest book_id.")
     queue_next_parser.add_argument(
-        "--tier", default="haiku", help="Only select segments on this tier (default: haiku)."
+        "--tier",
+        default=None,
+        help="Only select segments on this tier (default: the lowest tier with pending work).",
     )
     queue_next_parser.add_argument(
         "--limit", type=int, required=True, help="Maximum number of segments to select."
@@ -135,9 +138,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     queue_next_parser.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
-        help=f"Model string rendered into each prompt's extraction.model "
-        f"(default: {DEFAULT_MODEL}).",
+        default=None,
+        help="Model string rendered into each prompt's extraction.model "
+        "(default: the resolved tier's model, e.g. claude-haiku-4-5 for haiku).",
     )
     queue_next_parser.add_argument(
         "--lock-timeout",
@@ -192,6 +195,37 @@ def build_parser() -> argparse.ArgumentParser:
             "Also clear attempts/pending_records/records/notes/outcome and "
             "delete the record files they named (only ones under records/<book_id>/)."
         ),
+    )
+
+    queue_run_parser = queue_subparsers.add_parser(
+        "run",
+        help="Drive the whole select/subagent/complete/validate loop in-process (--dry-run only).",
+    )
+    queue_run_parser.add_argument("book_id", help="Manifest book_id.")
+    queue_run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Required in this batch: drive the loop against a FixtureSubagent instead of "
+        "launching real Agent-tool subagents (that's the /extract skill's job).",
+    )
+    queue_run_parser.add_argument(
+        "--fixtures",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Fixture directory for --dry-run: <DIR>/<seg_id>/<n>.json canned replies.",
+    )
+    queue_run_parser.add_argument(
+        "--tier", default=None, help="Only run this tier (default: whatever tier has pending work)."
+    )
+    queue_run_parser.add_argument(
+        "--limit", type=int, default=None, help="Cap total subagent calls across every wave."
+    )
+    queue_run_parser.add_argument(
+        "--kind", default="spell", help="Only run segments with this kind_hint (default: spell)."
+    )
+    queue_run_parser.add_argument(
+        "--json", action="store_true", help="Print the final summary as JSON instead."
     )
 
     schema_parser = subparsers.add_parser("schema", help="Inspect record type schemas.")
@@ -308,6 +342,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "queue" and args.queue_command == "reset":
         return run_queue_reset(args.seg_id, hard=args.hard)
+
+    if args.command == "queue" and args.queue_command == "run":
+        return run_queue_run(
+            args.book_id,
+            dry_run=args.dry_run,
+            fixtures_dir=args.fixtures,
+            tier=args.tier,
+            limit=args.limit,
+            kind=args.kind,
+            json_output=args.json,
+        )
 
     if args.command == "queue":
         args.queue_parser.print_help()

@@ -13,8 +13,9 @@ PDF manifest (`pipeline/manifest.yaml`), `manifest check`, `text`
 book's text into candidate spell/stat_block/feat/table/rules_section
 segments), the `schemas/` type registry (envelope + spell schema, JSON
 Schema draft 2020-12) with `validate` and `schema show`, the `queue`
-extraction-queue CLI plus the `/extract` Claude Code skill (haiku tier only;
-see "Extraction" and "Architecture" below), `build-db` (builds
+extraction-queue CLI plus the `/extract` Claude Code skill -- now (batch B8)
+with a full haiku -> sonnet -> opus escalation ladder and a `human/` inbox
+for what opus can't resolve (see "Architecture" below), `build-db` (builds
 `db/owlsperch.sqlite` from validated records), `serve` (starts the
 `owlsperch_server` FastAPI app -- `/search`, `/records/{type}/{slug}`,
 `/schemas`, `/health`, `/stats`), `dev` (runs `serve` and `web/`'s Vite dev
@@ -36,11 +37,12 @@ uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
-uv run owlsperch queue next <book_id> --tier haiku --limit N [--kind spell] [--model M] [--lock-timeout S] [--json]
+uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind spell] [--model M] [--lock-timeout S] [--json]
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
 uv run owlsperch queue reset <seg_id>... [--hard]
+uv run owlsperch queue run <book_id> --dry-run --fixtures DIR [--tier T] [--limit N] [--kind K] [--json]
 uv run owlsperch build-db [--strict] # (re)builds $OWLSPERCH_DATA/db/owlsperch.sqlite
 uv run owlsperch serve [--host H] [--port P]  # FastAPI on 127.0.0.1:8000 by default
 uv run owlsperch dev                  # serve + `npm run dev` in web/, together (Ctrl-C stops both)
@@ -152,34 +154,63 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   consistency + the page-within-segment-span check (segment looked up by
   `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
   writes the outcome back to the originating segment (via the `Segment`
-  model) idempotently.
+  model) idempotently. Bumping a type's `schema_version` in
+  `schemas/registry.json` requires following up with `uv run owlsperch
+  validate <book_id|all> --bump-compatible` against the data dir --
+  otherwise every older record stays stale, `owlsperch build-db` skips all
+  of them, and `server/tests/test_corpus.py` fails (or skips, naming this
+  command) until the migration is run.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
-  `complete`, `summary`, `reset`), the Python side of the `/extract` skill
-  (spec 4.5, batch B5): `select.py` picks pending segments for a tier/kind
-  and marks them `in_progress`, holding an exclusive `flock` on
-  `segments/<book_id>/.queue.lock` for the whole select-and-mark operation
+  `complete`, `summary`, `reset`, `run`), the Python side of the `/extract`
+  skill (spec 4.5, batches B5/B8): `ladder.py` is the pure haiku -> sonnet ->
+  opus escalation state machine (`TIERS`, `TIER_MODELS`, `STALE_AFTER` = 60
+  min, `record_failure` appends `{tier, timestamp, errors, kind}` to
+  `attempts` -- idempotent on an identical repeat, and never double-advances
+  a stale re-validation of an old-tier record -- and advances `tier` unless
+  it's a first `needs_context` at that tier, reporting `exhausted` once opus
+  fails too; `escalate_existing_attempt` is the same logic applied lazily,
+  at selection time, to a pending segment that already has an attempt at its
+  own tier); `select.py` (`select_and_mark`) resets any segment `in_progress`
+  for >60 min back to `pending`, lazily escalates legacy/stuck pending
+  segments, then picks segments for `tier` (default: `None` -- the lowest
+  tier in `TIERS` with pending work) and `kind`, marking them `in_progress`
+  under an exclusive `flock` on `segments/<book_id>/.queue.lock`
   (`--lock-timeout`, default 30s) so two concurrent `queue next` runs can't
-  race on the same segment, and skips any segment that already has an
-  attempt recorded at the requested tier (it's waiting for a B8 tier
-  escalation -- `queue summary`'s `awaiting_escalation` count surfaces
-  these, and this is what guarantees `queue next` eventually returns `[]`);
-  `prompt.py` renders a segment's subagent prompt (book metadata, segment
-  text, the candidate schema(s) -- including nested `object`/array-of-object
-  properties -- rendered live from `schemas/`, a complete EXAMPLE RECORD
-  loaded from `schemas/examples/<kind>.json` when one exists, the output
-  contract, and `extraction.model` from `--model`, default
-  `claude-haiku-4-5`) to `prompts/<book_id>/<seg_id>.md`; `complete.py`
-  ingests a subagent's final JSON (records -> `pending_records` after
-  checking each path resolves inside `records/<book_id>/` and exists on
-  disk, `no_content`, or a malformed reply -- including a `seg_id` mismatch
-  -- and merges `notes` (a list of strings) onto the segment); `summary.py`
-  reports counts; `runner.py` wires all of it into the CLI. `owlsperch
-  validate` promotes a path from `pending_records` to `records` on PASS and
-  drops it on FAIL. The skill itself is `.claude/skills/extract/SKILL.md`
+  race on the same segment; `prompt.py` renders a segment's subagent prompt
+  (book metadata, segment text, the candidate schema(s) -- including nested
+  `object`/array-of-object properties -- rendered live from `schemas/`, a
+  complete EXAMPLE RECORD loaded from `schemas/examples/<kind>.json` when
+  one exists, a "## Prior attempts" section on a retry, "### Adjacent
+  context" blocks for `context_seg_ids`, previous/next segment ids, the
+  output contract including `needs_context`/`proposed_type`, and
+  `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`;
+  `complete.py` ingests a subagent's final JSON: `proposed_type` moves the
+  segment straight to `human/<book_id>/` with the proposal; `needs_context`
+  (ids must exist under `segments/<book_id>/`) merges into
+  `context_seg_ids` and retries the same tier once before escalating;
+  `no_content` marks the segment done; otherwise `records` ->
+  `pending_records` after checking each path resolves inside
+  `records/<book_id>/` and exists on disk -- a missing path, like a
+  malformed reply, escalates the segment via `ladder.record_failure`, moving
+  it to `human/` if already on opus; `summary.py` reports per-tier
+  pass/escalated counts (from both `segments/` and `human/`) plus
+  `needs_context_retries` and `human`; `driver.py` (`queue run <book_id>
+  --dry-run --fixtures DIR`) drives the whole select/subagent/complete/
+  validate loop in-process against a `FixtureSubagent` (canned
+  `{"files": ..., "reply": ...}` JSON per call, `<fixtures_dir>/<seg_id>/
+  <n>.json`) so the state machine is unit tested without launching real
+  Agent-tool subagents; `common.py` has `find_segment_path` (now also
+  searching `human/*/`), `move_segment_to_human`, and `finish_after_failure`
+  (the shared write-back-or-move-to-human step `complete.py` and
+  `validate/runner.py` both call); `runner.py` wires all of it into the CLI.
+  `owlsperch validate` promotes a path from `pending_records` to `records`
+  on PASS and drops it (deleting the file too, unless it's also in
+  `records`) on FAIL. The skill itself is `.claude/skills/extract/SKILL.md`
   -- a short Claude-Code-facing loop over these commands plus Agent-tool
-  subagent launches; all the logic that can be unit tested lives in
-  `queue/` instead of the skill doc.
+  subagent launches, using whatever tier `queue next` returns per item; all
+  the logic that can be unit tested lives in `queue/` instead of the skill
+  doc.
 
 - `pipeline/owlsperch/build_db/` -- the `build-db` subcommand (spec 4.8,
   batch B6): `runner.py` re-validates every `records/<book_id>/<type>/

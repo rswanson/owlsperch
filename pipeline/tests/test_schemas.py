@@ -43,7 +43,7 @@ def test_load_registry_loads_envelope_and_types() -> None:
     registry = load_registry(_repo_schemas_dir())
     assert "spell" in registry.types
     assert registry.types["spell"].schema_file == "spell.json"
-    assert registry.types["spell"].version == 2
+    assert registry.types["spell"].version == 3
     assert registry.envelope_schema["title"] == "Record envelope"
 
 

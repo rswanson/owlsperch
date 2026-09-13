@@ -88,7 +88,7 @@ _SPELLS: list[dict[str, Any]] = [
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "haiku",
             "model": "fixture",
@@ -128,7 +128,7 @@ _SPELLS: list[dict[str, Any]] = [
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "haiku",
             "model": "fixture",

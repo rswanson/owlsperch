@@ -73,7 +73,7 @@ def _valid_spell_record(
     pages: list[int] | None = None,
     name: str = "Fireball",
     slug: str = "fireball",
-    schema_version: int = 2,
+    schema_version: int = 3,
 ) -> dict[str, Any]:
     return {
         "id": f"spell:{book_id}:{slug}",
@@ -283,6 +283,164 @@ def test_missing_levels_fails(tmp_path: Path) -> None:
     assert "levels" in " ".join(segment["attempts"][0]["errors"])
 
 
+# ---------------------------------------------------------------------------
+# Batch B8: `components` is nullable (an abbreviated ", Greater"/", Mass"
+# stat block may omit it, inheriting from the base spell).
+# ---------------------------------------------------------------------------
+
+
+def test_null_components_passes_for_a_greater_variant(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record(name="Glyph of Warding, Greater", slug="glyph-of-warding-greater")
+    record["fields"]["components"] = None
+    _write_record(data_dir, "book", "spell", "glyph-of-warding-greater", record)
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 0
+    assert "PASS records/book/spell/glyph-of-warding-greater.json" in output
+
+
+# ---------------------------------------------------------------------------
+# Batch B8: escalation ladder on FAIL.
+# ---------------------------------------------------------------------------
+
+
+def test_fail_advances_tier_from_haiku_to_sonnet(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    _run(data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert segment["status"] == "pending"
+    assert segment["attempts"][0]["kind"] == "validation"
+
+
+def test_fail_at_opus_moves_segment_to_human_with_every_attempt_kept(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        tier="opus",
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["e1"],
+                "kind": "validation",
+            },
+            {
+                "tier": "sonnet",
+                "timestamp": "2026-01-01T00:00:01+00:00",
+                "errors": ["e2"],
+                "kind": "validation",
+            },
+        ],
+    )
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    record["extraction"]["tier"] = "opus"
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    exit_code, _output = _run(data_dir)
+
+    assert exit_code == 1
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    assert human_path.is_file()
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "escalation_exhausted"
+    assert human_segment["tier"] == "opus"
+    assert len(human_segment["attempts"]) == 3
+    assert [a["tier"] for a in human_segment["attempts"]] == ["haiku", "sonnet", "opus"]
+
+
+def test_fail_deletes_still_pending_record_file_from_disk(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(data_dir, "book", "book-p0010-01", [10], pending_records=[record_rel])
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    record_path = _write_record(data_dir, "book", "spell", "fireball", record)
+
+    _run(data_dir)
+
+    assert not record_path.exists()
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+
+
+def test_fail_never_deletes_a_record_already_promoted_to_records(tmp_path: Path) -> None:
+    """A record that was previously validated (and is thus listed in the
+    segment's `records`, not `pending_records`) but now fails -- e.g. after
+    a schema change -- must never be deleted from disk, only
+    `pending_records` entries from a not-yet-validated claim are."""
+    data_dir = tmp_path / "data"
+    record_rel = "records/book/spell/fireball.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=[record_rel],  # also listed here, as if stale
+        attempts=[],
+    )
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    raw = json.loads(seg_path.read_text())
+    raw["records"] = [record_rel]
+    seg_path.write_text(json.dumps(raw))
+
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []
+    record_path = _write_record(data_dir, "book", "spell", "fireball", record)
+
+    _run(data_dir)
+
+    assert record_path.exists()
+
+
+def test_stale_re_validation_of_old_tier_record_never_double_advances(tmp_path: Path) -> None:
+    """A record whose own `extraction.tier` is behind the segment's current
+    tier (already advanced by an earlier, unrelated failure) must not move
+    the ladder again when it fails a second time under a changed schema."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        tier="sonnet",  # already advanced past haiku
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["old error"],
+                "kind": "validation",
+            }
+        ],
+    )
+    record = _valid_spell_record()
+    record["fields"]["levels"] = []  # fails again, differently
+    record["extraction"]["tier"] = "haiku"  # this record's own (old) tier
+    _write_record(data_dir, "book", "spell", "fireball", record)
+
+    _run(data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"  # unchanged -- did not advance to opus
+    assert len(segment["attempts"]) == 2
+
+
 def test_fail_write_back_is_idempotent_no_duplicate_identical_attempts(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", [10])
@@ -367,7 +525,7 @@ def test_stale_with_json_prints_only_a_json_array(tmp_path: Path) -> None:
     assert item["path"] == record_path.relative_to(data_dir).as_posix()
     assert item["type"] == "spell"
     assert item["schema_version"] == 0
-    assert item["current_version"] == 2
+    assert item["current_version"] == 3
 
 
 def test_stale_with_json_and_nothing_stale_prints_empty_array(tmp_path: Path) -> None:
@@ -391,11 +549,11 @@ def test_bump_compatible_bumps_stale_but_otherwise_valid_record(tmp_path: Path) 
 
     assert exit_code == 0
     rel_path = record_path.relative_to(data_dir).as_posix()
-    assert f"BUMPED {rel_path}: schema_version 1 -> 2" in output
+    assert f"BUMPED {rel_path}: schema_version 1 -> 3" in output
     assert "1 bumped, 0 not bumped, 1 stale total" in output
 
     bumped = json.loads(record_path.read_text())
-    assert bumped["schema_version"] == 2
+    assert bumped["schema_version"] == 3
 
     # A normal validate run now passes -- the version mismatch is gone and
     # nothing else about the record changed.
@@ -492,7 +650,7 @@ def test_bump_compatible_with_json_reports_structured_results(tmp_path: Path) ->
     assert item["path"] == record_path.relative_to(data_dir).as_posix()
     assert item["bumped"] is True
     assert item["from_version"] == 1
-    assert item["to_version"] == 2
+    assert item["to_version"] == 3
     assert item["errors"] == []
 
 

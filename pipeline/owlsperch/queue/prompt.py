@@ -185,6 +185,77 @@ def _procedure_lines(output_dir: Path) -> list[str]:
     ]
 
 
+def _adjacent_seg_ids(data_dir: Path, book_id: str, seg_id: str) -> tuple[str | None, str | None]:
+    """The previous/next segment id of the same book, by filename
+    (book-order) sorting -- printed in the "## Segment" section and offered
+    as the `needs_context` example, since a truncated entity almost always
+    continues into one of these (batch B8)."""
+    seg_dir = data_dir / "segments" / book_id
+    if not seg_dir.is_dir():
+        return None, None
+    ids = sorted(p.stem for p in seg_dir.glob(f"{book_id}-*.json"))
+    if seg_id not in ids:
+        return None, None
+    idx = ids.index(seg_id)
+    prev_id = ids[idx - 1] if idx > 0 else None
+    next_id = ids[idx + 1] if idx + 1 < len(ids) else None
+    return prev_id, next_id
+
+
+def _prior_attempts_lines(segment: Segment) -> list[str]:
+    """A "## Prior attempts" section listing every attempt this segment has
+    already made (tier, kind, and errors), followed by an explicit
+    instruction not to repeat them -- rendered only when `segment.attempts`
+    is non-empty, i.e. this prompt is for a retry (batch B8, criterion 2)."""
+    if not segment.attempts:
+        return []
+    lines = [
+        "## Prior attempts",
+        "",
+        "This segment has been attempted before and failed. Do not repeat",
+        "any of the errors listed below:",
+        "",
+    ]
+    for i, attempt in enumerate(segment.attempts, start=1):
+        if not isinstance(attempt, dict):
+            continue
+        tier = attempt.get("tier", "?")
+        kind = attempt.get("kind", "validation")
+        errors = attempt.get("errors", [])
+        lines.append(f"{i}. tier={tier}, kind={kind}:")
+        for error in errors:
+            lines.append(f"   - {error}")
+    lines.append("")
+    return lines
+
+
+def _context_blocks(data_dir: Path, book_id: str, context_seg_ids: list[str]) -> list[str]:
+    """One "### Adjacent context" block per id in `context_seg_ids`, each
+    rendering that segment's own verbatim text -- rendered after the main
+    segment text when `segment.context_seg_ids` is non-empty (batch B8,
+    criterion 3: a `needs_context` retry's merged text). A missing segment
+    file is silently skipped rather than erroring the whole prompt."""
+    lines: list[str] = []
+    for context_id in context_seg_ids:
+        path = data_dir / "segments" / book_id / f"{context_id}.json"
+        if not path.is_file():
+            continue
+        context_segment = Segment.model_validate_json(path.read_text())
+        pdf_page = context_segment.pages[0] if context_segment.pages else "?"
+        lines += [
+            f"### Adjacent context (segment {context_id}, pdf p. {pdf_page})",
+            "",
+            "The entity you are extracting may continue into this adjacent",
+            "segment's own text:",
+            "",
+            "```",
+            context_segment.text,
+            "```",
+            "",
+        ]
+    return lines
+
+
 def _load_example_record(kind_hint: str, registry: Registry) -> dict[str, Any] | None:
     """The invented, schema-valid `schemas/examples/<kind_hint>.json` fixture
     for `kind_hint`, if one exists (only `spell` has one this batch)."""
@@ -206,6 +277,7 @@ def render_prompt(
     entry = _lookup_entry(segment.book_id, manifest_path)
     title = entry.title if entry is not None else segment.book_id
     citation_prefix = _citation_prefix(segment.book_id, entry)
+    prev_seg_id, next_seg_id = _adjacent_seg_ids(data_dir, segment.book_id, segment.seg_id)
 
     registry = load_registry(schemas_dir)
     output_dir = (data_dir / "records" / segment.book_id / segment.kind_hint).resolve()
@@ -239,6 +311,27 @@ def render_prompt(
             "notes": [],
         }
     )
+    example_needs_context = json.dumps(
+        {
+            "seg_id": segment.seg_id,
+            "records": [],
+            "no_content": None,
+            "needs_context": [next_seg_id or prev_seg_id or "<adjacent-seg-id>"],
+            "notes": [],
+        }
+    )
+    example_proposed_type = json.dumps(
+        {
+            "seg_id": segment.seg_id,
+            "records": [],
+            "no_content": None,
+            "proposed_type": {
+                "name": "<a short name for the new type>",
+                "reason": "<why no existing schema fits this segment>",
+            },
+            "notes": [],
+        }
+    )
     schema_version_line = (
         f"- `schema_version` is the current registered version for this type: {schema_version}."
         if schema_version is not None
@@ -264,11 +357,14 @@ def render_prompt(
         f"- Printed page(s) for this segment: {_printed_pages_str(segment)}",
         f"- Extraction model for this task: {model}",
         "",
+        *_prior_attempts_lines(segment),
         "## Segment",
         "",
         f"- Segment ID: {segment.seg_id}",
         f"- Kind hint: {segment.kind_hint}",
         f"- Heading: {segment.heading}",
+        f"- Previous segment: {prev_seg_id if prev_seg_id else '(none)'}",
+        f"- Next segment: {next_seg_id if next_seg_id else '(none)'}",
         "",
         "### Segment text (verbatim)",
         "",
@@ -276,6 +372,7 @@ def render_prompt(
         segment.text,
         "```",
         "",
+        *_context_blocks(data_dir, segment.book_id, segment.context_seg_ids),
         "## Candidate schema: record envelope (every record's common fields)",
         "",
         *envelope_lines,
@@ -310,10 +407,16 @@ def render_prompt(
         f"    {output_dir}",
         "",
         f"- `id` is `<type>:<book_id>:<slug>`, e.g. `{example_id}`.",
-        "- `slug` is the ASCII-folded kebab-case of the entity's `name`:",
-        "  lowercase it, strip apostrophes, fold accented characters to plain",
-        "  ASCII, replace every run of characters that are not `a-z0-9` with a",
-        "  single `-`, and trim leading/trailing `-`.",
+        "- `slug` is the ASCII-folded kebab-case of the entity's `name`,",
+        "  VERBATIM in the name's own word order -- never reorder words, not",
+        '  even a trailing ", Greater"/", Lesser"/", Mass" suffix, e.g.',
+        '  "Glyph of Warding, Greater" -> `glyph-of-warding-greater`, never',
+        "  `greater-glyph-of-warding`: lowercase it, fold accented characters",
+        "  to plain ASCII, remove every apostrophe with NO hyphen in its",
+        '  place (e.g. "Leomund\'s Tiny Hut" -> `leomunds-tiny-hut`, never',
+        "  `leomund-s-tiny-hut`), replace every remaining run of characters",
+        "  that are not `a-z0-9` with a single `-`, and trim leading/trailing",
+        "  `-`.",
         "- `aliases` is a list of alternate spellings or names for the entity",
         "  found in the segment text (e.g. a non-ASCII spelling, or a name the",
         "  text also uses elsewhere) -- use `[]` if the text gives none.",
@@ -399,6 +502,19 @@ def render_prompt(
         "own, ...):",
         "",
         f"    {example_no_content}",
+        "",
+        "or, if (and only if) the entity is clearly truncated at the very",
+        "start or end of the segment text -- it's cut off mid-stat-block or",
+        "mid-sentence, not merely short -- name the adjacent segment id it",
+        'continues in/from (the "Previous segment"/"Next segment" ids',
+        "printed above; never invent one):",
+        "",
+        f"    {example_needs_context}",
+        "",
+        "or, if no candidate schema above fits this segment's entity at all",
+        "(not just a field or two missing -- the whole shape is wrong):",
+        "",
+        f"    {example_proposed_type}",
         "",
     ]
     return "\n".join(lines)

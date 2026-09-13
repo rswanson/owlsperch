@@ -114,7 +114,8 @@ class Segment(BaseModel):
     #: ISO timestamp set by `owlsperch queue next` when a segment is marked
     #: `in_progress` (batch B5); cleared back to `None` by `owlsperch queue
     #: complete` and `owlsperch queue reset`. Stale in-progress reset (>60
-    #: min, spec 4.5) arrives in B8.
+    #: min, spec 4.5) is applied by `owlsperch queue next` itself (batch B8,
+    #: see `owlsperch.queue.select`) before it selects anything.
     in_progress_since: str | None = None
     #: The extraction model string (`--model`, default `claude-haiku-4-5`)
     #: recorded by `owlsperch queue next` (`select_and_mark`) at selection
@@ -124,6 +125,16 @@ class Segment(BaseModel):
     #: `owlsperch.queue.prompt`). `None` for a segment that has never been
     #: through `queue next`.
     model: str | None = None
+    #: Adjacent segment ids merged in by `owlsperch queue complete` on a
+    #: `needs_context` reply (batch B8): each one's text is rendered into a
+    #: later prompt's "Adjacent context" section (see
+    #: `owlsperch.queue.prompt`) since the entity may continue there. Survives
+    #: tier escalation; never cleared automatically.
+    context_seg_ids: list[str] = []
+    #: The `{"name": ..., "reason": ...}` a subagent proposed when no
+    #: existing schema fit this segment (batch B8) -- set only alongside
+    #: `outcome: "proposed_type"` when the segment is moved to `human/`.
+    proposal: dict[str, Any] | None = None
 
 
 @dataclass

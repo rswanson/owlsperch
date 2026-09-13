@@ -3,7 +3,7 @@
   "$id": "https://owlsperch.dev/schemas/spell.json",
   "title": "Spell fields",
   "description": "The `fields` object of a spell record, per spec 4.6.",
-  "version": 2,
+  "version": 3,
   "type": "object",
   "properties": {
     "school": {
@@ -47,9 +47,10 @@
       "x-ui": { "label": "Levels", "filterable": true, "sortable": false, "group": "classification", "order": 4 }
     },
     "components": {
-      "type": "array",
+      "type": ["array", "null"],
       "items": { "type": "string", "enum": ["V", "S", "M", "F", "DF", "XP"] },
-      "default": [],
+      "default": null,
+      "description": "Null for an abbreviated stat block (a \"X, Mass\"/\"X, Greater\" variant) that omits its own component list because it inherits from the base spell.",
       "x-ui": { "label": "Components", "filterable": true, "sortable": false, "group": "casting", "order": 5 }
     },
     "casting_time": {

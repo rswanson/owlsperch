@@ -449,6 +449,159 @@ def test_prompt_procedure_section_instructs_write_then_read_back(tmp_path: Path)
     assert second_procedure_index > procedure_index
 
 
+def test_prompt_slug_rule_preserves_word_order_and_apostrophe_no_hyphen(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "VERBATIM" in text
+    assert "glyph-of-warding-greater" in text
+    assert "leomunds-tiny-hut" in text
+
+
+# ---------------------------------------------------------------------------
+# Batch B8: retries (prior attempts), adjacent context, previous/next
+# segment ids, needs_context/proposed_type contract.
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_omits_prior_attempts_section_when_no_attempts(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "## Prior attempts" not in text
+
+
+def test_prompt_renders_prior_attempts_section_for_a_retry(tmp_path: Path) -> None:
+    segment = _segment(
+        tier="sonnet",
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["fields.school: 'Not A School' is not one of [...]"],
+                "kind": "validation",
+            }
+        ],
+    )
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    prior_index = text.index("## Prior attempts")
+    segment_index = text.index("## Segment")
+    assert prior_index < segment_index
+    prior_section = text[prior_index:segment_index]
+    assert "tier=haiku" in prior_section
+    assert "kind=validation" in prior_section
+    assert "fields.school" in prior_section
+    assert "do not repeat" in prior_section.lower()
+
+
+def test_prompt_renders_previous_and_next_segment_ids(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    for seg_id, page in [("phb1-p0256-01", 256), ("phb1-p0257-04", 257), ("phb1-p0258-01", 258)]:
+        seg = _segment(seg_id=seg_id, pages=[page], printed_pages=[page])
+        seg_dir = data_dir / "segments" / "phb1"
+        seg_dir.mkdir(parents=True, exist_ok=True)
+        (seg_dir / f"{seg_id}.json").write_text(seg.model_dump_json(indent=2))
+
+    text = render_prompt(
+        _segment(),  # seg_id phb1-p0257-04, the middle one
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "- Previous segment: phb1-p0256-01" in text
+    assert "- Next segment: phb1-p0258-01" in text
+
+
+def test_prompt_previous_and_next_segment_ids_none_when_at_the_edges(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    seg_dir = data_dir / "segments" / "phb1"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    (seg_dir / "phb1-p0257-04.json").write_text(_segment().model_dump_json(indent=2))
+
+    text = render_prompt(
+        _segment(), data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert "- Previous segment: (none)" in text
+    assert "- Next segment: (none)" in text
+
+
+def test_prompt_renders_adjacent_context_block_for_context_seg_ids(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    context_seg = _segment(
+        seg_id="phb1-p0258-01", pages=[258], printed_pages=[257], text="Continuation text here."
+    )
+    seg_dir = data_dir / "segments" / "phb1"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    (seg_dir / "phb1-p0258-01.json").write_text(context_seg.model_dump_json(indent=2))
+    (seg_dir / "phb1-p0257-04.json").write_text(_segment().model_dump_json(indent=2))
+    segment = _segment(context_seg_ids=["phb1-p0258-01"])
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert "### Adjacent context (segment phb1-p0258-01, pdf p. 258)" in text
+    assert "Continuation text here." in text
+
+
+def test_prompt_missing_context_segment_file_is_silently_skipped(tmp_path: Path) -> None:
+    segment = _segment(context_seg_ids=["phb1-p9999-01"])
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "phb1-p9999-01" not in text
+
+
+def test_prompt_how_to_respond_includes_needs_context_and_proposed_type(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"needs_context"' in text
+    assert '"proposed_type"' in text
+    assert "truncated" in text.lower()
+    assert "no candidate schema" in text.lower() or "no existing schema" in text.lower()
+
+
 def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
     segment = _segment(kind_hint="rules_section")
     manifest_path = _write_manifest(tmp_path)

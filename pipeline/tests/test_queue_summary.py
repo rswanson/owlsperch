@@ -1,6 +1,9 @@
 """Tests for `owlsperch.queue.summary` (and `owlsperch queue summary`), per
-B5 acceptance criterion 5: counts by status/tier/outcome and by kind_hint,
-plus records written.
+B5 acceptance criterion 5 (counts by status/tier/outcome and by kind_hint,
+plus records written) and B8 acceptance criterion 8 (per-tier ladder
+pass/escalated counts, `needs_context_retries`, and `human`, which replace
+B5's `awaiting_escalation` -- that stopped meaning anything once a failed
+attempt always advances the tier instead of stalling).
 """
 
 from __future__ import annotations
@@ -105,13 +108,90 @@ def test_render_and_to_json(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# awaiting_escalation: pending segments with an attempt at their current tier
+# Per-tier ladder counts (B8): pass/escalated per tier, needs_context_retries,
+# human.
 # ---------------------------------------------------------------------------
 
 
-def test_awaiting_escalation_counts_pending_segments_with_attempt_at_current_tier(
+def _write_human_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: object) -> None:
+    defaults: dict[str, Any] = dict(
+        seg_id=seg_id,
+        book_id=book_id,
+        pages=[10],
+        printed_pages=[10],
+        kind_hint="spell",
+        heading="Fireball",
+        text="Fireball text.",
+        status="human",
+        tier="opus",
+        outcome="escalation_exhausted",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    defaults.update(overrides)
+    segment = Segment(**defaults)
+    human_dir = data_dir / "human" / book_id
+    human_dir.mkdir(parents=True, exist_ok=True)
+    (human_dir / f"{seg_id}.json").write_text(segment.model_dump_json(indent=2))
+
+
+def test_ladder_counts_pass_and_escalated_per_tier(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    # Passed at haiku.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0001-01",
+        status="done",
+        outcome="validated",
+        tier="haiku",
+    )
+    # Escalated from haiku to sonnet (a validation attempt at haiku, now on
+    # sonnet).
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0002-01",
+        status="pending",
+        tier="sonnet",
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["bad"],
+                "kind": "validation",
+            }
+        ],
+    )
+    # Passed at sonnet after that escalation.
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0003-01",
+        status="done",
+        outcome="validated",
+        tier="sonnet",
+    )
+
+    summary = compute_summary("book", data_dir=data_dir)
+
+    by_tier = {line.tier: line for line in summary.ladder}
+    assert by_tier["haiku"].passed == 1
+    assert by_tier["haiku"].escalated == 1
+    assert by_tier["sonnet"].passed == 1
+    assert by_tier["sonnet"].escalated == 0
+    assert "haiku: 1 pass / 1 -> sonnet" in summary.render()
+    assert "sonnet: 1 pass / 0 -> opus" in summary.render()
+
+    payload = summary.to_json()
+    haiku_json = next(t for t in payload["ladder"] if t["tier"] == "haiku")
+    assert haiku_json == {"tier": "haiku", "pass": 1, "escalated": 1, "escalated_to": "sonnet"}
+
+
+def test_first_needs_context_at_tier_is_not_counted_as_escalated_second_is(
     tmp_path: Path,
 ) -> None:
+    # A lone (first) needs_context attempt at haiku -- a same-tier retry,
+    # not an escalation.
     data_dir = tmp_path / "data"
     _write_segment(
         data_dir,
@@ -119,32 +199,68 @@ def test_awaiting_escalation_counts_pending_segments_with_attempt_at_current_tie
         "book-p0001-01",
         status="pending",
         tier="haiku",
-        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["needs_context: book-p0002-01"],
+                "kind": "needs_context",
+            }
+        ],
     )
-    # Pending but no attempt yet -- not awaiting escalation.
-    _write_segment(data_dir, "book", "book-p0002-01", status="pending", tier="haiku")
-    # An attempt, but at a different (earlier) tier -- not awaiting escalation.
+    # A second needs_context at haiku -- escalated to sonnet.
     _write_segment(
         data_dir,
         "book",
-        "book-p0003-01",
+        "book-p0002-01",
         status="pending",
         tier="sonnet",
-        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
-    )
-    # done, not pending -- not counted even though it has an attempt.
-    _write_segment(
-        data_dir,
-        "book",
-        "book-p0004-01",
-        status="done",
-        tier="haiku",
-        outcome="validated",
-        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["needs_context: a"],
+                "kind": "needs_context",
+            },
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:01+00:00",
+                "errors": ["needs_context: b"],
+                "kind": "needs_context",
+            },
+        ],
     )
 
     summary = compute_summary("book", data_dir=data_dir)
 
-    assert summary.awaiting_escalation == 1
-    assert "awaiting_escalation: 1" in summary.render()
-    assert summary.to_json()["awaiting_escalation"] == 1
+    by_tier = {line.tier: line for line in summary.ladder}
+    assert by_tier["haiku"].escalated == 1  # only the second segment
+    assert summary.needs_context_retries == 3  # 1 + 2 attempts total
+
+
+def test_human_segments_are_counted_and_included_in_status_and_ladder(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0001-01", status="pending", tier="haiku")
+    _write_human_segment(
+        data_dir,
+        "book",
+        "book-p0002-01",
+        tier="opus",
+        attempts=[
+            {
+                "tier": "opus",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["bad"],
+                "kind": "validation",
+            }
+        ],
+    )
+
+    summary = compute_summary("book", data_dir=data_dir)
+
+    assert summary.human == 1
+    assert summary.counts_by_status["human"] == 1
+    by_tier = {line.tier: line for line in summary.ladder}
+    assert by_tier["opus"].escalated == 1
+    assert "opus: 0 pass / 1 -> human" in summary.render()
+    assert summary.to_json()["human"] == 1

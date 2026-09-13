@@ -36,11 +36,13 @@ def discover_books_with_records(data_dir: Path) -> list[str]:
 
 def discover_record_files(data_dir: Path, book_id: str) -> list[Path]:
     """Every `records/<book_id>/<type>/*.json` file, sorted for stable
-    output."""
+    output. Dotfiles are ignored (batch B8) -- a subagent once wrote a
+    `.response.json` file into a records directory alongside its real
+    output, which isn't a record at all."""
     book_dir = records_dir(data_dir) / book_id
     if not book_dir.is_dir():
         return []
-    return sorted(book_dir.glob("*/*.json"))
+    return sorted(p for p in book_dir.glob("*/*.json") if not p.name.startswith("."))
 
 
 def load_json(path: Path) -> dict[str, Any]:

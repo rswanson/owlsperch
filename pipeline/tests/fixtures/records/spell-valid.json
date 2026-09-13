@@ -30,7 +30,7 @@
   "variant_of": null,
   "applied_overrides": [],
   "macro_eligible": false,
-  "schema_version": 2,
+  "schema_version": 3,
   "extraction": {
     "tier": "haiku",
     "model": "claude-haiku-synthetic-test",
