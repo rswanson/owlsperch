@@ -863,6 +863,74 @@ def test_build_db_no_toc_file_yields_uncategorized_and_records_missing_book(
     assert row["toc_path"] is None
 
 
+def test_build_db_empty_toc_file_treated_same_as_missing(tmp_path: Path) -> None:
+    """A present-but-empty `toc/<book_id>.json` (`"entries": []`) -- e.g.
+    from a book whose only contents-like page turned out to be a
+    numbered-table index -- must fall back to uncategorized/NULL and be
+    counted in `toc_missing_books`, exactly like a book with no toc file
+    at all."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    _write_toc(data_dir, "book", [])
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.toc_missing_books == ["book"]
+
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT toc_category, toc_chapter, toc_section, toc_path FROM records WHERE id = ?",
+            ("spell:book:fireball",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["toc_category"] == "uncategorized"
+    assert row["toc_chapter"] is None
+    assert row["toc_section"] is None
+    assert row["toc_path"] is None
+
+
+def test_run_build_db_warns_once_per_book_with_empty_toc_file(tmp_path: Path) -> None:
+    """Same warning as the missing-file case, for a present-but-empty
+    `toc/<book_id>.json` -- naming `--force` since plain `owlsperch toc
+    book` is a no-op once the (empty) file already exists."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [5])
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(seg_id="book-p0010-01", pages=[5]),
+    )
+    _write_toc(data_dir, "book", [])
+
+    out, err = io.StringIO(), io.StringIO()
+    run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    warnings = [line for line in err.getvalue().splitlines() if "toc/book.json" in line]
+    assert len(warnings) == 1
+    assert "uv run owlsperch toc book --force" in warnings[0]
+
+
 def test_run_build_db_warns_once_per_book_with_no_toc_file(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
@@ -891,9 +959,9 @@ def test_run_build_db_warns_once_per_book_with_no_toc_file(tmp_path: Path) -> No
         err=err,
     )
 
-    warnings = [line for line in err.getvalue().splitlines() if "no toc/book.json" in line]
+    warnings = [line for line in err.getvalue().splitlines() if "toc/book.json" in line]
     assert len(warnings) == 1
-    assert "uv run owlsperch toc book" in warnings[0]
+    assert "uv run owlsperch toc book --force" in warnings[0]
 
 
 def test_build_db_does_not_write_record_fields_rows_for_toc_columns(tmp_path: Path) -> None:

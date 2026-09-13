@@ -141,6 +141,43 @@ def test_run_toc_reports_failure_instead_of_writing_empty_file(tmp_path: Path) -
     assert not (data_dir / "toc" / "book.json").exists()
 
 
+def test_run_toc_reports_failure_for_table_index_only_contents_page(tmp_path: Path) -> None:
+    """A contents page whose only dotted-leader lines are numbered-table
+    index entries ("Table 1-N: ...") must be reported as a parse failure,
+    not written out as an all-empty `toc/<book_id>.json`."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path, ["book"])
+    text_dir = data_dir / "text" / "book"
+    text_dir.mkdir(parents=True, exist_ok=True)
+    table_index_text = "\n".join(
+        f"Table 1–1{i}: Some Index Row .......... {10 + i}" for i in range(1, 8)
+    )
+    (text_dir / "p0001.txt").write_text(table_index_text)
+
+    out = io.StringIO()
+    exit_code = run_toc("book", data_dir=data_dir, manifest_path=manifest_path, out=out)
+
+    assert exit_code == 1
+    assert "error" in out.getvalue().lower()
+    assert not (data_dir / "toc" / "book.json").exists()
+
+
+def test_run_toc_by_id_fails_when_text_dir_is_missing(tmp_path: Path) -> None:
+    """`owlsperch toc <book_id>` (an explicit id, not `all`) must exit
+    non-zero when that book has no `text/<book_id>/` directory at all --
+    the same "no text output" note is printed, but it's a failure for a
+    single named book, not a silent no-op."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path, ["no-text"])
+
+    out = io.StringIO()
+    exit_code = run_toc("no-text", data_dir=data_dir, manifest_path=manifest_path, out=out)
+
+    assert exit_code == 1
+    assert "no text output" in out.getvalue()
+    assert not (data_dir / "toc" / "no-text.json").exists()
+
+
 def test_run_toc_all_reports_one_failed_book_but_keeps_going(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path, ["bad-book", "good-book"])

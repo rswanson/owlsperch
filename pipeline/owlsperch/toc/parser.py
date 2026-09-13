@@ -59,9 +59,13 @@ _TOP_LEVEL_NAMES = {
 #: A contents page must have at least this many dotted-leader matches to be
 #: considered one at all (D2).
 _MIN_MATCHES_PER_PAGE = 3
-#: Combined raw matches across every qualifying contents page must reach
-#: this many, or the whole book is reported as failed instead of writing an
-#: (almost) empty file (D2).
+#: Combined USABLE entries (dotted-leader matches across every qualifying
+#: contents page, MINUS the "Table N-M" index entries `_TABLE_INDEX_RE`
+#: drops) must reach this many, or the whole book is reported as failed
+#: instead of writing an (almost) empty file (D2). Checked AFTER the
+#: table-index filter, not on the raw match count -- a contents-like page
+#: that is entirely a numbered-tables index must fail this guard too,
+#: rather than parse to a silently empty `entries: []`.
 _MIN_TOTAL_ENTRIES = 5
 #: Only the first this-many pdf pages are scanned for a contents page (D2).
 _CONTENTS_SCAN_LIMIT = 12
@@ -219,13 +223,6 @@ def _max_text_page(text_dir: Path) -> int | None:
 def parse_book_toc(text_dir: Path, *, book_id: str) -> ParsedToc:
     contents_pages = find_contents_pages(text_dir)
     raw_entries, raw_count = _parse_raw_entries(text_dir, contents_pages)
-    if raw_count < _MIN_TOTAL_ENTRIES:
-        raise TocParseError(
-            f"could not find a usable table of contents for '{book_id}' "
-            f"(scanned pdf pages 1-{_CONTENTS_SCAN_LIMIT} of its text/ dir, "
-            f"found {raw_count} dotted-leader entries across "
-            f"{len(contents_pages)} candidate page(s), need >= {_MIN_TOTAL_ENTRIES})"
-        )
 
     dropped_table_entries = 0
     filtered: list[_RawEntry] = []
@@ -234,6 +231,16 @@ def parse_book_toc(text_dir: Path, *, book_id: str) -> ParsedToc:
             dropped_table_entries += 1
             continue
         filtered.append(entry)
+
+    if len(filtered) < _MIN_TOTAL_ENTRIES:
+        raise TocParseError(
+            f"could not find a usable table of contents for '{book_id}' "
+            f"(scanned pdf pages 1-{_CONTENTS_SCAN_LIMIT} of its text/ dir, "
+            f"found {raw_count} dotted-leader match(es) across "
+            f"{len(contents_pages)} candidate page(s), {dropped_table_entries} of "
+            f'them "Table N-M" index entries, leaving {len(filtered)} usable '
+            f"entries, need >= {_MIN_TOTAL_ENTRIES})"
+        )
 
     pages_json = _load_pages_json(text_dir)
     printed_to_pdf, modal_offset = _build_printed_to_pdf(pages_json)

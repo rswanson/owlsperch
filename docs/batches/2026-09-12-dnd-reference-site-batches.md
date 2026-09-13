@@ -579,6 +579,50 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `pipeline/owlsperch/build_db/`, `pipeline/owlsperch/fixture_db.py`,
   `server/`, `web/`, CLAUDE.md, README.
 
+## B10b-mand1: `owlsperch toc` never writes an empty table of contents silently
+- **Status:** merged
+- **Follow-up to:** B10b (the B10b review -- three holes in criterion 1's
+  "books whose contents page can't be found or yields < 5 entries are
+  reported (not silently empty)" guarantee).
+- **User-visible outcome:** a book whose only contents-like page is really a
+  numbered-tables index ("Table 3-8: The Druid ....... 35") is now *reported
+  as failed* instead of writing a `toc/<book_id>.json` with `entries: []`;
+  `owlsperch toc <book_id>` on a book with no `text/<book_id>/` yet exits
+  non-zero instead of printing a skip note and exiting 0; and `build-db`
+  gives a present-but-empty toc file the same one-line WARNING a missing one
+  already got, so an empty taxonomy never looks like a healthy one.
+- **Acceptance criteria:**
+  1. `parse_book_toc`'s `_MIN_TOTAL_ENTRIES` guard is checked on the
+     entries that survive the `_TABLE_INDEX_RE` filter, not on the raw
+     dotted-leader match count, and its `TocParseError` names the book_id,
+     the raw match count, how many were dropped as table-index entries, the
+     usable count, and the threshold.
+  2. A unit test covers a contents page whose matches are ALL "Table N-M"
+     index entries: `parse_book_toc` raises rather than returning an empty
+     `ParsedToc`.
+  3. A runner test covers the same page end to end: `run_toc` exits 1,
+     prints an error, and writes no `toc/<book_id>.json`.
+  4. `toc_book` gains `missing_text_is_error` (default `False`, so `run_toc
+     all` still prints the "no text output" skip line and keeps going);
+     `run_toc`'s single-`book_id` path passes `True`, so naming one book
+     directly exits 1 when its `text/` dir is missing.
+  5. `build_db._load_records` folds a present-but-empty toc (`entries == []`)
+     into `toc_missing_books` alongside a missing file: both resolve their
+     records to `uncategorized`/null and both produce exactly one WARNING
+     line (now naming `owlsperch toc <book_id> --force`, since the stale
+     file has to be overwritten). `run_build_db` still returns 0 -- this is
+     a warning, not a `skipped_invalid`.
+  6. CLAUDE.md's `toc`/`build-db` notes describe the post-filter threshold,
+     the by-id vs. `all` missing-text asymmetry, and the empty-toc warning.
+- **How to observe:** `uv run owlsperch toc <a book whose contents page is a
+  table index> ; echo $?` prints an error and 1, and writes no
+  `toc/<book_id>.json`; `uv run owlsperch build-db` with an empty
+  `toc/phb1.json` in place prints the `no usable toc` WARNING and still
+  exits 0.
+- **Touches:** `pipeline/owlsperch/toc/parser.py`,
+  `pipeline/owlsperch/toc/runner.py`,
+  `pipeline/owlsperch/build_db/runner.py`, tests, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
