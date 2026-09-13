@@ -495,6 +495,80 @@ def test_run_build_db_warning_lists_at_most_first_5_skipped_paths(tmp_path: Path
     assert stderr_output.count("records/book/spell/broken-spell-") == 5
 
 
+# ---------------------------------------------------------------------------
+# B10-mand3: a duplicate record `id` (two schema-valid files claiming the
+# same id) is skipped like any other invalid record, instead of crashing
+# the whole build with a bare sqlite3.IntegrityError.
+# ---------------------------------------------------------------------------
+
+
+def test_build_db_skips_duplicate_record_id_instead_of_crashing(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    _write_record(data_dir, "book", "spell", "fireball", record)
+    _write_record(data_dir, "book", "spell", "fireball-copy", record)
+
+    result = build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir())
+
+    with _connect(result.db_path) as conn:
+        count = conn.execute("SELECT count(*) FROM records").fetchone()[0]
+    assert count == 1
+    assert result.counts_by_type["spell"] == 1
+    assert result.skipped_invalid == 1
+    assert len(result.skipped) == 1
+
+    skipped = result.skipped[0]
+    assert skipped.path in (
+        "records/book/spell/fireball.json",
+        "records/book/spell/fireball-copy.json",
+    )
+    assert "duplicate record id" in skipped.error
+    assert "spell:book:fireball" in skipped.error
+
+
+def test_run_build_db_duplicate_id_exits_0_and_warns(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    _write_record(data_dir, "book", "spell", "fireball", record)
+    _write_record(data_dir, "book", "spell", "fireball-copy", record)
+
+    out, err = io.StringIO(), io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    assert exit_code == 0
+    assert "duplicate record id" in err.getvalue()
+
+
+def test_run_build_db_duplicate_id_exits_1_with_strict(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    record = _valid_spell_record()
+    _write_record(data_dir, "book", "spell", "fireball", record)
+    _write_record(data_dir, "book", "spell", "fireball-copy", record)
+
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        strict=True,
+        out=io.StringIO(),
+        err=io.StringIO(),
+    )
+
+    assert exit_code == 1
+
+
 def test_cli_build_db_strict_flag_is_wired_up() -> None:
     from owlsperch.cli import build_parser
 

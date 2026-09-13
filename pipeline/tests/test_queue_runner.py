@@ -164,6 +164,61 @@ def test_run_queue_next_human_output_when_nothing_pending(tmp_path: Path) -> Non
     assert "no pending" in out.getvalue().lower()
 
 
+def test_run_queue_next_dry_run_json_matches_real_selection_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01")
+    _write_segment(data_dir, "book", "book-p0011-01")
+
+    dry_out = io.StringIO()
+    exit_code = run_queue_next(
+        "book",
+        tier="haiku",
+        limit=5,
+        kind="spell",
+        json_output=True,
+        dry_run=True,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=dry_out,
+    )
+    assert exit_code == 0
+    dry_payload = json.loads(dry_out.getvalue())
+
+    for seg_id in ("book-p0010-01", "book-p0011-01"):
+        segment = _read_segment(data_dir, "book", seg_id)
+        assert segment["status"] == "pending"
+    prompts_dir = data_dir / "prompts"
+    assert not prompts_dir.exists() or list(prompts_dir.rglob("*.md")) == []
+
+    real_out = io.StringIO()
+    exit_code = run_queue_next(
+        "book",
+        tier="haiku",
+        limit=5,
+        kind="spell",
+        json_output=True,
+        dry_run=False,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=real_out,
+    )
+    assert exit_code == 0
+    real_payload = json.loads(real_out.getvalue())
+
+    dry_ids_and_prompts = {(item["seg_id"], item["prompt_path"]) for item in dry_payload}
+    real_ids_and_prompts = {(item["seg_id"], item["prompt_path"]) for item in real_payload}
+    assert dry_ids_and_prompts == real_ids_and_prompts
+
+    for seg_id in ("book-p0010-01", "book-p0011-01"):
+        segment = _read_segment(data_dir, "book", seg_id)
+        assert segment["status"] == "in_progress"
+
+
 def test_run_queue_prompt_prints_path(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)

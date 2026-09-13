@@ -68,6 +68,19 @@ def test_queue_next_and_run_kind_default_to_none() -> None:
     assert run_args.kind is None
 
 
+def test_queue_next_dry_run_flag_defaults_false_and_parses() -> None:
+    """B10-mand3: `queue next --dry-run` previews the selection without
+    marking anything in_progress or writing prompts."""
+    from owlsperch.cli import build_parser
+
+    parser = build_parser()
+    defaulted = parser.parse_args(["queue", "next", "book", "--limit", "1"])
+    assert defaulted.dry_run is False
+
+    with_flag = parser.parse_args(["queue", "next", "book", "--limit", "1", "--dry-run"])
+    assert with_flag.dry_run is True
+
+
 def test_queue_audit_subparser_wires_book_id_fix_and_json() -> None:
     from owlsperch.cli import build_parser
 

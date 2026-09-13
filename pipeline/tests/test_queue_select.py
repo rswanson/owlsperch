@@ -564,6 +564,105 @@ def test_lone_needs_context_attempt_at_own_tier_is_still_selected_at_same_tier(
     assert segment["tier"] == "haiku"
 
 
+def _in_progress_since(data_dir: Path, book_id: str, seg_id: str, since: str) -> None:
+    seg_path = data_dir / "segments" / book_id / f"{seg_id}.json"
+    raw = json.loads(seg_path.read_text())
+    raw["in_progress_since"] = since
+    seg_path.write_text(json.dumps(raw))
+
+
+# ---------------------------------------------------------------------------
+# B10-mand3 criterion (a): `queue next --dry-run` previews the same
+# selection a real call would make, without any write side effects.
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_selects_without_writing_anything(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+
+    for i in range(4):
+        _write_segment(data_dir, _segment(f"book-p{i:04d}-01"))
+
+    # A stale in_progress segment the heal pass would reset to pending.
+    _write_segment(data_dir, _segment("book-p0004-01", status="in_progress"))
+    stale_since = (datetime.now(UTC) - timedelta(minutes=90)).isoformat()
+    _in_progress_since(data_dir, "book", "book-p0004-01", stale_since)
+
+    # A pending segment with a failed attempt at its own tier -- lazy
+    # escalation would advance it to sonnet before selection.
+    _write_segment(
+        data_dir,
+        _segment(
+            "book-p0005-01",
+            attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": []}],
+        ),
+    )
+
+    seg_dir = data_dir / "segments" / "book"
+    before_bytes = {p.name: p.read_bytes() for p in sorted(seg_dir.glob("book-*.json"))}
+    prompts_dir = data_dir / "prompts"
+
+    dry_selected = select_and_mark(
+        "book",
+        data_dir=data_dir,
+        tier="haiku",
+        limit=3,
+        kind="spell",
+        manifest_path=manifest_path,
+        dry_run=True,
+    )
+
+    assert len(dry_selected) == 3
+    assert all(item.tier == "haiku" and item.model for item in dry_selected)
+
+    after_bytes = {p.name: p.read_bytes() for p in sorted(seg_dir.glob("book-*.json"))}
+    assert after_bytes == before_bytes
+    assert not prompts_dir.exists() or list(prompts_dir.rglob("*.md")) == []
+
+    # A real call with the same arguments selects exactly the same segments.
+    real_selected = select_and_mark(
+        "book",
+        data_dir=data_dir,
+        tier="haiku",
+        limit=3,
+        kind="spell",
+        manifest_path=manifest_path,
+        dry_run=False,
+    )
+    assert {item.seg_id for item in real_selected} == {item.seg_id for item in dry_selected}
+    assert {item.model for item in real_selected} == {item.model for item in dry_selected}
+
+    for item in real_selected:
+        segment = _read_segment(data_dir, "book", item.seg_id)
+        assert segment["status"] == "in_progress"
+
+
+def test_dry_run_preview_includes_a_stale_in_progress_segment(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, _segment("book-p0010-01", status="in_progress"))
+    stale_since = (datetime.now(UTC) - timedelta(minutes=90)).isoformat()
+    _in_progress_since(data_dir, "book", "book-p0010-01", stale_since)
+
+    selected = select_and_mark(
+        "book",
+        data_dir=data_dir,
+        tier="haiku",
+        limit=5,
+        kind="spell",
+        manifest_path=manifest_path,
+        dry_run=True,
+    )
+
+    assert len(selected) == 1
+    assert selected[0].seg_id == "book-p0010-01"
+
+    # On disk, nothing changed -- still in_progress.
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "in_progress"
+
+
 def test_select_and_mark_succeeds_once_lock_is_released(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
