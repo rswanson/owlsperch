@@ -363,6 +363,69 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/queue/prompt.py`,
   `schemas/examples/rules_section.json`, tests, `CLAUDE.md`.
 
+## B10-mand2: `queue complete` refuses to overwrite another segment's record
+- **Status:** merged
+- **Follow-up to:** B10 (the B10 extraction-wave retrospective -- the
+  companion fix to B10-mand1: mand1 stops generic names from colliding in
+  the first place, mand2 stops a collision that still happens from
+  silently destroying the earlier segment's work, and recovers the
+  segments this already happened to).
+- **User-visible outcome:** a subagent reply claiming a record path another
+  segment already owns is now rejected and escalated instead of silently
+  overwriting that segment's extracted content -- and
+  `uv run owlsperch queue audit <book_id> [--fix]` finds and re-queues the
+  segments whose output was already lost this way before the guard existed.
+- **Acceptance criteria:**
+  1. `queue complete` adds a third check to the existing resolve-inside-
+     `records/<book_id>/` and exists-on-disk checks: the path must not
+     already be owned by a *different* segment of the same book. A
+     colliding path escalates the segment via `ladder.record_failure` with
+     error `record_path_collision: <path> is owned by segment <seg_id>`,
+     exactly as a missing path does -- both kinds of error fold into the
+     one attempt for a single reply.
+  2. A colliding path is left completely untouched on disk: neither its
+     content nor its `extraction` block is rewritten, so the earlier
+     claimant's content survives.
+  3. Ownership comes from the SEGMENT index (`_record_path_owners` scans
+     every `segments/<book_id>/*.json` and `human/<book_id>/*.json` file's
+     own `records`/`pending_records`), never from the record file's own
+     `extraction.segment_id` -- that value is a subagent-copied placeholder
+     and on a just-clobbered file already names the thief. Paths are keyed
+     by their RESOLVED spelling, so `records/x.json`, an absolute spelling
+     and a `..`-containing spelling all compare equal.
+  4. A segment re-claiming a path it already owns itself is still allowed:
+     an idempotent retry of the same claim is not a collision. The
+     ownership index is built only when there is at least one candidate
+     path, so a `no_content`/`needs_context`/`proposed_type` reply never
+     pays for the scan.
+  5. `queue audit <book_id>` is read-only and reports `collisions` (paths
+     claimed by 2+ segments, from the segment index) and `stale_claims`
+     (segments claiming a path they no longer own, decided from the record
+     FILE's `extraction.segment_id`, reason `owned_by_other` or `missing`),
+     in both plain text and `--json`.
+  6. `queue audit --fix` prunes exactly the stale paths from each affected
+     segment's own `records`/`pending_records` and soft-resets a `done`
+     victim back to `pending` (clearing `outcome`/`outcome_reason`/
+     `in_progress_since`, keeping `tier`/`attempts`/`notes`/
+     `context_seg_ids`) so it re-extracts under the new guard and under
+     B10-mand1's name-qualification rule. A `pending`/`in_progress` segment
+     just gets the pruning; a segment in `human/` is reported but left
+     untouched. `--fix` never deletes, moves, or rewrites a record file,
+     and is idempotent (a second run finds nothing left to do).
+  7. Tests cover: the collision guard (including a colliding path's file
+     being byte-identical afterwards), an opus-tier collision moving the
+     segment to `human/`, a differently-spelled claim on an owned path, a
+     self-reclaim being allowed, the audit report's two sources of truth,
+     the plain-text render naming collision owners and stale segments,
+     `--fix` idempotency, and `attempts`/`tier` surviving a soft reset.
+- **How to observe:** `uv run owlsperch queue audit phb1`, then
+  `uv run owlsperch queue audit phb1 --fix`, then
+  `uv run owlsperch queue summary phb1` to see the re-queued segments.
+- **Touches:** `pipeline/owlsperch/queue/complete.py`,
+  `pipeline/owlsperch/queue/audit.py`,
+  `pipeline/owlsperch/queue/runner.py`, `pipeline/owlsperch/cli.py`,
+  tests, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
