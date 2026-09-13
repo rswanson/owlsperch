@@ -1,0 +1,95 @@
+{
+  "categories": [
+    {
+      "key": "character-creation",
+      "label": "Character creation",
+      "order": 1,
+      "description": "Ability scores, alignment, description, and the overall character-building process.",
+      "record_types": []
+    },
+    {
+      "key": "races",
+      "label": "Races",
+      "order": 2,
+      "description": "Playable races and racial traits.",
+      "record_types": []
+    },
+    {
+      "key": "classes",
+      "label": "Classes",
+      "order": 3,
+      "description": "Base and prestige classes, their class features, and level progression tables.",
+      "record_types": []
+    },
+    {
+      "key": "skills",
+      "label": "Skills",
+      "order": 4,
+      "description": "Skill descriptions, checks, and synergy rules.",
+      "record_types": []
+    },
+    {
+      "key": "feats",
+      "label": "Feats",
+      "order": 5,
+      "description": "Feats and their prerequisites/benefits.",
+      "record_types": ["feat"]
+    },
+    {
+      "key": "equipment",
+      "label": "Equipment",
+      "order": 6,
+      "description": "Weapons, armor, goods, services, and wealth.",
+      "record_types": []
+    },
+    {
+      "key": "combat",
+      "label": "Combat",
+      "order": 7,
+      "description": "Attacks, actions, special attacks, initiative, injury and death.",
+      "record_types": []
+    },
+    {
+      "key": "adventuring",
+      "label": "Adventuring",
+      "order": 8,
+      "description": "Movement, exploration, carrying capacity, and treasure.",
+      "record_types": []
+    },
+    {
+      "key": "magic",
+      "label": "Magic",
+      "order": 9,
+      "description": "Spells, spellcasting rules, and psionics.",
+      "record_types": ["spell"]
+    },
+    {
+      "key": "monsters",
+      "label": "Monsters",
+      "order": 10,
+      "description": "Monsters and other creatures.",
+      "record_types": []
+    },
+    {
+      "key": "running-the-game",
+      "label": "Running the game",
+      "order": 11,
+      "description": "Dungeon Master guidance: campaigns, rewards, traps.",
+      "record_types": []
+    },
+    {
+      "key": "basics",
+      "label": "Game basics",
+      "order": 12,
+      "description": "Introduction, how the rules work, glossary/appendix, index, character sheet.",
+      "record_types": []
+    },
+    {
+      "key": "uncategorized",
+      "label": "Uncategorized",
+      "order": 13,
+      "description": "Content that couldn't be resolved to any other category.",
+      "record_types": []
+    }
+  ]
+}
