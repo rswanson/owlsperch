@@ -1,0 +1,29 @@
+{
+  "id": "feat:example:sable-stance",
+  "type": "feat",
+  "name": "Sable Stance",
+  "slug": "sable-stance",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [1],
+  "citation": "Example p. 1",
+  "text_md": "You have trained to fight from a low, rooted crouch that makes you difficult to displace.",
+  "fields": {
+    "feat_type": "General",
+    "prerequisites": ["Dex 13", "Base attack bonus +1"],
+    "benefit": "While standing in Sable Stance, you gain a +4 bonus on checks made to resist a bull rush or trip attempt.",
+    "special": "A fighter may select Sable Stance as one of his fighter bonus feats."
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "haiku",
+    "model": "claude-haiku-4-5",
+    "segment_id": "example-p0001-02",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

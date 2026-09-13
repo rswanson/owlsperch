@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/table.json",
+  "title": "Table fields",
+  "description": "The `fields` object of a table record, per spec 4.6.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "caption": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Caption", "filterable": false, "sortable": false, "group": "core", "order": 1 }
+    },
+    "columns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Header cells, left to right.",
+      "x-ui": { "label": "Columns", "filterable": false, "sortable": false, "group": "grid", "order": 2 }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "default": [],
+      "description": "One list of strings per body row -- every cell is a string, numbers included.",
+      "x-ui": { "label": "Rows", "filterable": false, "sortable": false, "group": "grid", "order": 3 }
+    },
+    "parent_record": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The `id` of the record that owns this table.",
+      "x-ui": { "label": "Parent record", "filterable": false, "sortable": false, "group": "core", "order": 4 }
+    }
+  },
+  "required": ["columns", "rows"],
+  "additionalProperties": false
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/rules_section.json",
+  "title": "Rules section fields",
+  "description": "The `fields` object of a rules_section record, per spec 4.6.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "topic": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The section's own heading/subject.",
+      "x-ui": { "label": "Topic", "filterable": false, "sortable": false, "group": "classification", "order": 1 }
+    },
+    "parent_section": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The enclosing section heading, when the text makes it explicit.",
+      "x-ui": { "label": "Parent section", "filterable": false, "sortable": false, "group": "classification", "order": 2 }
+    },
+    "chapter": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Chapter", "filterable": true, "sortable": false, "group": "classification", "order": 3 }
+    }
+  },
+  "required": ["topic"],
+  "additionalProperties": false
+}

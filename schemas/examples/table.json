@@ -1,0 +1,33 @@
+{
+  "id": "table:example:table-1-1-sable-ranks",
+  "type": "table",
+  "name": "Table 1–1: Sable Ranks",
+  "slug": "table-1-1-sable-ranks",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [1],
+  "citation": "Example p. 1",
+  "text_md": "",
+  "fields": {
+    "caption": "Table 1–1: Sable Ranks",
+    "columns": ["Rank", "Title", "Prerequisite"],
+    "rows": [
+      ["1", "Initiate", "None"],
+      ["2", "Adept", "1 sable rite witnessed"],
+      ["3", "Warden", "3 sable rites witnessed"]
+    ],
+    "parent_record": "rules_section:example:sable-rites"
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "haiku",
+    "model": "claude-haiku-4-5",
+    "segment_id": "example-p0001-03",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

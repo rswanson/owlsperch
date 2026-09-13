@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/feat.json",
+  "title": "Feat fields",
+  "description": "The `fields` object of a feat record, per spec 4.6.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "feat_type": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The bracketed tag in the heading, title-cased (e.g. \"General\", \"Metamagic\", \"Item Creation\"). Not an enum -- tags vary across books.",
+      "x-ui": { "label": "Feat type", "filterable": true, "sortable": false, "group": "classification", "order": 1 }
+    },
+    "prerequisites": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "x-ui": { "label": "Prerequisites", "filterable": false, "sortable": false, "group": "classification", "order": 2 }
+    },
+    "benefit": {
+      "type": "string",
+      "minLength": 1,
+      "x-ui": { "label": "Benefit", "filterable": false, "sortable": false, "group": "effect", "order": 3 }
+    },
+    "normal": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Normal", "filterable": false, "sortable": false, "group": "effect", "order": 4 }
+    },
+    "special": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Special", "filterable": false, "sortable": false, "group": "effect", "order": 5 }
+    }
+  },
+  "required": ["benefit"],
+  "additionalProperties": false
+}

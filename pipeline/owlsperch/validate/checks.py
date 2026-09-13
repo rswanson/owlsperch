@@ -14,8 +14,19 @@ from typing import Any
 
 def slugify(name: str) -> str:
     """ASCII-fold `name` to kebab-case, per spec 4.6's `id` convention
-    (`<type>:<book_id>:<slug>`, `slug` = ASCII-folded kebab-case of `name`)."""
-    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    (`<type>:<book_id>:<slug>`, `slug` = ASCII-folded kebab-case of `name`).
+
+    Before the ASCII fold, every character in Unicode category `Pd` (dash
+    punctuation -- e.g. the en dash "–" or em dash "—", not just
+    the ASCII hyphen-minus) is replaced with a plain "-", so a title like
+    "Table 3–8: The Druid" slugifies to `table-3-8-the-druid` rather
+    than losing the dash entirely during NFKD/ASCII folding and merging
+    into `table-38-the-druid`.
+    """
+    dash_normalized = "".join("-" if unicodedata.category(ch) == "Pd" else ch for ch in name)
+    folded = unicodedata.normalize("NFKD", dash_normalized).encode("ascii", "ignore").decode(
+        "ascii"
+    )
     folded = folded.lower()
     folded = folded.replace("'", "")
     folded = re.sub(r"[^a-z0-9]+", "-", folded)
@@ -89,6 +100,61 @@ def check_spell_fields(record: dict[str, Any]) -> list[str]:
     return errors
 
 
+def check_feat_fields(record: dict[str, Any]) -> list[str]:
+    """Feat-specific consistency check from spec 4.5: a feat has a benefit."""
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return ["fields is missing or not an object"]
+
+    benefit = fields.get("benefit")
+    if not isinstance(benefit, str) or not benefit.strip():
+        return ["benefit must be a non-empty string"]
+    return []
+
+
+def check_rules_section_fields(record: dict[str, Any]) -> list[str]:
+    """rules_section-specific consistency check from spec 4.5: a
+    rules_section has a topic."""
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return ["fields is missing or not an object"]
+
+    topic = fields.get("topic")
+    if not isinstance(topic, str) or not topic.strip():
+        return ["topic must be a non-empty string"]
+    return []
+
+
+def check_table_fields(record: dict[str, Any]) -> list[str]:
+    """Table-specific consistency check from spec 4.5: a table has equal-
+    length rows -- `columns` is a non-empty list, and every entry of `rows`
+    is a list whose length equals `len(columns)`."""
+    errors: list[str] = []
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return ["fields is missing or not an object"]
+
+    columns = fields.get("columns")
+    if not isinstance(columns, list) or len(columns) == 0:
+        errors.append("columns must be a non-empty list")
+        return errors
+
+    rows = fields.get("rows")
+    if not isinstance(rows, list):
+        errors.append("rows must be a list")
+        return errors
+
+    expected = len(columns)
+    for i, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != expected:
+            actual = len(row) if isinstance(row, list) else "not a list"
+            errors.append(
+                f"row {i} has {actual} cell(s), expected {expected} (columns has {expected})"
+            )
+
+    return errors
+
+
 def check_pages_within_segment(record: dict[str, Any], segment: dict[str, Any] | None) -> list[str]:
     """Every page a record cites must be within its originating segment's
     page span (spec 4.5). A missing segment is its own failure -- there's
@@ -115,4 +181,7 @@ def check_pages_within_segment(record: dict[str, Any], segment: dict[str, Any] |
 #: (optionally) add an entry here for checks a JSON Schema can't express.
 TYPE_FIELD_CHECKS: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "spell": check_spell_fields,
+    "feat": check_feat_fields,
+    "rules_section": check_rules_section_fields,
+    "table": check_table_fields,
 }
