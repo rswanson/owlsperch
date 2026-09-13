@@ -53,6 +53,41 @@ _SEGMENT: dict[str, Any] = {
     "created_at": "2026-01-01T00:00:00+00:00",
 }
 
+#: A second segment (B10) so the feat fixture record below has its own
+#: originating segment to cite pages within, distinct from the spell
+#: segment above.
+_SEGMENT_2: dict[str, Any] = {
+    "seg_id": "fixture-book-p0002-01",
+    "book_id": "fixture-book",
+    "pages": [2],
+    "printed_pages": [2],
+    "kind_hint": "feat",
+    "heading": "Power Strike [General]",
+    "text": "Power Strike [General]\n\nYou hit harder at the cost of accuracy.",
+    "status": "pending",
+    "tier": "haiku",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
+#: A third segment (B10) for the rules_section + the table it owns.
+_SEGMENT_3: dict[str, Any] = {
+    "seg_id": "fixture-book-p0003-01",
+    "book_id": "fixture-book",
+    "pages": [3],
+    "printed_pages": [3],
+    "kind_hint": "rules_section",
+    "heading": "Grapple Ranks",
+    "text": (
+        "Grapple Ranks\n\nA combatant's grapple rank reflects experience "
+        "wrestling foes to the ground.\n\nRank\tBonus\n1\t+0\n2\t+2\n3\t+4"
+    ),
+    "status": "pending",
+    "tier": "haiku",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
 _SPELLS: list[dict[str, Any]] = [
     {
         "id": "spell:fixture-book:fireball",
@@ -187,6 +222,101 @@ _SPELLS: list[dict[str, Any]] = [
     },
 ]
 
+#: (B10) An invented feat -- never copied from a real book (see this
+#: module's docstring on why: no real book text may be committed to this
+#: public repo).
+_FEAT: dict[str, Any] = {
+    "id": "feat:fixture-book:power-strike",
+    "type": "feat",
+    "name": "Power Strike",
+    "slug": "power-strike",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [2],
+    "citation": "FB p. 2",
+    "text_md": "You hit harder at the cost of accuracy.",
+    "fields": {
+        "feat_type": "General",
+        "prerequisites": ["Str 13", "Base attack bonus +1"],
+        "benefit": (
+            "You may take a -1 penalty on melee attack rolls to gain a +2 "
+            "bonus on melee damage rolls."
+        ),
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-p0002-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (B10) An invented rules_section that owns a table via `tables` -- the
+#: Playwright browse/detail spec (`web/e2e/smoke.spec.ts`) opens this record
+#: and asserts a rendered `<table>` with its header cells shows up below the
+#: record text.
+_RULES_SECTION: dict[str, Any] = {
+    "id": "rules_section:fixture-book:grapple-ranks",
+    "type": "rules_section",
+    "name": "Grapple Ranks",
+    "slug": "grapple-ranks",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [3],
+    "citation": "FB p. 3",
+    "text_md": ("A combatant's grapple rank reflects experience wrestling foes to the ground."),
+    "fields": {"topic": "Grapple Ranks"},
+    "tables": ["table:fixture-book:table-1-grapple-ranks"],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-p0003-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (B10) The table `_RULES_SECTION` above points at via `tables`.
+_TABLE: dict[str, Any] = {
+    "id": "table:fixture-book:table-1-grapple-ranks",
+    "type": "table",
+    "name": "Table 1: Grapple Ranks",
+    "slug": "table-1-grapple-ranks",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [3],
+    "citation": "FB p. 3",
+    "text_md": "",
+    "fields": {
+        "caption": "Table 1: Grapple Ranks",
+        "columns": ["Rank", "Bonus"],
+        "rows": [["1", "+0"], ["2", "+2"], ["3", "+4"]],
+        "parent_record": "rules_section:fixture-book:grapple-ranks",
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-p0003-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
 
 def write_fixture_data(data_dir: Path) -> BuildResult:
     """Write the synthetic manifest/segment/record files under `data_dir`
@@ -200,12 +330,18 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
 
     seg_dir = data_dir / "segments" / "fixture-book"
     seg_dir.mkdir(parents=True, exist_ok=True)
-    (seg_dir / f"{_SEGMENT['seg_id']}.json").write_text(json.dumps(_SEGMENT, indent=2))
+    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3):
+        (seg_dir / f"{segment['seg_id']}.json").write_text(json.dumps(segment, indent=2))
 
     records_dir = data_dir / "records" / "fixture-book" / "spell"
     records_dir.mkdir(parents=True, exist_ok=True)
     for spell in _SPELLS:
         (records_dir / f"{spell['slug']}.json").write_text(json.dumps(spell, indent=2))
+
+    for record in (_FEAT, _RULES_SECTION, _TABLE):
+        type_dir = data_dir / "records" / "fixture-book" / record["type"]
+        type_dir.mkdir(parents=True, exist_ok=True)
+        (type_dir / f"{record['slug']}.json").write_text(json.dumps(record, indent=2))
 
     return build_db(data_dir=data_dir, manifest_path=manifest_path)
 

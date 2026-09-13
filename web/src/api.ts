@@ -55,6 +55,22 @@ export interface HealthResponse {
   db: boolean;
 }
 
+// A table a record references via its own `tables` id list (spec 4.9,
+// batch B10): a resolved one carries its grid; an id with no matching
+// `table` record yet comes back with `pending: true` and every other field
+// null/empty (spec edge case: "Record references a table that failed").
+export interface RecordTable {
+  id: string;
+  pending: boolean;
+  name: string | null;
+  slug: string | null;
+  caption: string | null;
+  columns: string[];
+  rows: string[][];
+  citation: string | null;
+  book_id: string | null;
+}
+
 export interface RecordDetail {
   id: string;
   type: string;
@@ -66,7 +82,7 @@ export interface RecordDetail {
   citation: string | null;
   text_md: string;
   fields: Record<string, unknown>;
-  tables: unknown[];
+  tables: RecordTable[];
   canonical: boolean;
   variant_of: string | null;
   applied_overrides: unknown[];

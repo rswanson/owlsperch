@@ -1,0 +1,27 @@
+{
+  "id": "rules_section:example:sable-rites",
+  "type": "rules_section",
+  "name": "Sable Rites",
+  "slug": "sable-rites",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [1],
+  "citation": "Example p. 1",
+  "text_md": "Sable rites are a set of ranked observances a sable-order initiate performs to advance in standing. Each rite must be witnessed by a superior of higher rank.",
+  "fields": {
+    "topic": "Sable Rites",
+    "chapter": "Chapter 1: The Sable Order"
+  },
+  "tables": ["table:example:table-1-1-sable-ranks"],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "haiku",
+    "model": "claude-haiku-4-5",
+    "segment_id": "example-p0001-03",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

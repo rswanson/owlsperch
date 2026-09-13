@@ -149,6 +149,16 @@ CREATE VIRTUAL TABLE names_fts USING fts5(
     content='records',
     content_rowid='rowid'
 );
+
+CREATE TABLE tables (
+    record_id TEXT PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    caption TEXT,
+    columns TEXT NOT NULL,
+    rows TEXT NOT NULL,
+    parent_record TEXT
+);
+CREATE INDEX tables_parent_record_idx ON tables (parent_record);
 """
 
 
@@ -185,6 +195,13 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
 
     if isinstance(value, list):
         if not value:
+            return []
+        if all(isinstance(item, list) for item in value):
+            # A list-of-lists (e.g. table `rows`, the grid body) produces NO
+            # `record_fields` rows -- that content lives in the dedicated
+            # `tables` table instead (populated separately in
+            # `_insert_record` for `type == "table"` records), not flattened
+            # into individually-searchable scalar rows here.
             return []
         if all(isinstance(item, dict) for item in value):
             # Array-of-object (e.g. spell `levels`): one row per sub-field,
@@ -316,6 +333,20 @@ def _insert_record(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
                 "INSERT INTO record_pages (record_id, book_id, page) VALUES (?, ?, ?)",
                 page_rows,
             )
+
+    if record["type"] == "table" and isinstance(fields, dict):
+        conn.execute(
+            "INSERT INTO tables (record_id, book_id, caption, columns, rows, parent_record) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record_id,
+                record["book_id"],
+                fields.get("caption"),
+                json.dumps(fields.get("columns") or []),
+                json.dumps(fields.get("rows") or []),
+                fields.get("parent_record"),
+            ),
+        )
 
 
 def _load_records(

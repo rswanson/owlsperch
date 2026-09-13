@@ -196,6 +196,31 @@ def test_kind_option_selects_a_different_kind(tmp_path: Path) -> None:
     assert selected[0].seg_id == "book-p0011-01"
 
 
+def test_default_kind_none_selects_every_registered_kind_never_stat_block(
+    tmp_path: Path,
+) -> None:
+    """B10 criterion 6: `kind=None` (the new default) resolves to every
+    kind_hint with a registered schema (spell, feat, table, rules_section)
+    -- a book with pending spell + feat + stat_block segments selects the
+    spell and feat ones and never the stat_block one (no schema registered
+    for it), so it isn't burned as `no_content`."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, _segment("book-p0010-01", kind_hint="spell"))
+    _write_segment(data_dir, _segment("book-p0011-01", kind_hint="feat"))
+    _write_segment(data_dir, _segment("book-p0012-01", kind_hint="stat_block"))
+
+    selected = select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, manifest_path=manifest_path
+    )
+
+    selected_ids = {item.seg_id for item in selected}
+    assert selected_ids == {"book-p0010-01", "book-p0011-01"}
+
+    stat_block = _read_segment(data_dir, "book", "book-p0012-01")
+    assert stat_block["status"] == "pending"
+
+
 def test_no_segments_dir_returns_empty_list(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True)

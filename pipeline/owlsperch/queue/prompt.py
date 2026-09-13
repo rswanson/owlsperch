@@ -40,6 +40,88 @@ from owlsperch.segment.runner import Segment
 #: prompt`) doesn't pass `--model` explicitly.
 DEFAULT_MODEL = "claude-haiku-4-5"
 
+#: Per-kind extraction rules (B10), rendered as a "## Extraction rules for
+#: `<kind>`" section right after the candidate schema. Only spell's rules
+#: reference `CLASS_ABBREVIATIONS` -- the other kinds have no class-level
+#: concept at all, so that table stays out of their prompts entirely
+#: (criterion 7: a feat prompt must not carry spell class-level
+#: instructions). A kind_hint with no entry here (e.g. `stat_block`, which
+#: has no registered schema yet either) simply gets no rules section.
+_KIND_RULES: dict[str, list[str]] = {
+    "spell": [
+        "`text_md` begins at the descriptive body, NOT the stat block --",
+        "do NOT repeat School, Level, Components, Casting Time, Range,",
+        "Target/Effect/Area, Duration, Saving Throw, or Spell Resistance",
+        "as a bulleted list or in any other form: those already live in",
+        "`fields` and the site renders them from there. `text_md` is only",
+        "the description paragraph(s) that follow the stat block, faithfully",
+        "reproduced.",
+        "",
+        "`levels[].class` must use the FULL class name, never the stat",
+        "block's abbreviation -- expand every abbreviation using this",
+        "table:",
+        "",
+        *[f"- `{abbr}` -> `{full}`" for abbr, full in CLASS_ABBREVIATIONS.items()],
+        "",
+        '`"Sor/Wiz N"` (or any other "/"-joined run of abbreviations) becomes',
+        "TWO entries, one per class, both at the same level -- e.g.",
+        '`"Sor/Wiz 3"` becomes `{"class": "Sorcerer", "level": 3}` and',
+        '`{"class": "Wizard", "level": 3}`, never a single combined entry.',
+        "Anything not in the table above (a cleric domain like `Air` or",
+        "`Fire`, or a prestige class) is kept exactly as written, with only",
+        "its first letter capitalized.",
+    ],
+    "feat": [
+        "The heading is `NAME [TYPE]`: `name` is the title-cased name (e.g.",
+        '"Power Attack"); `feat_type` is the bracketed tag, title-cased',
+        '(e.g. "General"). If the heading has no bracketed tag, omit',
+        "`feat_type` entirely (never write it as `null`).",
+        "",
+        "The body is one paragraph with inline `Prerequisite:` /",
+        "`Prerequisites:` / `Benefit:` / `Normal:` / `Special:` markers --",
+        "split on those markers:",
+        "",
+        "- `prerequisites` is the list of comma-separated prerequisites as",
+        '  written (e.g. `["Str 13"]`).',
+        "- `benefit`, `normal`, and `special` are the text after their own",
+        "  marker, with the marker itself removed.",
+        "",
+        "`text_md` is ONLY the descriptive lead-in before the first",
+        "`Prerequisite:`/`Benefit:` marker (often a single sentence, and",
+        "sometimes there is none at all) -- never repeat the benefit/normal/",
+        "special text there.",
+    ],
+    "rules_section": [
+        "`topic` is the section's own heading/subject. `parent_section` is",
+        "the enclosing section's heading, ONLY when the text makes it",
+        "explicit (otherwise omit it). `chapter` is the chapter name, ONLY",
+        "when it's known from the text (otherwise omit it).",
+        "",
+        "`text_md` is the section's prose, faithfully reproduced.",
+        "",
+        "A segment that is a table of contents entry, an index fragment, a",
+        "caption with no rule text of its own, or a stray line answers",
+        "`no_content` instead of a record.",
+    ],
+    "table": [
+        "`name` is the printed table title VERBATIM, including its number",
+        '(e.g. "Table 3–8: The Druid"). `caption` is the same string',
+        "(or the fuller descriptive caption, when the text gives one",
+        "separately from the bare title).",
+        "",
+        "`columns` is the header row's cells, left to right. `rows` is one",
+        "list of strings per body row, with EXACTLY as many cells as",
+        '`columns` -- pad a short row with `""` rather than dropping cells.',
+        "If the header row can't be reconstructed from the segment text,",
+        "answer `no_content` rather than guessing at column names.",
+        "",
+        "Many table segments in this pipeline are caption-only (the table's",
+        "body was absorbed into a different segment during text",
+        "reconstruction) -- answering `no_content` for one of those is",
+        "correct, not a mistake to work around.",
+    ],
+}
+
 
 def prompt_path_for(data_dir: Path, book_id: str, seg_id: str) -> Path:
     return data_dir / "prompts" / book_id / f"{seg_id}.md"
@@ -256,6 +338,49 @@ def _context_blocks(data_dir: Path, book_id: str, context_seg_ids: list[str]) ->
     return lines
 
 
+def _kind_rules_lines(kind_hint: str) -> list[str]:
+    """The "## Extraction rules for `<kind>`" section for `kind_hint`, or
+    `[]` if no per-kind rules are registered for it (e.g. `stat_block`,
+    which also has no schema yet -- see `_KIND_RULES`)."""
+    rules = _KIND_RULES.get(kind_hint)
+    if rules is None:
+        return []
+    return [f"## Extraction rules for `{kind_hint}`", "", *rules, ""]
+
+
+def _table_convention_lines(data_dir: Path, book_id: str, kind_hint: str) -> list[str]:
+    """The shared "tables belonging to this entity" convention (criterion
+    3): for any kind other than `table` itself, a subagent that finds a
+    tab-separated table in its segment's text belonging to the entity it is
+    extracting writes a SECOND record -- a `table` record -- alongside the
+    entity's own, and cross-links the two. Prints both absolute output
+    directories so the subagent never has to guess the table's own output
+    path. Omitted entirely for a `table` segment itself, which has nothing
+    else to cross-link to."""
+    if kind_hint == "table":
+        return []
+    table_output_dir = (data_dir / "records" / book_id / "table").resolve()
+    return [
+        "### Tables belonging to this entity",
+        "",
+        "If this segment's text contains a table belonging to the entity",
+        "you are extracting (tab-separated rows), write a SECOND record --",
+        "a `table` record -- alongside the entity's own, to this exact",
+        "directory (create it if it does not exist yet), named",
+        "`<slug>.json` the same way:",
+        "",
+        f"    {table_output_dir}",
+        "",
+        "- Set the table record's `fields.parent_record` to the owning",
+        "  record's `id`.",
+        "- Add the table record's own `id`",
+        "  (`table:<book_id>:<table-slug>`) to the owning record's `tables`",
+        "  array.",
+        "- List BOTH file paths in your reply's `records` array.",
+        "",
+    ]
+
+
 def _load_example_record(kind_hint: str, registry: Registry) -> dict[str, Any] | None:
     """The invented, schema-valid `schemas/examples/<kind_hint>.json` fixture
     for `kind_hint`, if one exists (only `spell` has one this batch)."""
@@ -381,6 +506,7 @@ def render_prompt(
         "",
         *candidate_lines,
         "",
+        *_kind_rules_lines(segment.kind_hint),
     ]
 
     if example_record is not None:
@@ -416,7 +542,9 @@ def render_prompt(
         '  place (e.g. "Leomund\'s Tiny Hut" -> `leomunds-tiny-hut`, never',
         "  `leomund-s-tiny-hut`), replace every remaining run of characters",
         "  that are not `a-z0-9` with a single `-`, and trim leading/trailing",
-        "  `-`.",
+        "  `-`. An en dash or em dash counts as a hyphen for this purpose",
+        '  (e.g. "Table 3–8: The Druid" -> `table-3-8-the-druid`), not as',
+        "  a character to drop.",
         "- `aliases` is a list of alternate spellings or names for the entity",
         "  found in the segment text (e.g. a non-ASCII spelling, or a name the",
         "  text also uses elsewhere) -- use `[]` if the text gives none.",
@@ -443,34 +571,19 @@ def render_prompt(
         '  segment (see "Printed page(s)" above), cite it as "pdf p. <N>"',
         "  using the raw PDF page index instead -- never invent a printed",
         "  page number.",
-        "- `text_md` is the entity's full rule text rewritten as faithful",
-        "  Markdown, not a summary of it:",
-        "  - its stat-block lines (Level, Components, Casting Time, Range,",
-        "    Target/Effect/Area, Duration, Saving Throw, Spell Resistance,",
-        "    etc.) become a bulleted list, each item bold-labeled, e.g.",
-        "    `**Level:** Sor/Wiz 3`;",
-        "  - followed by the description paragraph(s), reproduced faithfully;",
-        "  - any tab-separated lines in the segment text (a table row) become",
-        "    a Markdown table (`| cell | cell | ... |` with a header",
-        "    separator row).",
+        "- `text_md` is the entity's rule text rewritten as faithful",
+        "  Markdown, not a summary of it -- reproduced faithfully, not",
+        '  paraphrased. See the "Extraction rules for `'
+        + segment.kind_hint
+        + "`\" section above for exactly what counts as this kind's",
+        "  `text_md` and what must NOT be repeated there.",
         "- Never invent a name. If a stat block in this segment has no name",
         "  anywhere in the segment text (e.g. a second, unlabeled stat block",
         "  immediately preceding a later, named one), skip writing a record",
         "  for it entirely and report it in `notes` as",
         "  `unnamed_entity: <first 60 chars of its text>`.",
-        "- `levels[].class` must use the FULL class name, never the",
-        "  stat block's abbreviation -- expand every abbreviation using this",
-        "  table:",
         "",
-        *[f"  - `{abbr}` -> `{full}`" for abbr, full in CLASS_ABBREVIATIONS.items()],
-        "",
-        '  `"Sor/Wiz N"` (or any other "/"-joined run of abbreviations) becomes',
-        "  TWO entries, one per class, both at the same level -- e.g.",
-        '  `"Sor/Wiz 3"` becomes `{"class": "Sorcerer", "level": 3}` and',
-        '  `{"class": "Wizard", "level": 3}`, never a single combined entry.',
-        "  Anything not in the table above (a cleric domain like `Air` or",
-        "  `Fire`, or a prestige class) is kept exactly as written, with only",
-        "  its first letter capitalized.",
+        *_table_convention_lines(data_dir, segment.book_id, segment.kind_hint),
         schema_version_line,
         "- `extraction` is exactly:",
         "",
@@ -482,9 +595,14 @@ def render_prompt(
         "  here are fine.",
         "",
         "- Never invent fields that are not in the schema above -- both schemas",
-        "  reject unknown properties (`additionalProperties: false`). Omit a",
-        "  field (or use its documented default) if the text does not support",
-        "  a value for it, rather than guessing.",
+        "  reject unknown properties (`additionalProperties: false`). If you",
+        "  have no supported value for a `fields` property, OMIT it",
+        "  entirely -- **never write it as `null`.** Writing `null` for a",
+        "  value you don't have is exactly as wrong as inventing one; leave",
+        "  the key out of the JSON object altogether. (Envelope build-time",
+        "  keys -- `canonical`, `variant_of`, `applied_overrides`,",
+        "  `macro_eligible`, `aliases`, `tables` -- may simply be omitted",
+        "  too; the pipeline fills them in.)",
         "",
         "## Procedure (repeated -- do this before you reply)",
         "",

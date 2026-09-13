@@ -122,4 +122,71 @@ describe("RecordPage", () => {
     expect(container.textContent).toContain("<img src=x onerror=alert(1)>");
     expect(container.textContent).toContain("<script>alert(2)</script>");
   });
+
+  it("renders a resolved table below the record text (batch B10)", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        tables: [
+          {
+            id: "table:fixture-book:table-1-grapple-ranks",
+            pending: false,
+            name: "Table 1: Grapple Ranks",
+            slug: "table-1-grapple-ranks",
+            caption: "Table 1: Grapple Ranks",
+            columns: ["Rank", "Bonus"],
+            rows: [["1", "+0"]],
+            citation: "FB p. 3",
+            book_id: "fixture-book",
+          },
+        ],
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.getByRole("columnheader", { name: "Rank" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "+0" })).toBeInTheDocument();
+  });
+
+  it("prepends a table-type record's own grid and hides columns/rows from field groups", async () => {
+    const TABLE_SCHEMAS_RESPONSE: api.SchemasResponse = {
+      types: {
+        table: {
+          label: "Table",
+          plural_label: "Tables",
+          version: 1,
+          fields: [
+            { name: "caption", "x-ui": { label: "Caption", group: "core", order: 1 } },
+            { name: "columns", "x-ui": { label: "Columns", group: "grid", order: 2 } },
+            { name: "rows", "x-ui": { label: "Rows", group: "grid", order: 3 } },
+          ],
+        },
+      },
+    };
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        id: "table:fixture-book:table-1-grapple-ranks",
+        type: "table",
+        name: "Table 1: Grapple Ranks",
+        slug: "table-1-grapple-ranks",
+        fields: {
+          caption: "Table 1: Grapple Ranks",
+          columns: ["Rank", "Bonus"],
+          rows: [["1", "+0"]],
+        },
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(TABLE_SCHEMAS_RESPONSE);
+
+    renderRecordPage("table", "table-1-grapple-ranks");
+
+    await screen.findByRole("heading", { level: 1, name: "Table 1: Grapple Ranks" });
+    expect(screen.getByRole("columnheader", { name: "Rank" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "+0" })).toBeInTheDocument();
+    // columns/rows must not ALSO show up as comma-joined field-group rows.
+    expect(screen.queryByText("Columns")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rows")).not.toBeInTheDocument();
+  });
 });

@@ -5,6 +5,24 @@
       "label": "Spell",
       "plural_label": "Spells",
       "version": 3
+    },
+    "feat": {
+      "schema": "feat.json",
+      "label": "Feat",
+      "plural_label": "Feats",
+      "version": 1
+    },
+    "rules_section": {
+      "schema": "rules_section.json",
+      "label": "Rules section",
+      "plural_label": "Rules sections",
+      "version": 1
+    },
+    "table": {
+      "schema": "table.json",
+      "label": "Table",
+      "plural_label": "Tables",
+      "version": 1
     }
   }
 }

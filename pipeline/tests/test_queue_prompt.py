@@ -357,9 +357,6 @@ def test_prompt_instructs_aliases_pages_and_unnamed_entity_rule(tmp_path: Path) 
     assert "`pages` is set authoritatively by the pipeline" in text
     assert "Never invent a name" in text
     assert "unnamed_entity:" in text
-    assert "bulleted list" in text
-    assert "**Level:**" in text
-    assert "Markdown table" in text
 
 
 def test_prompt_states_pages_are_pdf_indices_with_literal_example(tmp_path: Path) -> None:
@@ -602,7 +599,53 @@ def test_prompt_how_to_respond_includes_needs_context_and_proposed_type(tmp_path
     assert "no candidate schema" in text.lower() or "no existing schema" in text.lower()
 
 
-def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# Batch B10: per-kind extraction rules, never-null instruction, table-
+# writing convention, and the slug rule's dash clause.
+# ---------------------------------------------------------------------------
+
+
+def test_spell_prompt_does_not_instruct_bulleting_the_stat_block(tmp_path: Path) -> None:
+    """B8 follow-up (criterion 7): the spell rule no longer tells the
+    subagent to re-emit the stat-block lines as a bullet list -- those
+    already live in `fields` and the site renders them from there."""
+    segment = _segment()  # kind_hint spell
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "each item bold-labeled" not in text
+    assert "**Level:**" not in text
+    assert "begins at the descriptive body" in text
+    assert "do NOT repeat School, Level, Components" in text
+
+
+def test_prompt_renders_extraction_rules_section_for_feat(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="feat", heading="Power Attack [General]")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "## Extraction rules for `feat`" in text
+    assert "NAME [TYPE]" in text
+    assert "Prerequisite:" in text
+    assert "Benefit:" in text
+    # A feat prompt must not carry spell class-level instructions.
+    assert "`Sor` -> `Sorcerer`" not in text
+    assert "levels[].class" not in text
+
+
+def test_prompt_renders_extraction_rules_section_for_rules_section(tmp_path: Path) -> None:
     segment = _segment(kind_hint="rules_section")
     manifest_path = _write_manifest(tmp_path)
 
@@ -613,5 +656,93 @@ def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -
         schemas_dir=_repo_schemas_dir(),
     )
 
-    assert "rules_section" in text
+    assert "## Extraction rules for `rules_section`" in text
+    assert "`topic` is the section's own heading" in text
+    assert "table of contents entry" in text
+
+
+def test_prompt_renders_extraction_rules_section_for_table(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="table")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "## Extraction rules for `table`" in text
+    assert "printed table title VERBATIM" in text
+    assert "caption-only" in text
+    # A table segment has nothing else to cross-link to.
+    assert "Tables belonging to this entity" not in text
+
+
+def test_prompt_table_writing_convention_prints_both_output_dirs(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    segment = _segment(kind_hint="feat")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    feat_dir = (data_dir / "records" / "phb1" / "feat").resolve()
+    table_dir = (data_dir / "records" / "phb1" / "table").resolve()
+    assert "### Tables belonging to this entity" in text
+    assert str(feat_dir) in text
+    assert str(table_dir) in text
+    assert "fields.parent_record" in text
+    assert "`tables` array" in text or "owning record's `tables`" in text
+
+
+def test_prompt_never_null_instruction_is_explicit(tmp_path: Path) -> None:
+    """B8 follow-up (criterion 8): the prompt states a `fields` property
+    with no supported value must be OMITTED, never written as `null`."""
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "never write it as `null`" in text
+    assert "OMIT it" in text
+    assert "macro_eligible" in text and "may simply be omitted" in text
+
+
+def test_prompt_slug_rule_documents_dash_punctuation(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "en dash or em dash counts as a hyphen" in text
+    assert "table-3-8-the-druid" in text
+
+
+def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -> None:
+    # stat_block has no registered schema (still a future batch) -- the only
+    # kind_hint left this batch that exercises the "no schema" branch, now
+    # that spell/feat/table/rules_section are all registered.
+    segment = _segment(kind_hint="stat_block")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "stat_block" in text
     assert "no schema" in text.lower()

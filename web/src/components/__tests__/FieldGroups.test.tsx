@@ -97,6 +97,15 @@ describe("buildFieldGroups", () => {
     );
     expect(groups).toEqual([]);
   });
+
+  it("excludes fields named in hiddenFields (batch B10: a table record's own columns/rows)", () => {
+    const groups = buildFieldGroups(
+      { school: "Evocation", descriptors: ["Fire"] },
+      SCHEMA_FIELDS,
+      ["descriptors"],
+    );
+    expect(groups[0].rows.map((r) => r.label)).toEqual(["School"]);
+  });
 });
 
 describe("FieldGroups component", () => {
@@ -131,5 +140,17 @@ describe("FieldGroups component", () => {
       <FieldGroups fields={{ school: null }} schemaFields={SCHEMA_FIELDS} />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("omits a field named in hiddenFields even when it has a value", () => {
+    render(
+      <FieldGroups
+        fields={{ school: "Evocation", descriptors: ["Fire"] }}
+        schemaFields={SCHEMA_FIELDS}
+        hiddenFields={["descriptors"]}
+      />,
+    );
+    expect(screen.getByText("School")).toBeInTheDocument();
+    expect(screen.queryByText("Descriptors")).not.toBeInTheDocument();
   });
 });

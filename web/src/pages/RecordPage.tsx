@@ -4,7 +4,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError, getRecord, getSchemas, type RecordDetail, type SchemaField } from "../api";
 import { FieldGroups } from "../components/FieldGroups";
+import { buildOwnTable, RecordTables } from "../components/RecordTables";
 import { NotFoundPage } from "./NotFoundPage";
+
+// A `type === "table"` record's own `columns`/`rows` fields render as a
+// real HTML grid (via `RecordTables`), not a comma-joined string in the
+// generic field groups below.
+const TABLE_TYPE_HIDDEN_FIELDS = ["columns", "rows"];
 
 type LoadState =
   | { status: "loading" }
@@ -61,6 +67,8 @@ export function RecordPage() {
   }
 
   const { record, schemaFields, typeLabel } = state;
+  const isTableRecord = record.type === "table";
+  const tables = isTableRecord ? [buildOwnTable(record), ...record.tables] : record.tables;
 
   return (
     <article className="record-page">
@@ -72,10 +80,15 @@ export function RecordPage() {
         <h1>{record.name}</h1>
         {record.citation && <p className="citation">{record.citation}</p>}
       </div>
-      <FieldGroups fields={record.fields} schemaFields={schemaFields} />
+      <FieldGroups
+        fields={record.fields}
+        schemaFields={schemaFields}
+        hiddenFields={isTableRecord ? TABLE_TYPE_HIDDEN_FIELDS : undefined}
+      />
       <div className="text-md">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.text_md}</ReactMarkdown>
       </div>
+      <RecordTables tables={tables} />
     </article>
   );
 }

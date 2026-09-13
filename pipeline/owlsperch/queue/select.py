@@ -49,6 +49,7 @@ from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import move_segment_to_human, now_iso
 from owlsperch.queue.ladder import TIER_MODELS, TIERS, escalate_existing_attempt, is_stale
 from owlsperch.queue.prompt import render_prompt_to_file
+from owlsperch.schemas import load_registry
 from owlsperch.segment.runner import Segment
 
 #: Default timeout (seconds) `select_and_mark` waits to acquire the
@@ -149,11 +150,11 @@ def _reset_stale_and_heal(data_dir: Path, seg_dir: Path, book_id: str) -> int:
     return stale_count
 
 
-def _lowest_pending_tier(seg_dir: Path, book_id: str, kind: str) -> str | None:
+def _lowest_pending_tier(seg_dir: Path, book_id: str, kinds: set[str]) -> str | None:
     pending_tiers: set[str] = set()
     for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
         segment = Segment.model_validate_json(path.read_text())
-        if segment.status == "pending" and segment.kind_hint == kind:
+        if segment.status == "pending" and segment.kind_hint in kinds:
             pending_tiers.add(segment.tier)
     for candidate in TIERS:
         if candidate in pending_tiers:
@@ -167,7 +168,7 @@ def select_and_mark(
     data_dir: Path,
     tier: str | None = None,
     limit: int,
-    kind: str = "spell",
+    kind: str | None = None,
     manifest_path: Path | None = None,
     schemas_dir: Path | None = None,
     model: str | None = None,
@@ -175,23 +176,31 @@ def select_and_mark(
     stats: dict[str, int] | None = None,
 ) -> list[SelectedSegment]:
     """Select up to `limit` segments of `book_id` that are `status ==
-    "pending"`, `tier == tier`, and `kind_hint == kind` (default "spell" --
-    this batch only has a schema for that kind; other kinds are simply never
-    selected, and show up in `owlsperch queue summary`'s per-kind counts
-    instead). Each selected segment is atomically marked `in_progress` with
-    an `in_progress_since` timestamp, and has its subagent prompt rendered
-    to `prompts/<book_id>/<seg_id>.md` before being returned -- an
-    already-`in_progress` segment is never reselected by a later call.
+    "pending"`, `tier == tier`, and whose `kind_hint` is in the resolved
+    kind set. `kind=None` (the default, criterion 6) resolves to every
+    kind_hint with a registered schema (`set(load_registry(schemas_dir)
+    .types)` -- currently spell/feat/table/rules_section); a kind with no
+    registered schema (e.g. `stat_block`) is then never selected by
+    default, so segments a later batch needs aren't burned as
+    `no_content`. Pass an explicit `kind` (e.g. `"stat_block"`) to restrict
+    to exactly that one kind_hint regardless of whether it has a schema.
+    Each selected segment is atomically marked `in_progress` with an
+    `in_progress_since` timestamp, and has its subagent prompt rendered to
+    `prompts/<book_id>/<seg_id>.md` before being returned (using that
+    segment's own `kind_hint`, since one wave may mix kinds when `kind` is
+    the resolved set) -- an already-`in_progress` segment is never
+    reselected by a later call.
 
     `tier=None` (the default) picks the lowest tier in
-    `owlsperch.queue.ladder.TIERS` with at least one pending `kind` segment,
-    after this call's own stale-reset and lazy-escalation passes (see
-    module docstring) -- if nothing is pending, returns `[]` without
-    selecting anything. `model=None` defaults to
-    `owlsperch.queue.ladder.TIER_MODELS[tier]` for whichever tier was
-    actually used. When `stats` is given, `stats["stale_reset"]` is set to
-    the number of segments reset from a stale `in_progress` (spec 4.5) --
-    `owlsperch.queue.runner.run_queue_next` uses this to print a note.
+    `owlsperch.queue.ladder.TIERS` with at least one pending segment whose
+    kind_hint is in the resolved kind set, after this call's own
+    stale-reset and lazy-escalation passes (see module docstring) -- if
+    nothing is pending, returns `[]` without selecting anything.
+    `model=None` defaults to `owlsperch.queue.ladder.TIER_MODELS[tier]` for
+    whichever tier was actually used. When `stats` is given,
+    `stats["stale_reset"]` is set to the number of segments reset from a
+    stale `in_progress` (spec 4.5) -- `owlsperch.queue.runner.run_queue_next`
+    uses this to print a note.
 
     The whole operation holds an exclusive lock on
     `segments/<book_id>/.queue.lock` (see `_book_lock`); `LockTimeoutError`
@@ -205,12 +214,14 @@ def select_and_mark(
     if not seg_dir.is_dir() or limit <= 0:
         return []
 
+    kinds = {kind} if kind is not None else set(load_registry(schemas_dir).types)
+
     with _book_lock(seg_dir, timeout=lock_timeout):
         stale_reset_count = _reset_stale_and_heal(data_dir, seg_dir, book_id)
         if stats is not None:
             stats["stale_reset"] = stale_reset_count
 
-        resolved_tier = tier if tier is not None else _lowest_pending_tier(seg_dir, book_id, kind)
+        resolved_tier = tier if tier is not None else _lowest_pending_tier(seg_dir, book_id, kinds)
         if resolved_tier is None:
             return []
         resolved_model = (
@@ -226,7 +237,7 @@ def select_and_mark(
             if (
                 segment.status != "pending"
                 or segment.tier != resolved_tier
-                or segment.kind_hint != kind
+                or segment.kind_hint not in kinds
             ):
                 continue
 
