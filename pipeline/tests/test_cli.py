@@ -68,6 +68,22 @@ def test_queue_next_and_run_kind_default_to_none() -> None:
     assert run_args.kind is None
 
 
+def test_queue_audit_subparser_wires_book_id_fix_and_json() -> None:
+    from owlsperch.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["queue", "audit", "book", "--fix", "--json"])
+    assert args.command == "queue"
+    assert args.queue_command == "audit"
+    assert args.book_id == "book"
+    assert args.fix is True
+    assert args.json is True
+
+    defaulted = parser.parse_args(["queue", "audit", "book"])
+    assert defaulted.fix is False
+    assert defaulted.json is False
+
+
 def test_console_script_help_lists_manifest_command() -> None:
     owlsperch = shutil.which("owlsperch")
     if owlsperch is None:

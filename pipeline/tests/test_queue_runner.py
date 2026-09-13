@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from owlsperch.queue.runner import (
+    run_queue_audit,
     run_queue_complete,
     run_queue_next,
     run_queue_prompt,
@@ -357,6 +358,73 @@ def test_run_queue_summary_text(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "pending" in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# queue audit
+# ---------------------------------------------------------------------------
+
+
+def test_run_queue_audit_json(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="done",
+        outcome="validated",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps({"extraction": {"segment_id": "book-p0011-01"}})
+    )
+
+    out = io.StringIO()
+    exit_code = run_queue_audit("book", fix=False, json_output=True, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    parsed = json.loads(out.getvalue())
+    assert parsed["book_id"] == "book"
+    assert len(parsed["stale_claims"]) == 1
+    assert "fixed" not in parsed
+
+
+def test_run_queue_audit_text(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+
+    out = io.StringIO()
+    exit_code = run_queue_audit("book", fix=False, json_output=False, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    assert "book:" in out.getvalue()
+
+
+def test_run_queue_audit_fix_soft_resets_and_reports_it(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        status="done",
+        outcome="validated",
+        records=["records/book/rules_section/class-features.json"],
+    )
+    record_path = data_dir / "records" / "book" / "rules_section" / "class-features.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps({"extraction": {"segment_id": "book-p0011-01"}})
+    )
+
+    out = io.StringIO()
+    exit_code = run_queue_audit("book", fix=True, json_output=False, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["records"] == []
 
 
 # ---------------------------------------------------------------------------
