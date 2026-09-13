@@ -18,6 +18,42 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ok"; record: RecordDetail; schemaFields: SchemaField[]; typeLabel: string };
 
+/** `Book > Chapter > Section` above the heading (batch B10b, design
+ * decision D15): Book links back into this type's browse list filtered to
+ * the record's own book (`?source=<book_id>`); Chapter links into the
+ * tree's chapter (`?category=<category>&chapter=<chapter>`); Section is
+ * plain text, never a link (there's no `?section=` filter). No crumb
+ * renders for a piece that's missing -- a record with no resolved chapter
+ * shows just the book crumb, per D18's "null when unresolved" contract. */
+function RecordBreadcrumb({ record }: { record: RecordDetail }) {
+  if (!record.book_title) return null;
+
+  const { toc } = record;
+  return (
+    <nav className="record-breadcrumb" aria-label="Breadcrumb">
+      <Link to={`/browse/${record.type}?source=${encodeURIComponent(record.book_id)}`}>
+        {record.book_title}
+      </Link>
+      {toc.chapter && (
+        <>
+          <span className="breadcrumb-sep">›</span>
+          <Link
+            to={`/browse/${record.type}?category=${encodeURIComponent(toc.category)}&chapter=${encodeURIComponent(toc.chapter)}`}
+          >
+            {toc.chapter}
+          </Link>
+        </>
+      )}
+      {toc.chapter && toc.section && (
+        <>
+          <span className="breadcrumb-sep">›</span>
+          <span>{toc.section}</span>
+        </>
+      )}
+    </nav>
+  );
+}
+
 /** The `/r/:type/:slug` route (spec 4.10): fetches the record and the type
  * registry, then renders name, citation, type badge, `text_md` as Markdown
  * (react-markdown + remark-gfm, no raw HTML), and field groups ordered by
@@ -75,6 +111,7 @@ export function RecordPage() {
       <Link to="/" className="back-link">
         ← Back to search
       </Link>
+      <RecordBreadcrumb record={record} />
       <div className="record-heading">
         <span className="type-badge">{typeLabel}</span>
         <h1>{record.name}</h1>

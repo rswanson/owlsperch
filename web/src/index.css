@@ -617,9 +617,19 @@ h1 {
  * Header nav quick links (batch B10b, design decision D14)
  * ---------------------------------------------------------------------- */
 
+.site-nav-rules {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .site-nav-quicklinks {
   display: flex;
   gap: 10px;
   font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.site-nav-quicklinks a {
   color: var(--text-muted);
 }
