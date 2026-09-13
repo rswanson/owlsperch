@@ -10,11 +10,78 @@ import {
   type SchemaField,
 } from "../api";
 import { FacetSidebar } from "../components/FacetSidebar";
+import { RecordTree } from "../components/RecordTree";
 
 /** Query params that aren't filter fields -- excluded from the facet
  * request (which "accepts the same filter params") and from the
- * checkbox-selected-state map. */
-const RESERVED_PARAMS = new Set(["sort", "page", "page_size"]);
+ * checkbox-selected-state map. `view` (batch B10b, D13) picks list vs. tree
+ * rendering; it must never be forwarded to `/records/{type}` or
+ * `/facets/{type}` -- the server answers 400 "unknown query parameter" for
+ * an unrecognized one. */
+const RESERVED_PARAMS = new Set(["sort", "page", "page_size", "view"]);
+
+/** Tree mode (batch B10b, D13) needs every matching record to group into
+ * category/chapter/section, so it fetches sequential pages at the server's
+ * `MAX_PAGE_SIZE` instead of the user-facing page size, capped so a huge
+ * result set can't hang the page or the browser. */
+const TREE_PAGE_SIZE = 200;
+const MAX_TREE_ITEMS = 2000;
+
+/** A `kind` discriminant lets `BrowsePage`'s fetch effect branch on the
+ * result's actual shape (list results carry `page`/`page_size`; tree
+ * results don't paginate) without TypeScript widening a plain `"page" in
+ * result` check into an ambiguous intersection type. */
+interface ListFetchResult {
+  kind: "list";
+  items: BrowseItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+interface TreeFetchResult {
+  kind: "tree";
+  items: BrowseItem[];
+  total: number;
+}
+
+async function fetchList(
+  type: string,
+  params: URLSearchParams,
+  signal: AbortSignal,
+): Promise<ListFetchResult> {
+  const response = await browseRecords(type, params, signal);
+  return {
+    kind: "list",
+    items: response.items,
+    total: response.total,
+    page: response.page,
+    pageSize: response.page_size,
+  };
+}
+
+async function fetchAllForTree(
+  type: string,
+  filters: URLSearchParams,
+  signal: AbortSignal,
+): Promise<TreeFetchResult> {
+  const items: BrowseItem[] = [];
+  let total = 0;
+  let page = 1;
+  for (;;) {
+    const params = new URLSearchParams(filters);
+    params.set("page", String(page));
+    params.set("page_size", String(TREE_PAGE_SIZE));
+    const response = await browseRecords(type, params, signal);
+    total = response.total;
+    items.push(...response.items);
+    if (response.items.length === 0 || items.length >= total || items.length >= MAX_TREE_ITEMS) {
+      break;
+    }
+    page += 1;
+  }
+  return { kind: "tree", items, total };
+}
 
 function filterParams(searchParams: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams();
@@ -33,18 +100,21 @@ function selectedFromParams(searchParams: URLSearchParams): Record<string, strin
   return out;
 }
 
-/** The `/browse/:type` route (spec 4.10, batch B9): a facet sidebar
- * (`FacetSidebar`, generated from `GET /facets/{type}`), a sort control, a
- * paginated result list linking to `/r/:type/:slug`, and pagination
- * controls. All of it -- filters, sort, page -- lives in the URL's query
- * string via `useSearchParams`, so reload/back/forward restore the view.
+/** The `/browse/:type` route (spec 4.10, batch B9; tree view added in
+ * batch B10b): a facet sidebar (`FacetSidebar`, generated from `GET
+ * /facets/{type}`), a sort control, and either a paginated flat result list
+ * (`?view=list`, the default for every type except `rules_section`) or a
+ * category -> chapter -> section tree (`?view=tree`, the default for
+ * `rules_section`, and available for any type). All of it -- filters,
+ * sort, page, view -- lives in the URL's query string via
+ * `useSearchParams`, so reload/back/forward restore the view.
  *
- * Refetching (on any filter/sort/page change) keeps the previous facets and
- * results mounted -- and the checkboxes checked according to the URL,
- * which already reflects the change -- while the new page loads, showing a
- * "Loading…" line alongside rather than tearing the sidebar down and
- * rebuilding it (which briefly drops a just-checked checkbox from the DOM
- * entirely). */
+ * Refetching (on any filter/sort/page/view change) keeps the previous
+ * facets and results mounted -- and the checkboxes checked according to the
+ * URL, which already reflects the change -- while the new page loads,
+ * showing a "Loading…" line alongside rather than tearing the sidebar down
+ * and rebuilding it (which briefly drops a just-checked checkbox from the
+ * DOM entirely). */
 export function BrowsePage() {
   const { type } = useParams<{ type: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,6 +128,8 @@ export function BrowsePage() {
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const view = searchParams.get("view") ?? (type === "rules_section" ? "tree" : "list");
 
   useEffect(() => {
     if (!type) return;
@@ -81,15 +153,20 @@ export function BrowsePage() {
     const controller = new AbortController();
     setLoading(true);
     setErrorMessage(null);
-    Promise.all([
-      browseRecords(type, searchParams, controller.signal),
-      getFacets(type, filterParams(searchParams), controller.signal),
-    ])
+
+    const listOrTree =
+      view === "tree"
+        ? fetchAllForTree(type, filterParams(searchParams), controller.signal)
+        : fetchList(type, searchParams, controller.signal);
+
+    Promise.all([listOrTree, getFacets(type, filterParams(searchParams), controller.signal)])
       .then(([browse, facetsResponse]) => {
         setItems(browse.items);
         setTotal(browse.total);
-        setPage(browse.page);
-        setPageSize(browse.page_size);
+        if (browse.kind === "list") {
+          setPage(browse.page);
+          setPageSize(browse.pageSize);
+        }
         setFacets(facetsResponse.facets);
         setLoading(false);
       })
@@ -103,7 +180,7 @@ export function BrowsePage() {
     // the string form (rather than the object) avoids re-fetching on every
     // render when the params haven't actually changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, searchKey]);
+  }, [type, searchKey, view]);
 
   const selected = useMemo(() => selectedFromParams(searchParams), [searchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -138,8 +215,20 @@ export function BrowsePage() {
     });
   }
 
+  function handleViewChange(nextView: "list" | "tree") {
+    updateParams((next) => {
+      next.set("view", nextView);
+      next.delete("page");
+    });
+  }
+
   const sortValue = searchParams.get("sort") ?? "name";
   const sortableFields = schemaFields.filter((f) => f["x-ui"]?.sortable);
+
+  const categoryFacet = facets.find((f) => f.field === "category");
+  const selectedCategories = searchParams.getAll("category");
+  const autoExpandCategory = selectedCategories.length === 1 ? selectedCategories[0] : null;
+  const truncated = view === "tree" && items.length < total;
 
   return (
     <div className="browse-page">
@@ -148,29 +237,51 @@ export function BrowsePage() {
         <FacetSidebar facets={facets} selected={selected} onToggle={handleToggle} />
         <div className="browse-main">
           <div className="browse-controls">
-            <label className="sort-control">
-              Sort by{" "}
-              <select
-                value={sortValue}
-                onChange={(event) => {
-                  handleSortChange(event.target.value);
+            <div className="view-toggle" role="group" aria-label="View">
+              <button
+                type="button"
+                className={view === "list" ? "view-toggle-active" : ""}
+                onClick={() => {
+                  handleViewChange("list");
                 }}
               >
-                <option value="name">Name (A-Z)</option>
-                <option value="-name">Name (Z-A)</option>
-                {sortableFields.flatMap((field) => {
-                  const label = field["x-ui"].label ?? field.name;
-                  return [
-                    <option key={field.name} value={field.name}>
-                      {label} (ascending)
-                    </option>,
-                    <option key={`-${field.name}`} value={`-${field.name}`}>
-                      {label} (descending)
-                    </option>,
-                  ];
-                })}
-              </select>
-            </label>
+                List
+              </button>
+              <button
+                type="button"
+                className={view === "tree" ? "view-toggle-active" : ""}
+                onClick={() => {
+                  handleViewChange("tree");
+                }}
+              >
+                Tree
+              </button>
+            </div>
+            {view === "list" && (
+              <label className="sort-control">
+                Sort by{" "}
+                <select
+                  value={sortValue}
+                  onChange={(event) => {
+                    handleSortChange(event.target.value);
+                  }}
+                >
+                  <option value="name">Name (A-Z)</option>
+                  <option value="-name">Name (Z-A)</option>
+                  {sortableFields.flatMap((field) => {
+                    const label = field["x-ui"].label ?? field.name;
+                    return [
+                      <option key={field.name} value={field.name}>
+                        {label} (ascending)
+                      </option>,
+                      <option key={`-${field.name}`} value={`-${field.name}`}>
+                        {label} (descending)
+                      </option>,
+                    ];
+                  })}
+                </select>
+              </label>
+            )}
           </div>
 
           {/* aria-live="polite" so assistive tech is told when the list
@@ -181,34 +292,53 @@ export function BrowsePage() {
             {errorMessage && <p className="search-status search-error">{errorMessage}</p>}
             {!loading && !errorMessage && (
               <p className="search-status">
-                {items.length === 0 ? "No results." : `${total} ${typeLabel.toLowerCase()}`}
+                {items.length === 0
+                  ? "No results."
+                  : truncated
+                    ? `Showing the first ${items.length} of ${total} ${typeLabel.toLowerCase()}`
+                    : `${total} ${typeLabel.toLowerCase()}`}
               </p>
             )}
           </div>
 
-          {items.length > 0 && (
-            <ul className="browse-results">
-              {items.map((item) => (
-                <li className="browse-result" key={item.id}>
-                  <Link to={`/r/${item.type}/${item.slug}`} className="browse-result-link">
-                    <span className="browse-result-name">{item.name}</span>
-                    {item.citation && (
-                      <span className="browse-result-citation">{item.citation}</span>
-                    )}
-                  </Link>
-                  <div className="browse-result-facets">
-                    {Object.entries(item.facets).map(([field, values]) => (
-                      <span className="browse-result-facet" key={field}>
-                        {values.join(", ")}
-                      </span>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+          {view === "tree" ? (
+            <RecordTree
+              items={items}
+              categoryOrder={categoryFacet?.values ?? []}
+              autoExpandCategory={autoExpandCategory}
+            />
+          ) : (
+            <>
+              {items.length > 0 && (
+                <ul className="browse-results">
+                  {items.map((item) => (
+                    <li className="browse-result" key={item.id}>
+                      <Link to={`/r/${item.type}/${item.slug}`} className="browse-result-link">
+                        <span className="browse-result-name">{item.name}</span>
+                        {item.citation && (
+                          <span className="browse-result-citation">{item.citation}</span>
+                        )}
+                      </Link>
+                      <div className="browse-result-facets">
+                        {Object.entries(item.facets).map(([field, values]) => (
+                          <span className="browse-result-facet" key={field}>
+                            {values.join(", ")}
+                          </span>
+                        ))}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-          <Pagination page={page} pageSize={pageSize} total={total} onPageChange={handlePageChange} />
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onPageChange={handlePageChange}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

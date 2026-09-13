@@ -425,6 +425,34 @@ h1 {
 
 .browse-controls {
   margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle button {
+  padding: 4px 12px;
+  border: none;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.view-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.view-toggle-active {
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
 }
 
 .sort-control select {
@@ -510,4 +538,88 @@ h1 {
     flex: 1 1 auto;
     min-width: 140px;
   }
+}
+
+/* -------------------------------------------------------------------------
+ * /browse/:type?view=tree (batch B10b): category -> chapter -> section
+ * ---------------------------------------------------------------------- */
+
+.record-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tree-category,
+.tree-chapter,
+.tree-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.tree-chapter,
+.tree-section {
+  margin-top: 6px;
+  margin-left: 16px;
+}
+
+.tree-category > summary,
+.tree-chapter > summary,
+.tree-section > summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.tree-chapter > summary,
+.tree-section > summary {
+  font-weight: 400;
+}
+
+.tree-count {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-weight: 400;
+}
+
+.tree-children {
+  margin-top: 4px;
+}
+
+.tree-items {
+  list-style: none;
+  margin: 6px 0 4px 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* -------------------------------------------------------------------------
+ * Record breadcrumb (batch B10b, design decision D15)
+ * ---------------------------------------------------------------------- */
+
+.record-breadcrumb {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+.record-breadcrumb a {
+  color: var(--text-muted);
+}
+
+.record-breadcrumb .breadcrumb-sep {
+  margin: 0 6px;
+}
+
+/* -------------------------------------------------------------------------
+ * Header nav quick links (batch B10b, design decision D14)
+ * ---------------------------------------------------------------------- */
+
+.site-nav-quicklinks {
+  display: flex;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
