@@ -240,10 +240,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   malformed reply, escalates the segment via `ladder.record_failure`, moving
   it to `human/` if already on opus; `summary.py` reports per-tier
   pass/escalated counts (from both `segments/` and `human/`) plus
-  `needs_context_retries` and `human`; `driver.py` (`queue run <book_id>
-  --dry-run --fixtures DIR`) drives the whole select/subagent/complete/
-  validate loop in-process against a `FixtureSubagent` (canned
-  `{"files": ..., "reply": ...}` JSON per call, `<fixtures_dir>/<seg_id>/
+  `needs_context_retries`, `human`, and `pending_by_kind`/`pending_by_tier`
+  (pending-only, so a wave can be planned without `queue next`);
+  `driver.py` (`queue run <book_id> --dry-run --fixtures DIR`) drives the
+  whole select/subagent/complete/validate loop in-process against a
+  `FixtureSubagent` (canned `{"files": ..., "reply": ...}` JSON per call,
+  `<fixtures_dir>/<seg_id>/
   <n>.json`) so the state machine is unit tested without launching real
   Agent-tool subagents; `common.py` has `find_segment_path` (now also
   searching `human/*/`), `move_segment_to_human`, and `finish_after_failure`

@@ -70,7 +70,10 @@ them and launches subagents.
      it just failed on opus).
    - Run `uv run owlsperch queue summary <book_id>` and show it -- it now
      prints per-tier pass/escalated counts plus `needs_context_retries` and
-     `human`.
+     `human`, plus `pending by kind_hint` / `pending by tier` (`--json`'s
+     `pending_by_kind`/`pending_by_tier`), the pending-only breakdown. Use
+     this, not `queue next`, to size and plan the next wave, since `queue
+     next` selects and marks segments `in_progress`.
    - Subtract the wave size from the remaining `--limit` (if set); if the
      wave from step 2 was smaller than requested, or `--limit` is now 0,
      go to step 6. Otherwise go back to step 1.
