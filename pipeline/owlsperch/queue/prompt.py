@@ -15,7 +15,10 @@ The prompt also includes a complete, schema-valid EXAMPLE RECORD for the
 segment's kind_hint, loaded verbatim from `schemas/examples/<kind>.json`
 (invented data, never a real book's spell -- see `test_schemas.py`'s
 schema self-test, which validates every registered type's examples file
-against its own schema).
+against its own schema). A non-`table` prompt additionally renders the
+`table` type's own schema, rules, and example alongside its own (see
+`_table_convention_lines`), since it tells its subagent to write a SECOND,
+`table`-typed record for any cross-linked table.
 
 Default model string ("claude-haiku-4-5") is only ever a placeholder for
 `--model`/`--tier` defaults on the CLI (`owlsperch queue next|prompt`); the
@@ -348,7 +351,9 @@ def _kind_rules_lines(kind_hint: str) -> list[str]:
     return [f"## Extraction rules for `{kind_hint}`", "", *rules, ""]
 
 
-def _table_convention_lines(data_dir: Path, book_id: str, kind_hint: str) -> list[str]:
+def _table_convention_lines(
+    data_dir: Path, book_id: str, kind_hint: str, *, registry: Registry
+) -> list[str]:
     """The shared "tables belonging to this entity" convention (criterion
     3): for any kind other than `table` itself, a subagent that finds a
     tab-separated table in its segment's text belonging to the entity it is
@@ -356,11 +361,20 @@ def _table_convention_lines(data_dir: Path, book_id: str, kind_hint: str) -> lis
     entity's own, and cross-links the two. Prints both absolute output
     directories so the subagent never has to guess the table's own output
     path. Omitted entirely for a `table` segment itself, which has nothing
-    else to cross-link to."""
+    else to cross-link to.
+
+    Since the subagent is being told to write a record of a DIFFERENT type
+    than the one the rest of this prompt is about, this also renders the
+    `table` type's own `fields` schema, its own `schema_version`, its own
+    extraction rules, and a complete example table record -- exactly as
+    `render_prompt` does for the segment's own `kind_hint` -- so the
+    subagent never has to invent the table record's shape. Guarded on
+    `"table" in registry.types` so a custom `$OWLSPERCH_SCHEMAS` without a
+    `table` type still renders a prompt instead of crashing."""
     if kind_hint == "table":
         return []
     table_output_dir = (data_dir / "records" / book_id / "table").resolve()
-    return [
+    lines = [
         "### Tables belonging to this entity",
         "",
         "If this segment's text contains a table belonging to the entity",
@@ -379,6 +393,40 @@ def _table_convention_lines(data_dir: Path, book_id: str, kind_hint: str) -> lis
         "- List BOTH file paths in your reply's `records` array.",
         "",
     ]
+    if "table" not in registry.types:
+        return lines
+    table_schema = registry.load_type_schema("table")
+    table_version = registry.types["table"].version
+    lines += [
+        "#### `fields` schema for the table record you write",
+        "",
+        *_render_schema_properties(table_schema),
+        "",
+        "The table record's own `schema_version` is the current registered",
+        f"version for type `table`: {table_version} -- NOT the same value as",
+        "the owning record's own `schema_version` above; look it up",
+        "separately for each record you write.",
+        "",
+        "#### Table extraction rules",
+        "",
+        *_KIND_RULES["table"],
+        "",
+    ]
+    table_example = _load_example_record("table", registry)
+    if table_example is not None:
+        lines += [
+            "#### Example table record",
+            "",
+            "A complete, schema-valid example table record (an invented",
+            "table, not copied from any real book) -- the table record you",
+            "write must have exactly this shape:",
+            "",
+            "```json",
+            json.dumps(table_example, indent=2),
+            "```",
+            "",
+        ]
+    return lines
 
 
 def _load_example_record(kind_hint: str, registry: Registry) -> dict[str, Any] | None:
@@ -583,7 +631,7 @@ def render_prompt(
         "  for it entirely and report it in `notes` as",
         "  `unnamed_entity: <first 60 chars of its text>`.",
         "",
-        *_table_convention_lines(data_dir, segment.book_id, segment.kind_hint),
+        *_table_convention_lines(data_dir, segment.book_id, segment.kind_hint, registry=registry),
         schema_version_line,
         "- `extraction` is exactly:",
         "",

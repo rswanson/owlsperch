@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from owlsperch.queue.prompt import prompt_path_for, render_prompt, render_prompt_to_file
+from owlsperch.schemas import load_registry
 from owlsperch.segment.runner import Segment
 
 
@@ -746,3 +747,70 @@ def test_unknown_kind_hint_notes_no_schema_instead_of_crashing(tmp_path: Path) -
 
     assert "stat_block" in text
     assert "no schema" in text.lower()
+
+
+# Batch B10 improvement: a non-`table` prompt must show the subagent the
+# `table` type's own fields schema, extraction rules, and example record --
+# not just an output directory and cross-link bullets -- since it is told to
+# write a SECOND, `table`-typed record alongside its own.
+
+
+def test_non_table_prompt_renders_the_table_fields_schema_and_example(tmp_path: Path) -> None:
+    registry = load_registry(_repo_schemas_dir())
+    table_version = registry.types["table"].version
+
+    rules_section_text = render_prompt(
+        _segment(kind_hint="rules_section"),
+        data_dir=tmp_path / "data",
+        manifest_path=_write_manifest(tmp_path),
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "### Tables belonging to this entity" in rules_section_text
+    assert "`columns`" in rules_section_text
+    assert "`rows`" in rules_section_text
+    assert '"columns": [' in rules_section_text
+    assert "pad a short row" in rules_section_text
+    # Pinned to the distinct-version sentence itself (criterion 4), not to
+    # the pre-existing "`fields` schema for type `rules_section` (schema_
+    # version 1):" heading, which already contains the substring
+    # "schema_version 1" with or without this feature -- rules_section and
+    # table happen to share schema_version 1 today, so a substring-only
+    # assertion would pass even if this distinct-version sentence were
+    # removed or broken.
+    assert (
+        "The table record's own `schema_version` is the current registered\n"
+        f"version for type `table`: {table_version} -- NOT the same value as"
+    ) in rules_section_text
+
+    table_text = render_prompt(
+        _segment(kind_hint="table"),
+        data_dir=tmp_path / "data",
+        manifest_path=_write_manifest(tmp_path),
+        schemas_dir=_repo_schemas_dir(),
+    )
+    assert "### Tables belonging to this entity" not in table_text
+
+
+def test_every_kind_that_is_told_to_write_a_table_is_shown_the_table_schema(
+    tmp_path: Path,
+) -> None:
+    """Generic guard (retro proposal 9): any prompt that tells its subagent
+    to write "a `table` record" must also show it the table schema's
+    `columns`/`rows` fields -- catches a future kind added to the cross-link
+    convention without also rendering the table schema for it."""
+    registry = load_registry(_repo_schemas_dir())
+    manifest_path = _write_manifest(tmp_path)
+
+    for kind in registry.types:
+        text = render_prompt(
+            _segment(kind_hint=kind),
+            data_dir=tmp_path / "data",
+            manifest_path=manifest_path,
+            schemas_dir=_repo_schemas_dir(),
+        )
+        if "a `table` record" in text:
+            assert "`columns`" in text, (
+                f"kind_hint={kind!r} tells the subagent to write "
+                "a `table` record but never shows it the table schema"
+            )
