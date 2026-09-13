@@ -14,7 +14,11 @@ under `records/<book_id>/<type>/*.json`:
    `owlsperch.validate.loader` machinery, but *without* validate's
    write-back to segment files: build-db is a read-only build step and must
    not mutate segments as a side effect. A record that fails is skipped and
-   counted; only PASSing records are loaded.
+   counted; only PASSing records are loaded. A record that passes on its own
+   but collides on `id` with one already loaded (B10-mand3 -- the corpus has
+   genuine name/slug collisions across segments) is likewise skipped and
+   counted, rather than crashing the whole build with an unhandled
+   `sqlite3.IntegrityError`.
 3. `records` -- one row per loaded record (id, type, name, slug, book_id,
    canonical, macro_eligible, the full record `json`), plus an `aliases`
    column (space-joined, not part of the spec's column list but needed so
@@ -380,7 +384,29 @@ def _load_records(
                 result.skipped.append(SkippedRecord(path=rel_path, error=errors[0]))
                 continue
 
-            _insert_record(conn, record)
+            try:
+                _insert_record(conn, record)
+            except sqlite3.IntegrityError as exc:
+                # `_insert_record`'s INSERT into `records` (id TEXT PRIMARY
+                # KEY) runs first, so a duplicate id fails before any child
+                # rows (record_fields/record_pages/tables) are written --
+                # nothing partial is left behind. Keep that INSERT first.
+                # The corpus genuinely contains name/slug collisions (two
+                # record files each valid on their own but sharing one
+                # <type>:<book_id>:<slug> id) -- skip the loser like any
+                # other invalid record instead of aborting the whole build.
+                result.skipped_invalid += 1
+                result.skipped.append(
+                    SkippedRecord(
+                        path=rel_path,
+                        error=(
+                            f"duplicate record id {record['id']!r} "
+                            f"(already loaded from another record file): {exc}"
+                        ),
+                    )
+                )
+                continue
+
             result.counts_by_type[type_dir] = result.counts_by_type.get(type_dir, 0) + 1
 
 
