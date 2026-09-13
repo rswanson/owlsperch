@@ -51,6 +51,19 @@ under `records/<book_id>/<type>/*.json`:
    an unindexed `record_id` column for joins back to `records.id` (the FTS
    table's own `rowid` already equals `records.rowid` via the content link,
    but `record_id` gives callers `records.id` directly without a join).
+7. `records.toc_category`/`toc_chapter`/`toc_section`/`toc_path` (batch
+   B10b, design decision D10) -- derived, built-in columns, not
+   `record_fields` rows (that would collide with the extractor-written
+   `rules_section.fields.chapter` and pollute a browse item's per-field
+   `facets` map). For every record, `owlsperch.toc.lookup.load_toc` is
+   loaded once per book_id (cached) and `entry_for_page` is looked up
+   against `min(record["pages"])` -- the deepest TOC entry containing that
+   page. A record with no `pages`, a book with no `toc/<book_id>.json`, or a
+   page before the TOC's first entry all resolve to
+   `toc_category = "uncategorized"` and null chapter/section/path. A book
+   with records but no toc file gets exactly one `WARNING` line (naming
+   `uv run owlsperch toc <book_id>`) from `run_build_db`, not a crash or a
+   per-record warning.
 
 Every record is `canonical = 1` and `macro_eligible = 0` in this batch --
 precedence (B11) and macro eligibility (B22) are future work.
@@ -75,6 +88,8 @@ from typing import Any
 
 from owlsperch.manifest import ManifestEntry, default_manifest_path, load_manifest, status_for
 from owlsperch.text.runner import default_data_dir
+from owlsperch.toc.lookup import entry_for_page, load_toc
+from owlsperch.toc.parser import Toc
 from owlsperch.validate.loader import (
     CompiledSchemas,
     LoadError,
@@ -84,6 +99,12 @@ from owlsperch.validate.loader import (
     load_segment,
 )
 from owlsperch.validate.runner import validate_record
+
+#: The `toc_category` every record gets when it can't be resolved to a real
+#: one (no toc file for its book, no `pages`, or a page before the toc's
+#: first entry) -- must match `schemas/categories.json`'s `uncategorized`
+#: key (D10).
+UNCATEGORIZED = "uncategorized"
 
 #: `db/owlsperch.sqlite`, relative to `$OWLSPERCH_DATA` (spec 4.2).
 DB_RELATIVE_PATH = Path("db") / "owlsperch.sqlite"
@@ -122,10 +143,17 @@ CREATE TABLE records (
     record_id TEXT NOT NULL,
     canonical INTEGER NOT NULL,
     macro_eligible INTEGER NOT NULL,
-    json TEXT NOT NULL
+    json TEXT NOT NULL,
+    -- Derived from toc/<book_id>.json (batch B10b, D10) -- built-in
+    -- pseudo-fields like `book_id`, never `record_fields` rows.
+    toc_category TEXT NOT NULL DEFAULT 'uncategorized',
+    toc_chapter TEXT,
+    toc_section TEXT,
+    toc_path TEXT
 );
 CREATE INDEX records_type_slug_idx ON records (type, slug);
 CREATE INDEX records_book_id_idx ON records (book_id);
+CREATE INDEX records_toc_category_idx ON records (toc_category);
 
 CREATE TABLE record_fields (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +287,9 @@ class BuildResult:
     skipped: list[SkippedRecord] = field(default_factory=list)
     books: int = 0
     db_path: Path = field(default_factory=Path)
+    #: book_ids that had records but no `toc/<book_id>.json` (D10) --
+    #: `run_build_db` prints one WARNING per entry, naming `owlsperch toc`.
+    toc_missing_books: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         lines = ["Records loaded by type:"]
@@ -294,15 +325,52 @@ def _load_books(conn: sqlite3.Connection, entries: list[ManifestEntry]) -> None:
     )
 
 
-def _insert_record(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
+@dataclass(frozen=True)
+class _RecordToc:
+    """The derived `toc_category`/`toc_chapter`/`toc_section`/`toc_path`
+    for one record (D10)."""
+
+    category: str = UNCATEGORIZED
+    chapter: str | None = None
+    section: str | None = None
+    path_json: str | None = None
+
+
+def _resolve_record_toc(toc: Toc | None, pages: Any) -> _RecordToc:
+    if toc is None or not isinstance(pages, list) or not pages:
+        return _RecordToc()
+
+    numeric_pages = [p for p in pages if isinstance(p, int)]
+    if not numeric_pages:
+        return _RecordToc()
+
+    entry = entry_for_page(toc, min(numeric_pages))
+    if entry is None:
+        return _RecordToc()
+
+    chapter: str | None
+    section: str | None
+    if entry.level == 1:
+        chapter, section = entry.title, None
+    else:
+        chapter = entry.path[0] if entry.path else None
+        section = entry.title
+
+    return _RecordToc(
+        category=entry.category, chapter=chapter, section=section, path_json=json.dumps(entry.path)
+    )
+
+
+def _insert_record(conn: sqlite3.Connection, record: dict[str, Any], toc: _RecordToc) -> None:
     record_id = record["id"]
     aliases = record.get("aliases") or []
     aliases_text = " ".join(a for a in aliases if isinstance(a, str))
 
     conn.execute(
         "INSERT INTO records "
-        "(id, type, name, slug, book_id, aliases, record_id, canonical, macro_eligible, json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, type, name, slug, book_id, aliases, record_id, canonical, macro_eligible, json, "
+        "toc_category, toc_chapter, toc_section, toc_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             record_id,
             record["type"],
@@ -314,6 +382,10 @@ def _insert_record(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
             1,  # canonical: every record is canonical in this batch; precedence is B11.
             0,  # macro_eligible: computed in B22.
             json.dumps(record),
+            toc.category,
+            toc.chapter,
+            toc.section,
+            toc.path_json,
         ),
     )
 
@@ -360,7 +432,15 @@ def _load_records(
     compiled: CompiledSchemas,
     result: BuildResult,
 ) -> None:
+    toc_cache: dict[str, Toc | None] = {}
+
     for book_id in discover_books_with_records(data_dir):
+        if book_id not in toc_cache:
+            toc_cache[book_id] = load_toc(data_dir, book_id)
+            if toc_cache[book_id] is None:
+                result.toc_missing_books.append(book_id)
+        toc = toc_cache[book_id]
+
         for path in discover_record_files(data_dir, book_id):
             type_dir = path.parent.name
             rel_path = path.relative_to(data_dir).as_posix()
@@ -384,8 +464,9 @@ def _load_records(
                 result.skipped.append(SkippedRecord(path=rel_path, error=errors[0]))
                 continue
 
+            record_toc = _resolve_record_toc(toc, record.get("pages"))
             try:
-                _insert_record(conn, record)
+                _insert_record(conn, record, record_toc)
             except sqlite3.IntegrityError as exc:
                 # `_insert_record`'s INSERT into `records` (id TEXT PRIMARY
                 # KEY) runs first, so a duplicate id fails before any child
@@ -478,6 +559,13 @@ def run_build_db(
         )
         for skipped in result.skipped[:5]:
             print(f"  {skipped.path}: {skipped.error}", file=err)
+
+    for book_id in result.toc_missing_books:
+        print(
+            f"WARNING: '{book_id}' has records but no toc/{book_id}.json -- "
+            f"every one of its records is uncategorized; run `uv run owlsperch toc {book_id}`",
+            file=err,
+        )
 
     if strict and result.skipped_invalid > 0:
         return 1

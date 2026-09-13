@@ -21,7 +21,7 @@
     "chapter": {
       "type": ["string", "null"],
       "default": null,
-      "x-ui": { "label": "Chapter", "filterable": true, "sortable": false, "group": "classification", "order": 3 }
+      "x-ui": { "label": "Chapter", "filterable": false, "sortable": false, "group": "classification", "order": 3 }
     }
   },
   "required": ["topic"],
