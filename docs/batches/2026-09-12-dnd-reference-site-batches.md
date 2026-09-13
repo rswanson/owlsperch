@@ -312,6 +312,57 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `pipeline/owlsperch/queue/summary.py`, tests,
   `.claude/skills/extract/SKILL.md`, `CLAUDE.md`.
 
+## B10-mand1: qualify generic `rules_section` names in the prompt
+- **Status:** merged
+- **Follow-up to:** B10 (the B10 extraction-wave retrospective -- proposals
+  4 and 9).
+- **User-visible outcome:** a `rules_section` subagent extracting a generic,
+  cross-chapter heading (e.g. "Class Features", which recurs verbatim in
+  every class chapter) is now told to qualify the record's `name` with the
+  enclosing entity -- `Class Features (Barbarian)` -- instead of writing a
+  bare generic name whose `slug`/`id` collide across chapters and silently
+  overwrite another chapter's record.
+- **Acceptance criteria:**
+  1. The `rules_section` extraction rules name the recurring generic
+     headings ("Class Features", "Class Skills", "Game Rule Information",
+     "Description") and give the literal worked example
+     `Class Features (Barbarian)`.
+  2. The rule states where the enclosing entity comes from, in order (the
+     nearest preceding entity name in the segment's own text, the segment's
+     own heading, an `### Adjacent context` block), and falls back to
+     `needs_context` naming the previous segment id rather than guessing.
+  3. The rule states that `slug`/`id` follow from the QUALIFIED `name`
+     (`class-features-barbarian`,
+     `rules_section:<book_id>:class-features-barbarian`), and that
+     qualifying the slug alone while leaving `name` generic is wrong and
+     fails validation.
+  4. `fields.topic` still carries the bare heading and
+     `fields.parent_section` the enclosing entity -- only `name` gains the
+     qualifier; neither field's meaning changes.
+  5. `schemas/examples/rules_section.json` -- rendered verbatim into every
+     `rules_section` prompt -- itself models the convention
+     (`Class Features (Sable Knight)` / `class-features-sable-knight` /
+     `topic: Class Features` / `parent_section: Sable Knight`).
+  6. The rule stays kind-specific: `spell`, `feat`, and `table` prompts do
+     not carry it.
+  7. A per-registered-kind prompt-rendering coverage guard renders a prompt
+     for every type in `schemas/registry.json` (never a hard-coded type
+     list) and asserts every field/type instruction in it is backed by a
+     schema/example actually rendered in that same prompt -- zero gaps for
+     all registered kinds.
+  8. A negative test proves the guard bites: against a doctored schemas dir
+     missing `examples/table.json`, it reproduces the shape of the B10
+     table-cross-link defect (an instruction to write a `table` record with
+     no backing table material rendered) and the guard reports it.
+  9. Every `schemas/examples/*.json` fixture has `slug == slugify(name)` and
+     `id == "<type>:<book_id>:<slug>"`, so a fixture modeling a qualified
+     name is caught if its slug/id ever drift.
+- **How to observe:** `uv run owlsperch queue prompt <rules_section seg_id>`
+  and read the generic-heading paragraph under the
+  "Extraction rules for `rules_section`" heading.
+- **Touches:** `pipeline/owlsperch/queue/prompt.py`,
+  `schemas/examples/rules_section.json`, tests, `CLAUDE.md`.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
