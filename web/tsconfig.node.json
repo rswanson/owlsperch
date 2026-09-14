@@ -5,7 +5,7 @@
     // "DOM" is needed here (not just in tsconfig.app.json) because
     // `page.evaluate(() => document...)` callbacks in e2e/*.spec.ts type-check
     // against this project's lib even though they run in the browser.
-    "lib": ["ES2023", "DOM"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "skipLibCheck": true,
 
