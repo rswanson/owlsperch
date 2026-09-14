@@ -648,6 +648,43 @@ def test_run_queue_reset_hard_clears_state_and_deletes_record_files(tmp_path: Pa
     assert not (record_dir / "icy-bolt.json").exists()
 
 
+def test_run_queue_reset_hard_keeps_a_class_segments_starting_tier(tmp_path: Path) -> None:
+    """B10c-mand3 Part 8: `--hard` must reset a segment's tier to ITS OWN
+    kind's starting tier (`owlsperch.queue.ladder.starting_tier`), not
+    unconditionally to haiku -- a class/prestige_class segment starts on
+    sonnet (`ladder.STARTING_TIERS`), and the mandated post-merge recovery
+    hard-resets all 11 class segments."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-class-p0002",
+        kind_hint="class",
+        heading="Barbarian",
+        tier="opus",
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        kind_hint="spell",
+        tier="opus",
+    )
+
+    exit_code = run_queue_reset(
+        ["book-class-p0002", "book-p0010-01"], hard=True, data_dir=data_dir, out=io.StringIO()
+    )
+
+    assert exit_code == 0
+    class_segment = _read_segment(data_dir, "book", "book-class-p0002")
+    assert class_segment["status"] == "pending"
+    assert class_segment["tier"] == "sonnet"
+
+    spell_segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert spell_segment["status"] == "pending"
+    assert spell_segment["tier"] == "haiku"
+
+
 def test_run_queue_reset_hard_never_deletes_files_outside_the_book_records_dir(
     tmp_path: Path,
 ) -> None:
