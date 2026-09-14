@@ -19,75 +19,82 @@
       "label": "Classes",
       "order": 3,
       "description": "Base and prestige classes, their class features, and level progression tables.",
-      "record_types": []
+      "record_types": ["class", "prestige_class"]
+    },
+    {
+      "key": "prestige-classes",
+      "label": "Prestige classes",
+      "order": 4,
+      "description": "Prestige classes, their entry requirements, class features, and level progression tables.",
+      "record_types": ["prestige_class"]
     },
     {
       "key": "skills",
       "label": "Skills",
-      "order": 4,
+      "order": 5,
       "description": "Skill descriptions, checks, and synergy rules.",
       "record_types": []
     },
     {
       "key": "feats",
       "label": "Feats",
-      "order": 5,
+      "order": 6,
       "description": "Feats and their prerequisites/benefits.",
       "record_types": ["feat"]
     },
     {
       "key": "equipment",
       "label": "Equipment",
-      "order": 6,
+      "order": 7,
       "description": "Weapons, armor, goods, services, and wealth.",
       "record_types": []
     },
     {
       "key": "combat",
       "label": "Combat",
-      "order": 7,
+      "order": 8,
       "description": "Attacks, actions, special attacks, initiative, injury and death.",
       "record_types": []
     },
     {
       "key": "adventuring",
       "label": "Adventuring",
-      "order": 8,
+      "order": 9,
       "description": "Movement, exploration, carrying capacity, and treasure.",
       "record_types": []
     },
     {
       "key": "magic",
       "label": "Magic",
-      "order": 9,
+      "order": 10,
       "description": "Spells, spellcasting rules, and psionics.",
       "record_types": ["spell"]
     },
     {
       "key": "monsters",
       "label": "Monsters",
-      "order": 10,
+      "order": 11,
       "description": "Monsters and other creatures.",
       "record_types": []
     },
     {
       "key": "running-the-game",
       "label": "Running the game",
-      "order": 11,
+      "order": 12,
       "description": "Dungeon Master guidance: campaigns, rewards, traps.",
       "record_types": []
     },
     {
       "key": "basics",
       "label": "Game basics",
-      "order": 12,
+      "order": 13,
       "description": "Introduction, how the rules work, glossary/appendix, index, character sheet.",
       "record_types": []
     },
     {
       "key": "uncategorized",
       "label": "Uncategorized",
-      "order": 13,
+      "order": 14,
       "description": "Content that couldn't be resolved to any other category.",
       "record_types": []
     }

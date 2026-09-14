@@ -10,6 +10,10 @@ means `$OWLSPERCH_PDFS` (default `~/D_D`). CLI commands run as
 B10b was inserted on 2026-09-13 from direct user feedback, out of the
 original numbering, and is built before B11.
 
+B10c was inserted on 2026-09-13 from direct user feedback (the class
+pages after B10b), out of the original numbering, and is built before B11;
+it takes the `class`/`prestige_class` types out of B13's scope.
+
 Conventions for every batch: ruff, mypy, and pytest pass in CI; from B7 on,
 eslint, tsc, vitest, and Playwright also pass. Tests use synthetic fixtures
 only. Tests that need the real PDF dir are marked `@pytest.mark.corpus` and
@@ -663,6 +667,169 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `web/src/pages/__tests__/RecordPage.test.tsx`, `web/e2e/smoke.spec.ts`,
   `CLAUDE.md`.
 
+## B10c: Class pages (class + prestige_class types), modeled on the original site
+- **Status:** merged
+- **Why (user feedback, 2026-09-13):** after B10b, "The classes pages have
+  turned into just the full contents of each chapter exactly. This is not
+  what I want. The original version of owlsperch that I created is here as
+  an example https://dnd.owlsperch.xyz/classes/479 - I want to create a
+  greenfield version of this with higher data quality as the previous
+  version of this had too many errors across too many different page types
+  to be useful." This batch pulls the `class`/`prestige_class` half of B13
+  forward and sets the data-quality bar every later entity type must meet.
+- **Reference (the original site's class page, e.g. Psychic Warrior /
+  Expanded Psionics Handbook):** header facts -- `Type: base`, `Hit Die:
+  d8`, `Skill Points: 2 + Int modifier`, `BAB Progression: good`, an
+  abbreviation (`PsyWar`); a Description with the book's own subsections
+  (Adventures, Characteristics, Alignment, Religion, Background, Races,
+  Other Classes, Role -- whatever the book prints); Class Skills (each with
+  its key ability); Alignment; Class Features (one entry per feature, its
+  level, full text); the progression table with the book's exact columns
+  (Level | Base Attack Bonus | Fort Save | Ref Save | Will Save | Special |
+  plus caster columns such as Spells per Day / Points per Day / Powers Known
+  / Max Power Level); and the class's spell (or power) list grouped by level,
+  each entry linking to the spell record. No starting gold/equipment shown.
+- **User-visible outcome:** `/browse/class` lists every base class in the
+  corpus (all 11 PHB classes: Barbarian, Bard, Cleric, Druid, Fighter, Monk,
+  Paladin, Ranger, Rogue, Sorcerer, Wizard); `/r/class/wizard` is a
+  structured class page in the reference's shape, with the 20-row
+  progression table rendered as a real table, one class-feature entry per
+  feature, and a "Spells" section listing the class's spells by level pulled
+  live from spell records' `levels` (`Wizard 1` ...), each linking to the
+  spell page. The rules browse no longer shows the class chapter's
+  fragments as if they were rules: the Classes category shows the class
+  records, and rules_section fragments whose pages fall inside a class
+  record's span are superseded (hidden from browse/search, still reachable
+  by URL with a "superseded by <class>" note).
+- **Acceptance criteria:**
+  1. `schemas/class.json` and `schemas/prestige_class.json` (registry
+     entries, x-ui hints, example records under `schemas/examples/`) with
+     spec 4.6's fields: `hit_die` (d4..d12), `alignment` (text, e.g. "Any
+     nonlawful"), `requirements` (prestige only: a list of `{kind, text}`
+     such as base attack bonus / skills / feats / spells / special),
+     `class_skills` (list of `{skill, key_ability}`), `skill_points`
+     (`{base: 2, ability: "Int"}` -- the "2 + Int modifier" formula, plus
+     `first_level_multiplier: 4` for base classes), `bab_progression`
+     (`good|average|poor`), `save_progressions` (`{fort, ref, will}` each
+     `good|poor`), `spellcasting` (`null`, or `{kind: arcane|divine|psionic,
+     ability, type: prepared|spontaneous|points, spell_list: <class name
+     used in spell records' levels, e.g. "Wizard">}`), `level_table` (the id
+     of the owned `table` record, written by the same subagent, per the B10
+     convention), `class_features` (ordered list of `{name, level, text_md}`
+     -- the level a feature is first gained; a feature gained at several
+     levels lists its first level and mentions the rest in text), plus
+     `class_type` (`base|prestige|npc`), `abbreviation` (the book's, e.g.
+     `Brb`, when printed), `description_sections` (ordered list of
+     `{heading, text_md}` for the flavor subsections the book prints),
+     `weapon_and_armor_proficiency` (text_md), `max_level` (20 for base
+     classes, 5/10/15 for prestige classes), `source_pages`. `text_md` of
+     the record stays the class's opening overview only (no repetition of
+     the structured fields).
+  2. Segmentation: `owlsperch segment` gains a `class` segment kind whose
+     spans come from the book's toc (B10b): every level-2 toc section under
+     a chapter resolved to category `classes` becomes one `class` segment
+     spanning that section's pages (`pdf_page_start`..`pdf_page_end`),
+     replacing the rules_section/table segments the splitter would otherwise
+     emit inside that span (those existing segments are marked
+     `superseded_by: <class seg_id>` rather than deleted, and are never
+     selected by `queue next` again). Prestige-class sections (a chapter or
+     section resolved to a `prestige-classes` category, added to
+     `schemas/categories.json`) become `prestige_class` segments the same
+     way. Re-running `segment phb1` is idempotent and yields exactly 11
+     `class` segments on phb1 (corpus test), each covering the class's
+     whole entry (opening prose through the last class feature and the level
+     table). A toc-less book gets no class segments and `segment` says so.
+  3. Extraction: `queue/prompt.py` gains `_KIND_RULES["class"]` and
+     `["prestige_class"]` (the level table is written as an owned `table`
+     record with the book's exact column headers and one row per level, the
+     `Special` column verbatim; every class feature named in `Special` must
+     appear in `class_features`; `class_skills` use the book's skill names
+     and key abilities; `spellcasting.spell_list` is the class name exactly
+     as spell records spell it in `levels`; `description_sections` capture
+     each printed flavor subsection under its own heading; never invent a
+     value -- omit the key if the text does not state it). `queue next`
+     selects `class` segments at the sonnet tier by default (they are long;
+     `ladder.py` gets a per-kind starting tier: `{"class": "sonnet",
+     "prestige_class": "sonnet"}`, everything else haiku). `/extract`'s
+     SKILL.md documents the new kinds.
+  4. Data-quality validators (the point of this batch -- `validate/checks.py`,
+     each with a unit test and a clear message): a base class's level table
+     has exactly `max_level` rows numbered 1..max_level; the Base Attack
+     Bonus column matches the declared `bab_progression` (good: +1/level,
+     average: floor(3/4), poor: floor(1/2), with the standard iterative
+     attacks notation) and each save column matches its declared `good|poor`
+     progression for every level; every feature named in the table's
+     `Special` cells (split on commas, ignoring parentheticals like "(Ex)"
+     and "+1") matches a `class_features[].name` case-insensitively, and
+     every `class_features[]` entry has a `level` that appears in the table;
+     `class_skills[].skill` values are members of the corpus skill list (a
+     committed list of the 3.5e skill names in `schemas/skills.json`, since
+     the skill type itself is still B13); `spellcasting.spell_list`, when
+     present, matches at least one spell record's `levels[].class` in the
+     data dir (a warning, not a failure, when the spell type has no records
+     yet); `hit_die` is one of d4/d6/d8/d10/d12. A record that fails any of
+     these FAILs validation and escalates through the ladder like any other.
+  5. Quality gate on the real corpus (manual gate, `@pytest.mark.corpus`,
+     and part of this batch's post-merge data steps): extract all 11 PHB
+     classes; every one validates; a spot-check script
+     (`owlsperch sample class --book phb1 --n 3`, or a one-off under the
+     notes dir if `sample` is out of scope) prints, per sampled class, the
+     record's header facts and table beside the source text pages so an
+     Opus judge (run by the workflow) can confirm: hit die, skill points,
+     BAB/save progressions, class-skill list, feature names+levels, and the
+     table match the book. Any mismatch is fixed in the prompt/validators
+     and the class re-extracted before the batch is called done; the judge's
+     findings go into `~/owlsperch-data/notes/process-retro.md`.
+  6. Superseding: `build-db` marks a `rules_section` or `table` record
+     `canonical = 0` with `superseded_by = <class record id>` when its
+     pages fall inside a class record's `source_pages` span in the same
+     book; `/search`, `/records/{type}`, `/facets/{type}` and the tree view
+     exclude non-canonical records; `/records/{type}/{slug}` still serves
+     one, adding `superseded_by` so the record page can show a "superseded
+     by <class link>" note. The `classes` category in the rules tree lists
+     class records (type `class`) instead of fragments; the header nav's
+     "Classes" quick link goes to `/browse/class`.
+  7. Web: `src/pages/ClassPage.tsx` (or a class-aware branch of RecordPage)
+     renders the reference's shape in this order: header facts (type, hit
+     die, skill points, BAB progression, saves, alignment, abbreviation),
+     description sections, class skills (with key ability), weapon and
+     armor proficiency, the progression table (real `<table>`, the book's
+     columns), class features (anchor per feature, level badge), and a
+     Spells section grouped by level fetched from `/records/spell?class=
+     <spell_list>` (paginated to fetch all), each linking to `/r/spell/
+     <slug>`; `/browse/class` uses the flat list with facets `class_type`,
+     `hit_die`, `bab_progression`, `spellcasting.kind`, `source`. Fixture-db
+     gains one synthetic class with a 3-row table and two class features;
+     Playwright flow D: nav Classes -> open the fixture class -> table and
+     features render -> click a spell link. Mobile (400px) fits without
+     horizontal scroll except inside the table's own scroll container.
+  8. Tests: unit tests for every validator above (passing and failing
+     cases), for the toc-driven class segmentation (synthetic toc + pages),
+     for the per-kind starting tier, for build-db superseding, server tests
+     for canonical-only listing and `superseded_by` on detail, vitest for
+     the class page pieces, Playwright flow D; corpus tests for the 11
+     phb1 class segments and (when records exist) 11 validated class
+     records with 20-row tables.
+  9. CLAUDE.md "Current state" documents the class kind, the toc-driven
+     segmentation, the per-kind tier, the validators, and superseding; the
+     batch doc's B13 entry is edited to remove class/prestige_class from
+     its scope (they are done here) and to note that its remaining types
+     must meet the same quality-gate pattern (structural validators + an
+     Opus spot-check judge against source pages).
+- **How to observe:** `uv run owlsperch segment phb1 --force`, run
+  extraction for kind class, `uv run owlsperch validate phb1`, `build-db`;
+  then http://localhost:5173/browse/class shows 11 classes;
+  http://localhost:5173/r/class/wizard shows the Wizard page with its 20-row
+  table, Bonus Feats at 5th/10th/15th/20th, and 1st-level spells including
+  Magic Missile linking to the spell page; http://localhost:5173/browse/
+  rules_section no longer lists "Class Features (Barbarian)"-style
+  fragments.
+- **Touches:** `schemas/` (class, prestige_class, skills.json, categories),
+  `pipeline/owlsperch/segment/` (toc-driven class spans, superseded_by),
+  `pipeline/owlsperch/queue/` (kind rules, per-kind tier), `validate/checks.py`,
+  `build_db/`, `server/`, `web/`, `.claude/skills/extract/SKILL.md`,
+  CLAUDE.md, batch doc (B13 entry).
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
@@ -709,21 +876,33 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   full stat block fields grouped per hints.
 - **Touches:** `schemas/`, validators, skill prompt, `server/`, `web/`.
 
-## B13: Class, prestige class, race, skill, equipment, magic item types
+## B13: Race, skill, equipment, magic item types
 - **Status:** pending
-- **User-visible outcome:** those six types are searchable and browsable;
-  class pages show their level tables; magic items filter by slot and price.
+- **Note (added by B10c):** `class`/`prestige_class` were pulled forward
+  into batch B10c and are done there (schemas, toc-driven segmentation,
+  extraction rules, data-quality validators, build-db superseding, and the
+  web class page) -- this batch's scope is now the remaining four types
+  only. Each of those four must meet the same quality-gate pattern B10c
+  established: structural, per-field validators with unit tests (not just
+  JSON Schema conformance) PLUS a real-corpus quality gate -- extract a
+  sample, then have an Opus judge spot-check the records against the
+  source pages before the batch is called done (B10c's acceptance
+  criterion 5). Treat B10c's `validate/checks.py` additions (`ValidationContext`,
+  the cross-record lookups, the empty-string-allowed escape hatch for a
+  printed-but-undescribed value) as the reference shape for these types'
+  own validators, not just spell/feat's simpler single-record checks.
+- **User-visible outcome:** those four types are searchable and browsable;
+  magic items filter by slot and price.
 - **Acceptance criteria:**
-  1. Six schema files with fields from spec 4.6 and UI hints; `price`,
+  1. Four schema files with fields from spec 4.6 and UI hints; `price`,
      `cost`, `weight`, `caster_level` stored numeric and rangeable.
-  2. Validators: class has `hit_die` and a `level_table` id that exists;
-     race has six `ability_adjustments` keys (zero allowed); magic_item has
-     numeric `price`; equipment weapons have `damage`.
-  3. Extraction rules per type; class extraction writes the level table as a
-     table record and references it.
-  4. Unit tests per validator.
-- **How to observe:** browser: Magic Items → slot Hands, sort by price;
-  Classes → Wizard shows its level table.
+  2. Validators: race has six `ability_adjustments` keys (zero allowed);
+     magic_item has numeric `price`; equipment weapons have `damage`.
+  3. Extraction rules per type.
+  4. Unit tests per validator, plus the real-corpus quality gate described
+     above (spot-check judge findings recorded in
+     `~/owlsperch-data/notes/process-retro.md`, per B10c's precedent).
+- **How to observe:** browser: Magic Items → slot Hands, sort by price.
 - **Touches:** `schemas/`, validators, skill prompt.
 
 ## B14: Psionic power and lore types

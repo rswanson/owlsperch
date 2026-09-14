@@ -90,11 +90,20 @@ class SubField:
 class FilterableField:
     name: str
     label: str
-    #: Non-empty only for an array-of-object field; its item's sub-properties,
-    #: in SORTED sub-property-name order (the same canonical order
-    #: `flatten_fields` joins them in for the combined row -- see that
-    #: function's docstring).
+    #: Non-empty for an array-of-object field OR (batch B10c) a plain
+    #: object field (e.g. class `spellcasting`); its sub-properties, in
+    #: SORTED sub-property-name order (the same canonical order
+    #: `flatten_fields` joins them in for an array-of-object's combined row
+    #: -- see that function's docstring).
     sub_fields: list[SubField]
+    #: True only for an array-of-object field (D10) -- `flatten_fields`
+    #: writes a *combined* `record_fields` row for those (keyed by the
+    #: parent field name, e.g. `levels` -> `"Cleric 3"`), which lets
+    #: `build_filter_clauses` match ALL of an item's sub-properties at once
+    #: against that one row. A plain object field (`spellcasting`) has NO
+    #: such combined row -- each sub-param must always go through its own
+    #: `<parent>.<sub>` key, so this stays False for it.
+    combined: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,14 +127,21 @@ class TypeBrowseSchema:
         return names
 
     def filterable_field_names(self) -> list[str]:
-        """Every filterable field's own name -- for a plain field this is
-        its `record_fields` key directly; for an array-of-object field
-        (`levels`) it's the *combined* row's key (`flatten_fields` inserts
-        one keyed by the parent name too, e.g. `"levels" -> "Cleric 3"`).
-        Either way this is exactly the set of keys an item's display
-        `facets` (batch B9 acceptance criterion 2) can read straight off
-        `record_fields` without loading the full record JSON."""
-        return [f.name for f in self.filterable]
+        """Every `record_fields` key an item's display `facets` (batch B9
+        acceptance criterion 2) can read straight off `record_fields`
+        without loading the full record JSON: for a plain scalar field,
+        its own name; for an array-of-object field (`levels`), the
+        *combined* row's key (`flatten_fields` inserts one keyed by the
+        parent name too, e.g. `"levels" -> "Cleric 3"`); for a plain object
+        field (batch B10c, e.g. `spellcasting`), which has NO combined row,
+        each `<parent>.<sub>` key instead (e.g. `spellcasting.kind`)."""
+        names: list[str] = []
+        for f in self.filterable:
+            if f.sub_fields and not f.combined:
+                names.extend(f"{f.name}.{sf.name}" for sf in f.sub_fields)
+            else:
+                names.append(f.name)
+        return names
 
 
 def load_type_browse_schema(registry: Registry, type_name: str) -> TypeBrowseSchema:
@@ -141,6 +157,7 @@ def load_type_browse_schema(registry: Registry, type_name: str) -> TypeBrowseSch
             continue
 
         sub_fields: list[SubField] = []
+        combined = False
         items = prop.get("items")
         prop_type = prop.get("type")
         prop_types = prop_type if isinstance(prop_type, list) else [prop_type]
@@ -155,10 +172,25 @@ def load_type_browse_schema(registry: Registry, type_name: str) -> TypeBrowseSch
                 types = subtype if isinstance(subtype, list) else [subtype]
                 numeric = any(t in ("integer", "number") for t in types)
                 sub_fields.append(SubField(name=subname, parent=field_name, numeric=numeric))
+            combined = True
+        elif "object" in prop_types and prop.get("properties"):
+            # Batch B10c, design decision D10: a plain (not array-of-)
+            # object filterable field, e.g. class `spellcasting` -- same
+            # per-sub-property derivation, but `flatten_fields` writes NO
+            # combined row for a plain dict, so `combined` stays False.
+            for subname in sorted(prop.get("properties") or {}):
+                subschema = (prop.get("properties") or {})[subname]
+                subtype = subschema.get("type")
+                types = subtype if isinstance(subtype, list) else [subtype]
+                numeric = any(t in ("integer", "number") for t in types)
+                sub_fields.append(SubField(name=subname, parent=field_name, numeric=numeric))
 
         filterable.append(
             FilterableField(
-                name=field_name, label=hint.get("label", field_name), sub_fields=sub_fields
+                name=field_name,
+                label=hint.get("label", field_name),
+                sub_fields=sub_fields,
+                combined=combined,
             )
         )
 
@@ -298,7 +330,7 @@ def build_filter_clauses(
         if not given:
             continue
 
-        if len(given) >= 2 and len(given) == len(parent_field.sub_fields):
+        if parent_field.combined and len(given) >= 2 and len(given) == len(parent_field.sub_fields):
             value_lists: list[list[str]] = []
             for sf in parent_field.sub_fields:
                 values = filters[sf.name]

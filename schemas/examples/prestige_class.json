@@ -1,0 +1,66 @@
+{
+  "id": "prestige_class:example:iron-warden",
+  "type": "prestige_class",
+  "name": "Iron Warden",
+  "slug": "iron-warden",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [3, 4],
+  "citation": "Example pp. 3-4",
+  "text_md": "Iron wardens are sworn guardians who bond themselves to a single fortification and never willingly leave it undefended.",
+  "fields": {
+    "hit_die": "d10",
+    "class_type": "prestige",
+    "max_level": 3,
+    "alignment": "Any lawful",
+    "requirements": [
+      { "kind": "base attack bonus", "text": "+5" },
+      { "kind": "feat", "text": "Iron Will" }
+    ],
+    "class_skills": [
+      { "skill": "Intimidate", "key_ability": "Cha" },
+      { "skill": "Climb", "key_ability": "Str" }
+    ],
+    "skill_points": { "base": 2, "ability": "Int" },
+    "bab_progression": "good",
+    "save_progressions": { "fort": "good", "ref": "poor", "will": "poor" },
+    "level_table": "table:example:table-3-1-the-iron-warden",
+    "class_features": [
+      {
+        "name": "Bulwark Stance",
+        "level": 1,
+        "text_md": "While standing his ground, an iron warden grants adjacent allies a +2 shield bonus to Armor Class."
+      },
+      {
+        "name": "Unyielding",
+        "level": 2,
+        "text_md": ""
+      },
+      {
+        "name": "Fortress Bound",
+        "level": 3,
+        "text_md": "An iron warden gains damage reduction 2/-- while within his bonded fortification."
+      }
+    ],
+    "description_sections": [
+      {
+        "heading": "Requirements",
+        "text_md": "To qualify to become an iron warden, a character must fulfill all of the following criteria."
+      }
+    ],
+    "weapon_and_armor_proficiency": "Iron wardens gain no proficiency with any weapon or armor.",
+    "source_pages": { "start": 3, "end": 4 }
+  },
+  "tables": ["table:example:table-3-1-the-iron-warden"],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-5",
+    "segment_id": "example-prestige_class-p0003",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

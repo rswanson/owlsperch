@@ -318,3 +318,34 @@ def test_human_segments_are_counted_and_included_in_status_and_ladder(tmp_path: 
     assert by_tier["opus"].escalated == 1
     assert "opus: 0 pass / 1 -> human" in summary.render()
     assert summary.to_json()["human"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c: superseded segments are excluded from pending, counted
+# separately.
+# ---------------------------------------------------------------------------
+
+
+def test_superseded_segments_are_excluded_from_pending_and_counted_separately(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-class-p0002", kind_hint="class", status="pending")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0002-01",
+        kind_hint="rules_section",
+        status="pending",
+        tier="haiku",
+        superseded_by="book-class-p0002",
+    )
+    _write_segment(data_dir, "book", "book-p0010-01", kind_hint="spell", status="pending")
+
+    summary = compute_summary("book", data_dir=data_dir)
+
+    assert summary.superseded == 1
+    assert summary.pending_by_kind == {"class": 1, "spell": 1}
+    assert "rules_section" not in summary.pending_by_kind
+    assert summary.to_json()["superseded"] == 1
+    assert "superseded: 1" in summary.render()

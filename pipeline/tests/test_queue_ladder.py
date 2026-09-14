@@ -9,12 +9,14 @@ from typing import Any
 
 from owlsperch.queue.ladder import (
     STALE_AFTER,
+    STARTING_TIERS,
     TIER_MODELS,
     TIERS,
     escalate_existing_attempt,
     is_stale,
     next_tier,
     record_failure,
+    starting_tier,
 )
 from owlsperch.segment.runner import Segment
 
@@ -330,3 +332,21 @@ def test_is_stale_false_when_not_in_progress() -> None:
     segment = _segment(status="pending", in_progress_since=None)
 
     assert not is_stale(segment, now)
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c: STARTING_TIERS / starting_tier.
+# ---------------------------------------------------------------------------
+
+
+def test_starting_tier_is_sonnet_for_class_kinds() -> None:
+    assert starting_tier("class") == "sonnet"
+    assert starting_tier("prestige_class") == "sonnet"
+    assert STARTING_TIERS["class"] == "sonnet"
+    assert STARTING_TIERS["prestige_class"] == "sonnet"
+
+
+def test_starting_tier_defaults_to_lowest_tier_for_other_kinds() -> None:
+    assert starting_tier("spell") == TIERS[0]
+    assert starting_tier("feat") == TIERS[0]
+    assert starting_tier("stat_block") == TIERS[0]

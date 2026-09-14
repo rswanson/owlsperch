@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError, getRecord, getSchemas, type RecordDetail, type SchemaField } from "../api";
+import { ClassRecord } from "../components/ClassRecord";
 import { FieldGroups } from "../components/FieldGroups";
 import { buildOwnTable, RecordTables } from "../components/RecordTables";
 import { NotFoundPage } from "./NotFoundPage";
@@ -11,6 +12,26 @@ import { NotFoundPage } from "./NotFoundPage";
 // real HTML grid (via `RecordTables`), not a comma-joined string in the
 // generic field groups below.
 const TABLE_TYPE_HIDDEN_FIELDS = ["columns", "rows"];
+
+/** The `/r/:type/:slug` path to the record `supersededById` names, parsed
+ * straight out of the id (`<type>:<book_id>:<slug>`) rather than a second
+ * fetch, since only the link is needed here (batch B10c, design decision
+ * D13). `null` for a malformed id (defensive; every real id has 3 parts). */
+function supersededByLink(supersededById: string): string | null {
+  const parts = supersededById.split(":");
+  if (parts.length !== 3) return null;
+  const [type, , slug] = parts;
+  return `/r/${type}/${slug}`;
+}
+
+function SupersededNotice({ supersededById }: { supersededById: string }) {
+  const href = supersededByLink(supersededById);
+  return (
+    <p className="superseded-notice">
+      Superseded by {href ? <Link to={href}>{supersededById}</Link> : supersededById}
+    </p>
+  );
+}
 
 type LoadState =
   | { status: "loading" }
@@ -110,6 +131,7 @@ export function RecordPage() {
 
   const { record, schemaFields, typeLabel } = state;
   const isTableRecord = record.type === "table";
+  const isClassRecord = record.type === "class" || record.type === "prestige_class";
   const tables = isTableRecord ? [buildOwnTable(record), ...record.tables] : record.tables;
 
   return (
@@ -118,20 +140,27 @@ export function RecordPage() {
         ← Back to search
       </Link>
       <RecordBreadcrumb record={record} />
+      {record.superseded_by && <SupersededNotice supersededById={record.superseded_by} />}
       <div className="record-heading">
         <span className="type-badge">{typeLabel}</span>
         <h1>{record.name}</h1>
         {record.citation && <p className="citation">{record.citation}</p>}
       </div>
-      <FieldGroups
-        fields={record.fields}
-        schemaFields={schemaFields}
-        hiddenFields={isTableRecord ? TABLE_TYPE_HIDDEN_FIELDS : undefined}
-      />
-      <div className="text-md">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.text_md}</ReactMarkdown>
-      </div>
-      <RecordTables tables={tables} />
+      {isClassRecord ? (
+        <ClassRecord record={record} />
+      ) : (
+        <>
+          <FieldGroups
+            fields={record.fields}
+            schemaFields={schemaFields}
+            hiddenFields={isTableRecord ? TABLE_TYPE_HIDDEN_FIELDS : undefined}
+          />
+          <div className="text-md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.text_md}</ReactMarkdown>
+          </div>
+          <RecordTables tables={tables} />
+        </>
+      )}
     </article>
   );
 }

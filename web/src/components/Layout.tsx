@@ -19,8 +19,13 @@ interface QuickLink {
 /** Categories that today hold content mixed into `rules_section` but will
  * later become their own record type (batch B10b, design decision D14) --
  * the header nav gets a quick link into each one that actually has any
- * records this build. */
-const QUICK_LINK_CATEGORIES = ["classes", "equipment", "skills", "races"];
+ * records this build. "classes" is deliberately absent (batch B10c): class
+ * is now its own registered type with its own nav link (`Layout` already
+ * renders one per registered type below), so a rules quick-link into it
+ * too would just duplicate that -- and the class-chapter rules_section
+ * fragments it used to point at are non-canonical (superseded) now
+ * anyway. */
+const QUICK_LINK_CATEGORIES = ["equipment", "skills", "races"];
 
 /** The site header's nav (spec 4.10, batch B9 acceptance criterion 5): one
  * link per registered type (`GET /schemas`) EXCEPT `rules_section`, each

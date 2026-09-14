@@ -26,7 +26,13 @@ from typing import Literal
 from owlsperch.segment.anchors import Trigger, find_triggers
 from owlsperch.segment.headings import Paragraph, is_heading
 
-KindHint = Literal["spell", "stat_block", "feat", "table", "rules_section"]
+#: Batch B10c adds "class"/"prestige_class" -- these are never produced by
+#: `build_segments` itself (they're a separate, toc-driven pass -- see
+#: `owlsperch.segment.runner`'s class-span post-pass); the literal is
+#: widened here only so `Segment.kind_hint` accepts them too.
+KindHint = Literal[
+    "spell", "stat_block", "feat", "table", "rules_section", "class", "prestige_class"
+]
 
 
 @dataclass(frozen=True)

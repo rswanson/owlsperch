@@ -991,3 +991,223 @@ def test_build_db_does_not_write_record_fields_rows_for_toc_columns(tmp_path: Pa
     finally:
         conn.close()
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c, design decision D11: superseding pass.
+# ---------------------------------------------------------------------------
+
+
+def _valid_class_record(*, book_id: str = "book") -> dict[str, Any]:
+    return {
+        "id": f"class:{book_id}:testclass",
+        "type": "class",
+        "name": "Testclass",
+        "slug": "testclass",
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [2, 3],
+        "citation": "Test Book pp. 2-3",
+        "text_md": "Testclass overview.",
+        "fields": {
+            "hit_die": "d12",
+            "class_type": "base",
+            "max_level": 3,
+            "bab_progression": "good",
+            "save_progressions": {"fort": "good", "ref": "poor", "will": "poor"},
+            "class_skills": [{"skill": "Climb", "key_ability": "Str"}],
+            "level_table": f"table:{book_id}:table-x-the-testclass",
+            "class_features": [
+                {"name": "Rage", "level": 1, "text_md": "You rage."},
+                {"name": "Uncanny Dodge", "level": 2, "text_md": "You dodge."},
+                {"name": "Trap Sense", "level": 3, "text_md": ""},
+            ],
+            "source_pages": {"start": 2, "end": 3},
+        },
+        "tables": [f"table:{book_id}:table-x-the-testclass"],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": "book-class-p0002",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def _owned_level_table_record(*, book_id: str = "book") -> dict[str, Any]:
+    return {
+        "id": f"table:{book_id}:table-x-the-testclass",
+        "type": "table",
+        "name": "Table X: The Testclass",
+        "slug": "table-x-the-testclass",
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [2],
+        "citation": "Test Book p. 2",
+        "text_md": "",
+        "fields": {
+            "caption": "Table X: The Testclass",
+            "columns": [
+                "Level",
+                "Base Attack Bonus",
+                "Fort Save",
+                "Ref Save",
+                "Will Save",
+                "Special",
+            ],
+            "rows": [
+                ["1st", "+1", "+2", "+0", "+0", "Rage 1/day"],
+                ["2nd", "+2", "+3", "+0", "+0", "Uncanny dodge"],
+                ["3rd", "+3", "+3", "+1", "+1", "Trap sense +1"],
+            ],
+            "parent_record": f"class:{book_id}:testclass",
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": "book-class-p0002",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def _rules_section_record(
+    *, book_id: str, slug: str, pages: list[int], seg_id: str
+) -> dict[str, Any]:
+    return {
+        "id": f"rules_section:{book_id}:{slug}",
+        "type": "rules_section",
+        "name": slug.replace("-", " ").title(),
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": pages,
+        "citation": f"Test Book p. {pages[0]}",
+        "text_md": "Some fragment text.",
+        "fields": {"topic": slug.replace("-", " ").title()},
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "haiku",
+            "model": "claude-haiku-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def test_build_db_supersedes_fragments_inside_a_class_span(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-p0003-01", [3])
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+
+    _write_record(data_dir, "book", "class", "testclass", _valid_class_record())
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "barbarian-fluff",
+        _rules_section_record(
+            book_id="book", slug="barbarian-fluff", pages=[3], seg_id="book-p0003-01"
+        ),
+    )
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "unrelated",
+        _rules_section_record(book_id="book", slug="unrelated", pages=[10], seg_id="book-p0010-01"),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.skipped_invalid == 0, result.skipped
+    assert result.superseded == 1
+
+    conn = _connect(result.db_path)
+    try:
+        fluff = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("rules_section:book:barbarian-fluff",),
+        ).fetchone()
+        assert fluff["canonical"] == 0
+        assert fluff["superseded_by"] == "class:book:testclass"
+
+        unrelated = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("rules_section:book:unrelated",),
+        ).fetchone()
+        assert unrelated["canonical"] == 1
+        assert unrelated["superseded_by"] is None
+
+        # The class's own progression table must NEVER be superseded, even
+        # though its own pages fall entirely inside the class's own span --
+        # this is the most likely bug in this batch (D11).
+        owned_table = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("table:book:table-x-the-testclass",),
+        ).fetchone()
+        assert owned_table["canonical"] == 1
+        assert owned_table["superseded_by"] is None
+
+        class_row = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("class:book:testclass",),
+        ).fetchone()
+        assert class_row["canonical"] == 1
+        assert class_row["superseded_by"] is None
+    finally:
+        conn.close()
+
+
+def test_run_build_db_prints_superseded_count(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-p0003-01", [3])
+    _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
+
+    _write_record(data_dir, "book", "class", "testclass", _valid_class_record())
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "barbarian-fluff",
+        _rules_section_record(
+            book_id="book", slug="barbarian-fluff", pages=[3], seg_id="book-p0003-01"
+        ),
+    )
+
+    out = io.StringIO()
+    err = io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+    assert exit_code == 0
+    assert "Superseded" in out.getvalue()
+    assert "1" in out.getvalue()
+    assert "WARNING" not in err.getvalue()  # superseding is informational, not a problem

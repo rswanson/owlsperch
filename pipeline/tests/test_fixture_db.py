@@ -18,7 +18,13 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
     result = write_fixture_data(data_dir)
 
     assert result.skipped_invalid == 0
-    assert result.counts_by_type == {"spell": 3, "feat": 1, "rules_section": 2, "table": 1}
+    assert result.counts_by_type == {
+        "spell": 3,
+        "feat": 1,
+        "rules_section": 2,
+        "table": 2,
+        "class": 1,
+    }
     assert default_db_path(data_dir).is_file()
 
 
@@ -142,3 +148,41 @@ def test_write_fixture_data_derives_categories_for_both_rules_sections(tmp_path:
         "Chapter 3: Equipment",
         "Hauling Gear",
     )
+
+
+def test_fixture_class_owns_its_level_table_and_matches_a_real_spell_list(tmp_path: Path) -> None:
+    """Batch B10c, design decision D13: the fixture class validates cleanly
+    (proving the class validators are satisfiable), owns a 3-row level
+    table, has two class features, and its `spellcasting.spell_list` points
+    at a class name the fixture spells actually use -- so the web Spells
+    section has something real to render."""
+    data_dir = tmp_path / "data"
+    result = write_fixture_data(data_dir)
+    assert result.skipped_invalid == 0, result.skipped
+
+    conn = sqlite3.connect(default_db_path(data_dir))
+    conn.row_factory = sqlite3.Row
+    try:
+        class_row = conn.execute(
+            "SELECT * FROM records WHERE id = ?", ("class:fixture-book:fixture-mage",)
+        ).fetchone()
+        assert class_row is not None
+        record = json.loads(class_row["json"])
+        assert record["fields"]["spellcasting"]["spell_list"] == "Wizard"
+        assert len(record["fields"]["class_features"]) == 2
+        assert record["tables"] == ["table:fixture-book:table-1-the-fixture-mage"]
+
+        table_row = conn.execute(
+            "SELECT * FROM tables WHERE record_id = ?",
+            ("table:fixture-book:table-1-the-fixture-mage",),
+        ).fetchone()
+        assert table_row is not None
+        assert len(json.loads(table_row["rows"])) == 3
+
+        wizard_spell_count = conn.execute(
+            "SELECT COUNT(*) FROM record_fields WHERE key = 'levels' AND "
+            "LOWER(text_value) LIKE 'wizard%'"
+        ).fetchone()[0]
+        assert wizard_spell_count > 0
+    finally:
+        conn.close()

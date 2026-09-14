@@ -106,6 +106,74 @@ export interface RecordDetail {
   referenced_by: unknown[];
   book_title: string | null;
   toc: RecordToc & { path: string[] };
+  /** The id of the class/prestige_class record whose page span swallowed
+   * this one (batch B10c, design decision D11/D12), or `null` when this
+   * record isn't superseded (every record before this batch). */
+  superseded_by: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// class / prestige_class `fields` shapes (batch B10c, design decision D5) --
+// mirrored from schemas/class.json and schemas/prestige_class.json.
+// ---------------------------------------------------------------------------
+
+export interface ClassSkill {
+  skill: string;
+  key_ability: string;
+}
+
+export interface SkillPoints {
+  base: number;
+  ability: string;
+  first_level_multiplier?: number;
+}
+
+export interface SaveProgressions {
+  fort: string;
+  ref: string;
+  will: string;
+}
+
+export interface Spellcasting {
+  kind: string;
+  ability: string;
+  type: string;
+  spell_list: string;
+}
+
+export interface ClassFeature {
+  name: string;
+  level: number;
+  text_md: string;
+}
+
+export interface DescriptionSection {
+  heading: string;
+  text_md: string;
+}
+
+export interface ClassRequirement {
+  kind: string;
+  text: string;
+}
+
+export interface ClassFields {
+  hit_die?: string;
+  class_type?: string;
+  max_level?: number;
+  alignment?: string | null;
+  abbreviation?: string | null;
+  class_skills?: ClassSkill[];
+  skill_points?: SkillPoints;
+  bab_progression?: string;
+  save_progressions?: SaveProgressions;
+  spellcasting?: Spellcasting;
+  level_table?: string;
+  class_features?: ClassFeature[];
+  description_sections?: DescriptionSection[];
+  weapon_and_armor_proficiency?: string | null;
+  source_pages?: { start: number; end: number };
+  requirements?: ClassRequirement[];
 }
 
 /** Raised for any non-2xx response; `status` is the HTTP status code and

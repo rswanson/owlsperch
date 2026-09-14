@@ -366,6 +366,125 @@ _HAULING_GEAR: dict[str, Any] = {
     },
 }
 
+#: (batch B10c) A fifth segment for the synthetic class below.
+_SEGMENT_5: dict[str, Any] = {
+    "seg_id": "fixture-book-class-p0005",
+    "book_id": "fixture-book",
+    "pages": [5],
+    "printed_pages": [5],
+    "kind_hint": "class",
+    "heading": "Fixture Mage",
+    "text": "Fixture Mage\n\nHit Die: d4.",
+    "status": "pending",
+    "tier": "sonnet",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
+#: (batch B10c, design decision D13) An invented base class -- never copied
+#: from any real book. `spellcasting.spell_list` deliberately points at
+#: "Wizard", the same class name `_SPELLS`' Fireball/Summon Monster III/
+#: Alarm already use in their own `levels[].class`, so the web UI's Spells
+#: section (`ClassRecord.tsx`) has real spells to render for this fixture.
+_CLASS: dict[str, Any] = {
+    "id": "class:fixture-book:fixture-mage",
+    "type": "class",
+    "name": "Fixture Mage",
+    "slug": "fixture-mage",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [5],
+    "citation": "FB p. 5",
+    "text_md": "A fixture mage bends the fabric of the test suite to her will.",
+    "fields": {
+        "hit_die": "d4",
+        "class_type": "base",
+        "abbreviation": "FxM",
+        "max_level": 3,
+        "alignment": "Any",
+        "class_skills": [
+            {"skill": "Spellcraft", "key_ability": "Int"},
+            {"skill": "Knowledge (arcana)", "key_ability": "Int"},
+        ],
+        "skill_points": {"base": 2, "ability": "Int"},
+        "bab_progression": "poor",
+        "save_progressions": {"fort": "poor", "ref": "poor", "will": "good"},
+        "spellcasting": {
+            "kind": "arcane",
+            "ability": "Int",
+            "type": "prepared",
+            "spell_list": "Wizard",
+        },
+        "level_table": "table:fixture-book:table-1-the-fixture-mage",
+        "class_features": [
+            {
+                "name": "Arcane Bond",
+                "level": 1,
+                "text_md": "A fixture mage forms a bond with a single test fixture.",
+            },
+            {"name": "Bonus Feat", "level": 3, "text_md": ""},
+        ],
+        "weapon_and_armor_proficiency": (
+            "A fixture mage is proficient with all simple weapons, but not with any armor."
+        ),
+        "source_pages": {"start": 5, "end": 5},
+    },
+    "tables": ["table:fixture-book:table-1-the-fixture-mage"],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "sonnet",
+        "model": "fixture",
+        "segment_id": "fixture-book-class-p0005",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (batch B10c) The 3-row level table `_CLASS` above owns.
+_CLASS_TABLE: dict[str, Any] = {
+    "id": "table:fixture-book:table-1-the-fixture-mage",
+    "type": "table",
+    "name": "Table 1: The Fixture Mage",
+    "slug": "table-1-the-fixture-mage",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [5],
+    "citation": "FB p. 5",
+    "text_md": "",
+    "fields": {
+        "caption": "Table 1: The Fixture Mage",
+        "columns": [
+            "Level",
+            "Base Attack Bonus",
+            "Fort Save",
+            "Ref Save",
+            "Will Save",
+            "Special",
+        ],
+        "rows": [
+            ["1st", "+0", "+0", "+0", "+2", "Arcane bond"],
+            ["2nd", "+1", "+0", "+0", "+3", "-"],
+            ["3rd", "+1", "+1", "+1", "+3", "Bonus feat"],
+        ],
+        "parent_record": "class:fixture-book:fixture-mage",
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "sonnet",
+        "model": "fixture",
+        "segment_id": "fixture-book-class-p0005",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
 #: (batch B10b) `toc/fixture-book.json` (design decision D16): three
 #: chapters -- Magic (pdf 1-2), Combat (pdf 3-3), Equipment (pdf 4-4) -- each
 #: with one level-2 section. "Grapple Ranks" (combat, p.3) and "Hauling
@@ -447,7 +566,7 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
 
     seg_dir = data_dir / "segments" / "fixture-book"
     seg_dir.mkdir(parents=True, exist_ok=True)
-    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3, _SEGMENT_4):
+    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3, _SEGMENT_4, _SEGMENT_5):
         (seg_dir / f"{segment['seg_id']}.json").write_text(json.dumps(segment, indent=2))
 
     records_dir = data_dir / "records" / "fixture-book" / "spell"
@@ -455,7 +574,7 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
     for spell in _SPELLS:
         (records_dir / f"{spell['slug']}.json").write_text(json.dumps(spell, indent=2))
 
-    for record in (_FEAT, _RULES_SECTION, _TABLE, _HAULING_GEAR):
+    for record in (_FEAT, _RULES_SECTION, _TABLE, _HAULING_GEAR, _CLASS, _CLASS_TABLE):
         type_dir = data_dir / "records" / "fixture-book" / record["type"]
         type_dir.mkdir(parents=True, exist_ok=True)
         (type_dir / f"{record['slug']}.json").write_text(json.dumps(record, indent=2))

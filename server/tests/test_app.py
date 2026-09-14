@@ -358,3 +358,195 @@ def test_health_and_schemas_unaffected_by_corrupt_db(tmp_path: Path) -> None:
     client = _client(_corrupt_data_dir(tmp_path))
     assert client.get("/health").json() == {"status": "ok", "db": True}
     assert client.get("/schemas").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c, design decision D12: /records/{type}/{slug} still resolves a
+# record a class span superseded (canonical = 0), and reports
+# `superseded_by`; /search, /records/{type}, /facets/{type} stay
+# canonical-only (already true via existing `canonical = 1` clauses --
+# these just prove it, per D12's "verify, don't re-plumb").
+# ---------------------------------------------------------------------------
+
+
+def _write_superseded_fixture(tmp_path: Path) -> Path:
+    """A minimal, self-built data dir (not `built_data_dir`, which has no
+    class records): one class record with a level table it owns, and one
+    rules_section fragment fully inside its page span."""
+    import json as json_mod
+
+    import yaml
+
+    from owlsperch.build_db.runner import build_db
+
+    data_dir = tmp_path / "data"
+    manifest_path = data_dir / "manifest.yaml"
+    data_dir.mkdir(parents=True)
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "entries": [
+                    {
+                        "book_id": "book",
+                        "title": "Test Book",
+                        "short_title": "TB",
+                        "file": "book.pdf",
+                        "edition": "3.5",
+                        "kind": "rulebook",
+                    }
+                ]
+            }
+        )
+    )
+
+    seg_dir = data_dir / "segments" / "book"
+    seg_dir.mkdir(parents=True)
+    for seg_id, pages in (("book-class-p0002", [2, 3]), ("book-p0003-01", [3])):
+        segment = {
+            "seg_id": seg_id,
+            "book_id": "book",
+            "pages": pages,
+            "printed_pages": pages,
+            "kind_hint": "spell",
+            "heading": "x",
+            "text": "x",
+            "status": "pending",
+            "tier": "haiku",
+            "attempts": [],
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        (seg_dir / f"{seg_id}.json").write_text(json_mod.dumps(segment))
+
+    class_record = {
+        "id": "class:book:testclass",
+        "type": "class",
+        "name": "Testclass",
+        "slug": "testclass",
+        "aliases": [],
+        "book_id": "book",
+        "pages": [2, 3],
+        "citation": "Test Book pp. 2-3",
+        "text_md": "Testclass overview.",
+        "fields": {
+            "hit_die": "d12",
+            "class_type": "base",
+            "max_level": 1,
+            "bab_progression": "good",
+            "save_progressions": {"fort": "good", "ref": "poor", "will": "poor"},
+            "level_table": "table:book:table-x",
+            "class_features": [{"name": "Rage", "level": 1, "text_md": "You rage."}],
+            "source_pages": {"start": 2, "end": 3},
+        },
+        "tables": ["table:book:table-x"],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "m",
+            "segment_id": "book-class-p0002",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+    table_record = {
+        "id": "table:book:table-x",
+        "type": "table",
+        "name": "Table X",
+        "slug": "table-x",
+        "aliases": [],
+        "book_id": "book",
+        "pages": [2],
+        "citation": "Test Book p. 2",
+        "text_md": "",
+        "fields": {
+            "columns": ["Level", "Base Attack Bonus", "Fort Save", "Ref Save", "Will Save"],
+            "rows": [["1st", "+1", "+2", "+0", "+0"]],
+            "parent_record": "class:book:testclass",
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "m",
+            "segment_id": "book-class-p0002",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+    fragment_record = {
+        "id": "rules_section:book:barbarian-fluff",
+        "type": "rules_section",
+        "name": "Barbarian Fluff",
+        "slug": "barbarian-fluff",
+        "aliases": [],
+        "book_id": "book",
+        "pages": [3],
+        "citation": "Test Book p. 3",
+        "text_md": "Fragment text.",
+        "fields": {"topic": "Barbarian Fluff"},
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "haiku",
+            "model": "m",
+            "segment_id": "book-p0003-01",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+    for record in (class_record, table_record, fragment_record):
+        type_dir = data_dir / "records" / "book" / str(record["type"])
+        type_dir.mkdir(parents=True, exist_ok=True)
+        (type_dir / f"{record['slug']}.json").write_text(json_mod.dumps(record))
+
+    result = build_db(data_dir=data_dir, manifest_path=manifest_path)
+    assert result.skipped_invalid == 0, result.skipped
+    assert result.superseded == 1
+    return data_dir
+
+
+def test_record_detail_still_resolves_a_superseded_record(tmp_path: Path) -> None:
+    data_dir = _write_superseded_fixture(tmp_path)
+
+    response = _client(data_dir).get("/records/rules_section/barbarian-fluff")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "rules_section:book:barbarian-fluff"
+    assert body["superseded_by"] == "class:book:testclass"
+
+
+def test_record_detail_canonical_record_reports_null_superseded_by(tmp_path: Path) -> None:
+    data_dir = _write_superseded_fixture(tmp_path)
+
+    response = _client(data_dir).get("/records/class/testclass")
+
+    assert response.status_code == 200
+    assert response.json()["superseded_by"] is None
+
+
+def test_search_never_returns_a_superseded_record(tmp_path: Path) -> None:
+    data_dir = _write_superseded_fixture(tmp_path)
+
+    response = _client(data_dir).get("/search", params={"q": "Barbarian Fluff"})
+
+    hits = [h for g in response.json()["groups"] for h in g["hits"]]
+    assert not any(h["slug"] == "barbarian-fluff" for h in hits)
+
+
+def test_records_list_never_returns_a_superseded_record(tmp_path: Path) -> None:
+    data_dir = _write_superseded_fixture(tmp_path)
+
+    response = _client(data_dir).get("/records/rules_section")
+
+    assert response.status_code == 200
+    slugs = {item["slug"] for item in response.json()["items"]}
+    assert "barbarian-fluff" not in slugs

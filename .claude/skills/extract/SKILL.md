@@ -24,12 +24,18 @@ them and launches subagents.
 - `--parallel N` -- subagents in flight at once (default: 8).
 - `--kind K` -- restrict to one kind_hint (default: omit it -- `queue next`
   then selects across every kind_hint with a registered schema at once,
-  currently spell/feat/table/rules_section; `stat_block` has no schema yet
-  and is never selected unless `--kind stat_block` is passed explicitly).
+  currently spell/feat/table/rules_section/class/prestige_class;
+  `stat_block` has no schema yet and is never selected unless `--kind
+  stat_block` is passed explicitly).
 - `--tier T` -- restrict to one tier (`haiku`/`sonnet`/`opus`). Default:
   omit it -- `queue next` picks the lowest tier with pending work on its
   own, so a plain `/extract <book_id>` naturally drains haiku, then sonnet,
-  then opus, without the skill tracking tiers itself.
+  then opus, without the skill tracking tiers itself. Most kinds start at
+  haiku, but `class`/`prestige_class` segments start at sonnet (batch B10c,
+  `owlsperch.queue.ladder.STARTING_TIERS`) -- a class entry's level table
+  plus several structured sub-objects is reliably too complex for haiku to
+  get right on a first attempt, so `queue next class ...`'s first wave for
+  a book resolves straight to sonnet, never haiku.
 
 ## Loop, per book_id
 
@@ -114,7 +120,8 @@ the escalation/human-move bookkeeping.
 ## Tables belonging to an entity (batch B10)
 
 When a segment's text contains a table belonging to the entity being
-extracted (a feat, rules_section, or spell with tab-separated rows), the
+extracted (a feat, rules_section, or spell with tab-separated rows -- or,
+batch B10c, a class/prestige_class's own level-progression table), the
 subagent's prompt tells it to write TWO record files for that one segment:
 the entity's own record, and a separate `table` record (cross-linked via
 the table's `fields.parent_record` and the owning record's `tables` list).
