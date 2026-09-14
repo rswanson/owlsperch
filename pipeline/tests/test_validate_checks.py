@@ -386,7 +386,10 @@ def test_check_class_fields_flags_spell_list_not_matching_any_spell() -> None:
 
 def test_check_class_fields_skips_spell_list_check_when_book_has_no_spells_yet() -> None:
     """No spell records for the book yet is not an error -- the check is
-    silently skipped rather than failing every class record."""
+    silently skipped rather than failing every class record. The table
+    needs its own spells-per-day column (Part 3b) so this test keeps
+    asserting what it is named for, rather than failing on that separate
+    check."""
     record = copy.deepcopy(_valid_class_record())
     record["fields"]["spellcasting"] = {
         "kind": "arcane",
@@ -394,8 +397,90 @@ def test_check_class_fields_skips_spell_list_check_when_book_has_no_spells_yet()
         "type": "prepared",
         "spell_list": "Anything At All",
     }
-    errors = check_class_fields(record, _default_context())
+    table = _valid_table_record()
+    table["fields"]["columns"].append("Spells per Day 1st")
+    for row in table["fields"]["rows"]:
+        row.append("1")
+    errors = check_class_fields(record, _context({table["id"]: table}))
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand3 Part 3a: plural-/bonus-insensitive Special matching.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_special_bonus_feat_matches_bonus_feats_feature() -> None:
+    """The fighter prints the heading "Bonus Feats:" but its Special cell
+    reads "Bonus feat" -- the match must be plural-insensitive so the
+    record doesn't have to misname the feature to validate."""
+    table = _valid_table_record()
+    table["fields"]["rows"][0][5] = "Bonus feat"
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["class_features"][0] = {
+        "name": "Bonus Feats",
+        "level": 1,
+        "text_md": "You gain a bonus feat.",
+    }
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert not any("Bonus feat" in e and "no matching" in e for e in errors)
+
+
+def test_check_class_fields_special_entry_with_truly_no_match_still_errors() -> None:
+    """The plural/bonus tolerance must not make the check vacuous -- a
+    Special token naming a feature that plainly isn't in class_features at
+    all still errors."""
+    table = _valid_table_record()
+    table["fields"]["rows"][0][5] = "Whirlwind Attack"
+    record = copy.deepcopy(_valid_class_record())
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert any("Whirlwind Attack" in e and "no matching class_features entry" in e for e in errors)
+
+
+def test_check_class_fields_special_still_matches_dice_bonus_and_frequency() -> None:
+    """Regression: `_normalize_special_token`'s new trailing-bonus strip
+    and plural folding must not break the existing dice-bonus ("Sneak
+    Attack +1d6") or per-day-frequency ("Rage 1/day") matches."""
+    assert check_class_fields(_valid_class_record(), _default_context()) == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand3 Part 3b: a caster class needs a spells-per-day/known
+# column on its level_table.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_flags_caster_with_no_spell_column() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["spellcasting"] = {
+        "kind": "divine",
+        "ability": "Wis",
+        "type": "prepared",
+        "spell_list": "Testclass",
+    }
+    errors = check_class_fields(record, _default_context())
+    assert any(
+        "spellcasting is set" in e
+        and "no spells-per-day/known column" in e
+        and "table:phb1:table-x-the-testclass" in e
+        for e in errors
+    )
+
+
+def test_check_class_fields_caster_with_spell_column_passes() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["spellcasting"] = {
+        "kind": "divine",
+        "ability": "Wis",
+        "type": "prepared",
+        "spell_list": "Testclass",
+    }
+    table = _valid_table_record()
+    table["fields"]["columns"].append("Spells Known")
+    for row in table["fields"]["rows"]:
+        row.append("2")
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert not any("no spells-per-day/known column" in e for e in errors)
 
 
 def test_check_class_fields_with_null_context_reports_unresolvable_table() -> None:
