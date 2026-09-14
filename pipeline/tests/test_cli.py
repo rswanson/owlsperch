@@ -97,6 +97,24 @@ def test_queue_audit_subparser_wires_book_id_fix_and_json() -> None:
     assert defaulted.json is False
 
 
+def test_segment_kinds_flag_parses_comma_separated_values_and_defaults_none() -> None:
+    """B10c-mand6 criterion 6: `owlsperch segment <book_id> --kinds
+    class,prestige_class` parses to a `frozenset`; the flag defaults to
+    `None` (full segmentation) when omitted."""
+    from owlsperch.cli import build_parser
+
+    parser = build_parser()
+
+    defaulted = parser.parse_args(["segment", "book"])
+    assert defaulted.kinds is None
+
+    single = parser.parse_args(["segment", "book", "--kinds", "class"])
+    assert single.kinds == frozenset({"class"})
+
+    multi = parser.parse_args(["segment", "book", "--kinds", "class,prestige_class"])
+    assert multi.kinds == frozenset({"class", "prestige_class"})
+
+
 def test_console_script_help_lists_manifest_command() -> None:
     owlsperch = shutil.which("owlsperch")
     if owlsperch is None:

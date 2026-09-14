@@ -772,7 +772,18 @@ def test_class_segments_are_discovered_from_toc_and_hit_die_marker(tmp_path: Pat
     # pages [2, 3] because the barbarian's own trailing prose on page 3
     # (before "BARD" begins) legitimately belongs to it.
     assert barbarian["pages"] == [2, 3]
-    assert barbarian["text"].startswith("BARBARIAN")
+    # B10c-mand6: the span's TEXT START is now back-extended to the top of
+    # its own heading's page (page 2) -- page 2's own chapter-intro
+    # paragraph ("Read the chapter introduction...") precedes "BARBARIAN"
+    # and there is no still-earlier class heading to bound the extension
+    # against, so it gets pulled in too. A chapter intro bleeding into the
+    # first class's segment is the accepted cost of never losing a class's
+    # own pre-heading flavor tail (see PHB p0050 in the module docstring
+    # and `_back_extend_start_index`'s own docstring) -- what matters is
+    # that the heading itself is present and nothing PAST it is lost.
+    assert "Read the chapter introduction" in barbarian["text"]
+    assert "BARBARIAN" in barbarian["text"]
+    assert barbarian["text"].index("BARBARIAN") > 0
     assert "Barbarians continue raging" in barbarian["text"]
     assert "BARD" not in barbarian["text"]
     assert "trained in music and magic" not in barbarian["text"]
@@ -782,8 +793,17 @@ def test_class_segments_are_discovered_from_toc_and_hit_die_marker(tmp_path: Pat
     # Bard's own pdf_page_end (4) is already the book's last page, so the
     # +1 extension is capped there, not pushed past the end of the book.
     assert bard["pages"] == [3, 4]
-    assert bard["text"].startswith("BARD")
-    assert "Barbarians continue raging" not in bard["text"]
+    # B10c-mand6: bard's own back-extended start reaches to the top of
+    # page 3 (bounded only by barbarian's own heading, which is on page 2,
+    # well before page 3 starts) -- so bard's segment now ALSO contains
+    # page 3's barbarian tail. This overlap with barbarian's own segment
+    # (which already contained that same tail via its unchanged,
+    # heading-anchored end cap) is deliberate, not a regression: see the
+    # module docstring's point 9 and `_back_extend_start_index`'s own
+    # docstring for why there is no single cut point that avoids it.
+    assert "Barbarians continue raging" in bard["text"]
+    assert "BARD" in bard["text"]
+    assert bard["text"].index("BARD") > 0
     assert "Read the chapter introduction" not in bard["text"]
 
 
@@ -883,6 +903,197 @@ def test_class_span_falls_back_to_whole_page_when_heading_never_matches(
     assert "warning" in captured.err
     assert "book" in captured.err
     assert "Wizard" in captured.err
+
+
+def test_class_span_back_extends_to_recover_a_pre_heading_flavor_tail(tmp_path: Path) -> None:
+    """B10c-mand6 criterion 2 (judgement finding 5): a class's OWN
+    flavor run-in sections (Alignment/Religion/...) can be printed on the
+    heading's own page but BEFORE the heading itself -- exactly PHB
+    p0050's paragraph order for rogue: [0] rogue's own flavor sections,
+    [1]-[2] ranger's Starting Package, [3] "ROGUE" heading. Modeled here
+    with three classes: Barbarian (page 2), Bard (page 3, whose own
+    Alignment/Religion paragraph is printed before "BARD"), Cleric
+    (page 4)."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("BARBARIAN"),
+                _para(
+                    "Hit Die: d12. A barbarian is a fierce warrior, savage and strong in "
+                    "battle here.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para(
+                    "Barbarians continue raging fiercely across every battlefield they "
+                    "enter for a while.",
+                    line_count=3,
+                ),
+                _para(
+                    "Alignment: Any nonlawful. Religion: Bards revere whichever deity "
+                    "best matches their own personal wanderlust here.",
+                    line_count=3,
+                ),
+                _para("BARD"),
+                _para(
+                    "Hit Die: d6. Bards are trained in music and magic together for adventuring.",
+                    line_count=3,
+                ),
+            ],
+            4: [
+                _para(
+                    "Bards continue channeling their magic across the land for a while "
+                    "longer here.",
+                    line_count=3,
+                ),
+                _para("CLERIC"),
+                _para(
+                    "Hit Die: d8. A cleric is a master of divine magic and skilled with "
+                    "weapons here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        "book",
+        [
+            {
+                "title": "Barbarian",
+                "level": 2,
+                "printed_page": 2,
+                "pdf_page_start": 2,
+                "pdf_page_end": 2,
+                "path": ["Chapter 3: Classes", "Barbarian"],
+                "category": "classes",
+            },
+            {
+                "title": "Bard",
+                "level": 2,
+                "printed_page": 3,
+                "pdf_page_start": 3,
+                "pdf_page_end": 3,
+                "path": ["Chapter 3: Classes", "Bard"],
+                "category": "classes",
+            },
+            {
+                "title": "Cleric",
+                "level": 2,
+                "printed_page": 4,
+                "pdf_page_start": 4,
+                "pdf_page_end": 4,
+                "path": ["Chapter 3: Classes", "Cleric"],
+                "category": "classes",
+            },
+        ],
+    )
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = {s["heading"]: s for s in _by_kind(_segment_files(data_dir, "book"), "class")}
+    barbarian, bard, cleric = segments["Barbarian"], segments["Bard"], segments["Cleric"]
+
+    # Bard's own pre-heading flavor paragraph is now recovered into its
+    # own segment ...
+    assert "Alignment: Any nonlawful" in bard["text"]
+    assert "Bards revere whichever deity" in bard["text"]
+    # ... and it still excludes the THIRD class's own heading/content.
+    assert "CLERIC" not in bard["text"]
+    assert "master of divine magic" not in bard["text"]
+
+    # Barbarian's own (heading-anchored, UNCHANGED) end cap still reaches
+    # up to Bard's own heading, so it still contains barbarian's own
+    # trailing prose from that shared page-3 tail ...
+    assert "Barbarians continue raging" in barbarian["text"]
+    # ... but (judgement finding 1, B10c-mand6 follow-up) NOT bard's own
+    # flavor paragraph any more -- that paragraph carries BOTH an
+    # "Alignment:" and a "Religion:" marker (see
+    # `_is_class_flavor_paragraph`), which is what makes it recognizable
+    # as bard's own opening flavor content and excludes it from
+    # barbarian's end-capped range, even though its raw paragraph index
+    # still falls inside that range.
+    assert "Alignment: Any nonlawful" not in barbarian["text"]
+    assert "Bards revere whichever deity" not in barbarian["text"]
+    assert "BARD" not in barbarian["text"]
+
+    # Cleric is unaffected -- nothing precedes "CLERIC" on page 4 that
+    # belongs to a different class in this fixture.
+    assert cleric["text"].startswith("Bards continue channeling")
+    assert "CLERIC" in cleric["text"]
+
+
+def test_back_extend_start_index_bounds_at_previous_class_heading(tmp_path: Path) -> None:
+    """B10c-mand6 criterion 3: two class headings on the same page. The
+    back-extension for the SECOND heading is bounded at the first
+    heading's own index (never reaching further back, e.g. into a chapter
+    intro two classes earlier) -- exercised directly against
+    `_back_extend_start_index` since two real class headings printed on
+    the very same page never happens in the real corpus (spacing is
+    always at least a page), but the bound's correctness still matters."""
+    from owlsperch.segment.headings import Paragraph
+    from owlsperch.segment.runner import _back_extend_start_index
+
+    paragraphs = [
+        Paragraph(
+            page=1,
+            text="Chapter intro.",
+            kind="prose",
+            median_word_height=10.0,
+            max_word_height=10.0,
+            line_count=1,
+        ),
+        Paragraph(
+            page=2,
+            text="BARBARIAN",
+            kind="prose",
+            median_word_height=10.0,
+            max_word_height=10.0,
+            line_count=1,
+        ),
+        Paragraph(
+            page=2,
+            text="Hit Die: d12.",
+            kind="prose",
+            median_word_height=10.0,
+            max_word_height=10.0,
+            line_count=1,
+        ),
+        Paragraph(
+            page=2,
+            text="BARD",
+            kind="prose",
+            median_word_height=10.0,
+            max_word_height=10.0,
+            line_count=1,
+        ),
+        Paragraph(
+            page=2,
+            text="Hit Die: d6.",
+            kind="prose",
+            median_word_height=10.0,
+            max_word_height=10.0,
+            line_count=1,
+        ),
+    ]
+    barbarian_index, bard_index = 1, 3
+    resolved_starts = [barbarian_index, bard_index]
+
+    # Barbarian: no still-earlier class heading -- back-extends all the
+    # way to the top of its own page (page 2, index 1 -- there is no
+    # page-1 content on page 2 to reach past).
+    assert _back_extend_start_index(paragraphs, barbarian_index, resolved_starts) == 1
+
+    # Bard: bounded at barbarian's own heading index + 1 -- it reaches
+    # back onto the SAME page (as intended, to recover its own pre-heading
+    # tail) but never as far back as barbarian's own heading paragraph or
+    # page 1's chapter intro.
+    assert _back_extend_start_index(paragraphs, bard_index, resolved_starts) == barbarian_index + 1
 
 
 def test_class_span_supersedes_fragment_segments_but_not_unrelated_ones(tmp_path: Path) -> None:
@@ -1092,6 +1303,98 @@ def test_class_segmentation_is_additive_and_idempotent(tmp_path: Path) -> None:
     assert stamped_fragment["outcome"] == "validated"
 
 
+def test_kinds_class_only_runs_the_toc_driven_pass(tmp_path: Path) -> None:
+    """B10c-mand6 criteria 6-7: `segment_book(..., kinds={"class"})` skips
+    the whole-book `build_segments` pass entirely -- no `rules_section`
+    fragment segments are produced -- and writes only the requested
+    class/prestige_class segments, without ever touching (or even needing)
+    stale-file removal."""
+    data_dir = tmp_path / "data"
+    _write_classes_book(data_dir)
+
+    summary = segment_book(_entry("book"), data_dir=data_dir, kinds=frozenset({"class"}))
+
+    segments = _segment_files(data_dir, "book")
+    assert {s["heading"] for s in _by_kind(segments, "class")} == {"Barbarian", "Bard"}
+    # No whole-book pass ran at all -- no rules_section/front-matter
+    # fragments were produced.
+    assert _by_kind(segments, "rules_section") == []
+    assert "only the toc-driven class pass ran" in summary.class_note
+    assert "only the toc-driven class pass ran" in summary.render()
+
+
+def test_kinds_class_force_isolation_leaves_other_segments_untouched(tmp_path: Path) -> None:
+    """B10c-mand6 criterion 7: a plain `segment_book` run first produces
+    the normal fragment segments plus the class segments; a SECOND run
+    with `kinds={"class"}, force=True` rewrites only the class segment
+    files -- every fragment segment (and its own bookkeeping) is left
+    completely untouched, and nothing is deleted as stale."""
+    data_dir = tmp_path / "data"
+    _write_classes_book(data_dir)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+    before = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+    fragment_ids = {seg_id for seg_id, s in before.items() if s["kind_hint"] != "class"}
+    assert fragment_ids  # sanity: the first pass did produce fragments
+
+    # Simulate extraction bookkeeping on a fragment, to prove it survives.
+    seg_dir = data_dir / "segments" / "book"
+    some_fragment_id = next(iter(fragment_ids))
+    fragment_path = seg_dir / f"{some_fragment_id}.json"
+    fragment = json.loads(fragment_path.read_text())
+    fragment["notes"] = ["untouched-by-kinds-rerun"]
+    fragment_path.write_text(json.dumps(fragment))
+
+    summary = segment_book(
+        _entry("book"), data_dir=data_dir, force=True, kinds=frozenset({"class"})
+    )
+
+    after = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+    assert after.keys() == before.keys()  # nothing added, nothing removed
+    for seg_id in fragment_ids:
+        assert after[seg_id] == before[seg_id] or seg_id == some_fragment_id
+    assert after[some_fragment_id]["notes"] == ["untouched-by-kinds-rerun"]
+    # The class segments themselves are still exactly the two expected
+    # ones, and `force` was honored for them (still present, not dropped).
+    assert {s["heading"] for s in _by_kind(list(after.values()), "class")} == {
+        "Barbarian",
+        "Bard",
+    }
+    assert "only the toc-driven class pass ran" in summary.class_note
+
+
+def test_kinds_rejects_a_non_class_kind_with_exit_1_and_no_writes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B10c-mand6 criterion 6: any kind other than class/prestige_class is
+    a hard error -- other kinds come from the single whole-book pass and
+    can't be produced selectively. No manifest lookup or per-book work
+    happens at all; nothing is written."""
+    data_dir = tmp_path / "data"
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        """
+entries:
+  - book_id: book
+    title: "Book"
+    file: "book.pdf"
+    edition: "3.5"
+    kind: rulebook
+"""
+    )
+    _write_classes_book(data_dir)
+
+    exit_code = run_segment(
+        "book", data_dir=data_dir, manifest_path=manifest_path, kinds=frozenset({"spell"})
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "--kinds" in err
+    assert "spell" in err
+    assert not (data_dir / "segments" / "book").exists()
+
+
 def test_no_toc_means_no_class_segments(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_book(
@@ -1168,3 +1471,38 @@ def test_phb1_real_corpus_class_segments() -> None:
         }
         for class_segment in classes:
             assert class_segment["tier"] == "sonnet"
+
+        # B10c-mand6 criterion 5 (judgement finding 5): every class's OWN
+        # segment now recovers its own printed Alignment/Religion run-in
+        # flavor paragraph, back-extended from wherever it lands relative
+        # to the ALL-CAPS heading -- rogue's, ranger's, and wizard's most
+        # visibly (the judgement's own concrete examples), but verified
+        # here for all 11.
+        for class_segment in classes:
+            assert "Alignment:" in class_segment["text"], class_segment["heading"]
+            assert "Religion:" in class_segment["text"], class_segment["heading"]
+
+        # Judgement finding 1 (blocker, B10c-mand6 follow-up): criterion 1
+        # also requires that the PREVIOUS class's segment does NOT contain
+        # the next class's own Alignment:/Religion: run-in paragraph.
+        # Every PHB base class prints its own "Alignment:" marker exactly
+        # TWICE (once in its flavor blurb, e.g. "Alignment: Barbarians are
+        # never lawful...", once in the stat-block intro line right after
+        # the heading, e.g. "Alignment: Any nonlawful. Hit Die: d12.") and
+        # its own "Religion:" marker exactly ONCE (the flavor blurb only)
+        # -- verified against the real corpus text directly, independent
+        # of this segmenter, for all 11 classes. Before this follow-up,
+        # PHB p0050's column-reconstruction bleed (see
+        # `_back_extend_start_index`'s docstring) gave 4 of the 10
+        # neighbouring class pairs (bard/cleric, paladin/ranger, ranger/
+        # rogue, sorcerer/wizard) a THIRD "Alignment:"/SECOND "Religion:"
+        # -- the following class's own flavor paragraph, back-extended
+        # into ITS OWN segment but never excluded from the previous
+        # class's (heading-anchored, unchanged) end-capped range. A
+        # regression that reopens that bleed shows up here as a count of
+        # 3/2 instead of 2/1 on whichever class comes right before the
+        # regression.
+        for class_segment in classes:
+            text = class_segment["text"]
+            assert text.count("Alignment:") == 2, (class_segment["heading"], text)
+            assert text.count("Religion:") == 1, (class_segment["heading"], text)

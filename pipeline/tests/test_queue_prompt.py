@@ -444,6 +444,148 @@ def test_class_prompt_contains_bleed_rule_and_spell_column_convention(tmp_path: 
     assert "needs_context" in text
 
 
+def test_class_prompt_attributes_pre_heading_tail_by_the_class_it_names(
+    tmp_path: Path,
+) -> None:
+    """B10c-mand6 rule (a): a rendered `class` prompt must tell the
+    subagent that this segment's first paragraphs may be a pre-heading
+    column tail, and that a passage there is attributed by the class it
+    NAMES, never by its position in the segment."""
+    segment = _segment(kind_hint="class", heading="Rogue")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "top of the page" in text.lower()
+    assert "Starting Package" in text
+    assert "never by" in text.lower()
+
+
+def test_prestige_class_prompt_attributes_pre_heading_tail(tmp_path: Path) -> None:
+    """B10c-mand6 rule (a), mirrored (entity-neutral) into `prestige_class`."""
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "top of the page" in text.lower()
+    assert "never by" in text.lower()
+
+
+def test_class_prompt_class_features_come_from_printed_headings(tmp_path: Path) -> None:
+    """B10c-mand6 rules (b)-(d): `class_features` come from the printed
+    "Class Features" run-in headings (not the level table's Special
+    column), `Weapon and Armor Proficiency` is filed separately, and the
+    printed heading's own spelling wins over the Special cell's wording
+    when the two differ."""
+    segment = _segment(kind_hint="class", heading="Wizard")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "Class Features" in text
+    assert "(Ex)" in text and "(Su)" in text and "(Sp)" in text
+    assert "Weapon and Armor Proficiency" in text
+    assert "`weapon_and_armor_proficiency`" in text
+    assert "CROSS-CHECK" in text
+    assert "printed heading's spelling wins" in text
+    assert '"Bonus Feat"' in text and '"Bonus Feats"' in text
+
+
+def test_prestige_class_prompt_class_features_come_from_printed_headings(
+    tmp_path: Path,
+) -> None:
+    """B10c-mand6 rules (b)-(d), mirrored (entity-neutral) into
+    `prestige_class`."""
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "Class Features" in text
+    assert "Weapon and Armor Proficiency" in text
+    assert "`weapon_and_armor_proficiency`" in text
+    assert "CROSS-CHECK" in text
+    assert "printed heading's spelling wins" in text
+
+
+def test_class_prompt_keeps_starting_package_sections(tmp_path: Path) -> None:
+    """B10c-mand6 rule (e): a printed "<Race> <Class> Starting Package"
+    section is a `description_sections` entry, attributed to the class it
+    actually names."""
+    segment = _segment(kind_hint="class", heading="Barbarian")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "Starting Package" in text
+    assert "Half-Orc Barbarian Starting Package" in text
+    assert "belongs to the neighbouring class" in text
+
+
+def test_class_prompt_alignment_is_the_verbatim_game_rule_information_value(
+    tmp_path: Path,
+) -> None:
+    """B10c-mand6 rule (f): `alignment` is the short printed GAME RULE
+    INFORMATION line, verbatim minus the trailing period -- distinct from
+    the flavor "Alignment" `description_sections` entry of the same
+    name."""
+    segment = _segment(kind_hint="class", heading="Ranger")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"Any nonlawful"' in text
+    assert '"Any lawful"' in text
+    assert 'heading: "Alignment"' in text
+
+
+def test_prestige_class_prompt_alignment_is_verbatim(tmp_path: Path) -> None:
+    """B10c-mand6 rule (f), mirrored (entity-neutral) into `prestige_class`."""
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert '"Any nonlawful"' in text
+    assert 'heading: "Alignment"' in text
+
+
 def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
     segment = _segment()
     manifest_path = _write_manifest(tmp_path)

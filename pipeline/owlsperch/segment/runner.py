@@ -69,6 +69,31 @@ Per book:
    exactly why `owlsperch queue audit --fix` exists as a separate,
    retroactive path for segments stamped before this release-at-stamp-time
    behavior existed.
+9. (Batch B10c-mand6) A class/prestige_class span's TEXT is back-extended
+   from its own heading paragraph to the top of the heading's own page
+   (`_back_extend_start_index`) -- the real corpus's column
+   reconstruction routinely prints the tail of a page (a class's own
+   pre-heading flavor sections, or even the PREVIOUS class's Starting
+   Package) before the current class's ALL-CAPS heading. The extension
+   never reaches past a still-earlier class's own heading. It still
+   overlaps the previous class's own (heading-anchored) end on a shared
+   page for non-flavor content (e.g. a Starting Package section, resolved
+   by the extraction prompt's own attribution rule) -- but (judgement
+   finding 1, follow-up) a class's own opening flavor run-in paragraph
+   specifically (the one carrying BOTH an "Alignment:" and a "Religion:"
+   marker -- `_is_class_flavor_paragraph`) is excluded from the previous
+   class's own written text, so it survives in exactly one segment: the
+   class it actually belongs to. See the function's own docstring for
+   why the rest of the overlap can't be resolved the same way.
+   `--kinds class[,prestige_class]` (`owlsperch segment <book_id> --kinds
+   class`) re-runs ONLY this toc-driven pass, for exactly the requested
+   kind(s): no whole-book `build_segments` pass, no stale-segment-file
+   removal, no coverage warning. Every other kind_hint comes from that
+   single whole-book pass and can't be produced selectively, so any other
+   value is a hard error (exit 1, nothing written). Rewriting a class
+   segment file this way resets it to `pending` with no claims -- delete
+   any records it previously claimed first (`queue reset --hard`) or they
+   are left orphaned on disk.
 """
 
 from __future__ import annotations
@@ -386,6 +411,21 @@ def _pages_spanned(paragraphs: list[Paragraph], start: int, end: int) -> list[in
     return pages
 
 
+def _pages_spanned_indices(paragraphs: list[Paragraph], indices: list[int]) -> list[int]:
+    """Like `_pages_spanned`, but over an explicit, possibly non-contiguous
+    list of paragraph indices (judgement finding 1, B10c-mand6 follow-up --
+    `_write_class_segment` excludes specific paragraphs from a contiguous
+    `[start, end)` range rather than shrinking the range itself)."""
+    pages: list[int] = []
+    seen: set[int] = set()
+    for i in indices:
+        page = paragraphs[i].page
+        if page not in seen:
+            seen.add(page)
+            pages.append(page)
+    return pages
+
+
 def _pages_in_range(paragraphs: list[Paragraph], start_page: int, end_page: int) -> list[int]:
     """Every distinct page in `[start_page, end_page]` that at least one
     paragraph in `paragraphs` actually falls on, in encounter order (mirrors
@@ -455,6 +495,74 @@ def _first_index_after_page(paragraphs: list[Paragraph], page: int) -> int:
         if p.page > page:
             return i
     return len(paragraphs)
+
+
+def _page_start_index(paragraphs: list[Paragraph], page: int) -> int:
+    """The index of the first paragraph on `page` (paragraphs are in
+    non-decreasing page order, so a single left-to-right scan finds it).
+    Returns `len(paragraphs)` if `page` has no paragraphs at all -- callers
+    only ever pass a page a heading paragraph is already known to be on, so
+    that case doesn't arise in practice."""
+    for i, p in enumerate(paragraphs):
+        if p.page == page:
+            return i
+    return len(paragraphs)
+
+
+#: A class's own opening flavor run-in paragraph (Alignment:/Religion:/
+#: Background:/Races:/Other Classes:/Role:, all folded into one printed
+#: paragraph) is identified by carrying BOTH of these two markers --
+#: `_run_class_pass` uses this to tell a class's own pre-heading flavor
+#: text apart from unrelated content (e.g. a Starting Package section)
+#: that a column-reconstruction quirk also happens to strand in the same
+#: ambiguous, shared-page zone (judgement finding 1, B10c-mand6 follow-up),
+#: so the flavor paragraph can be excluded from the PREVIOUS class's own
+#: end-capped range instead of surviving in both.
+_CLASS_FLAVOR_MARKERS = ("Alignment:", "Religion:")
+
+
+def _is_class_flavor_paragraph(text: str) -> bool:
+    return all(marker in text for marker in _CLASS_FLAVOR_MARKERS)
+
+
+def _back_extend_start_index(
+    paragraphs: list[Paragraph], heading_index: int, resolved_starts: list[int]
+) -> int:
+    """B10c-mand6, judgement finding 5: back-extend a class span's TEXT
+    start from its own heading paragraph to the top of the page the
+    heading is printed on. The real corpus shows a class's own pre-heading
+    column tail routinely lands on the shared page: PHB p0050's paragraph
+    order is [0] rogue's own six flavor run-in sections (Alignment/
+    Religion/Background/Races/Other Classes/Role, all in one paragraph),
+    [1]-[2] ranger's Starting Package section, [3] "ROGUE", [4] rogue's
+    body -- today's heading-anchored start (paragraph 3) drops rogue's own
+    flavor sections entirely, leaving them stranded at the tail of
+    ranger's segment instead. Back-extending to the page's own start
+    paragraph recovers them.
+
+    Never extend past a still-earlier class's own heading -- bounded by
+    `previous_heading_index` (the greatest entry in `resolved_starts`
+    strictly below `heading_index`, if any) -- so back-extension from one
+    class can't reach all the way into a class two spans back. This still
+    OVERLAPS the previous class's own (heading-anchored, unchanged) end
+    index on a shared-page boundary: both the ranger and rogue segments'
+    raw index ranges cover p0050's paragraphs 0-2. `_run_class_pass`
+    resolves the one piece of that overlap that matters exclusively
+    (rogue's own paragraph 0, its flavor run-in -- see
+    `_is_class_flavor_paragraph`) by excluding it from ranger's own
+    written text; the rest of the overlap (paragraphs 1-2, ranger's own
+    Starting Package, which also falls in rogue's back-extended range) is
+    left alone -- there is no single cut point that gives ranger its own
+    Starting Package AND rogue its own flavor paragraph AND excludes every
+    duplicate, so that residual non-flavor overlap is resolved by the
+    extraction prompt's own attribution rule (see `owlsperch.queue.prompt`'s
+    `class`/`prestige_class` rules) rather than by picking one owner here."""
+    page_start = _page_start_index(paragraphs, paragraphs[heading_index].page)
+    earlier = [i for i in resolved_starts if i < heading_index]
+    previous_heading_index = max(earlier) if earlier else None
+    if previous_heading_index is None:
+        return page_start
+    return max(page_start, previous_heading_index + 1)
 
 
 @dataclass(frozen=True)
@@ -532,6 +640,7 @@ def _write_class_segment(
     *,
     start_index: int | None,
     end_index: int | None,
+    exclude_indices: frozenset[int] = frozenset(),
 ) -> None:
     # Lazy import: `owlsperch.queue.ladder` imports `Segment` from this
     # module at module scope, so importing `starting_tier` from it up top
@@ -544,8 +653,13 @@ def _write_class_segment(
         # anchor the TEXT to paragraph indices so a neighbouring class's
         # prose is never included (the supersede pass below stays
         # page-based on purpose; only this text/pages pair changes).
-        pages = _pages_spanned(paragraphs, start_index, end_index)
-        text = "\n\n".join(p.text for p in paragraphs[start_index:end_index])
+        # `exclude_indices` (judgement finding 1, B10c-mand6 follow-up)
+        # drops specific paragraphs from THIS span's own range that a
+        # later class's back-extension has already claimed as its own
+        # opening flavor paragraph -- see `_run_class_pass`'s own comments.
+        kept_indices = [i for i in range(start_index, end_index) if i not in exclude_indices]
+        pages = _pages_spanned_indices(paragraphs, kept_indices)
+        text = "\n\n".join(paragraphs[i].text for i in kept_indices)
     else:
         # Fallback: the heading was never matched anywhere in the span (a
         # column-reconstruction oddity, or a toc title that just doesn't
@@ -629,12 +743,175 @@ def _supersede_segments_in_span(
     return stamped, released
 
 
+#: `segment --kinds` only accepts these two, since every other kind comes
+#: from the single whole-book `build_segments` pass and can't be produced
+#: selectively (B10c-mand6 criterion 6).
+_SELECTABLE_KINDS: frozenset[str] = frozenset({"class", "prestige_class"})
+
+
+def _run_class_pass(
+    entry: ManifestEntry,
+    *,
+    paragraphs: list[Paragraph],
+    text_dir: Path,
+    out_dir: Path,
+    pages_json: dict[int, int],
+    data_dir: Path,
+    force: bool,
+    summary: BookSegmentSummary,
+    covered_pages: set[int],
+    kinds: frozenset[str] | None,
+) -> None:
+    """Batch B10c's toc-driven class/prestige_class pass (see this module's
+    docstring, point 7), factored out (B10c-mand6) so it can run either as
+    the tail of a normal `segment_book` call (`kinds=None`, right after the
+    whole-book `build_segments` pass -- entirely additive, never touching
+    what that pass produced) or ALONE, for `owlsperch segment --kinds
+    class[,prestige_class]` (see `segment_book`'s own branch for what
+    "alone" skips). `kinds`, when given, only narrows which spans get
+    WRITTEN (and superseded/released) below -- `start_indices`/
+    `resolved_starts` are still resolved from every discovered class span
+    regardless, so a class segment's own end cap and back-extension bound
+    (`_back_extend_start_index`) stay correct even when a neighbouring
+    prestige_class span (say) isn't one of the requested `kinds`. Mutates
+    `summary` in place; returns nothing."""
+    toc = load_toc(data_dir, entry.book_id)
+    if toc is None or not toc.entries:
+        summary.class_note = "no toc -- no class/prestige_class segments"
+        return
+
+    last_page = max(_discover_text_pages(text_dir, None), default=None)
+    if last_page is None:
+        return
+
+    class_spans = _discover_class_spans(
+        toc, text_dir=text_dir, book_id=entry.book_id, last_page=last_page
+    )
+
+    # Part 1 (B10c-mand3): resolve every span's own start index FIRST, so
+    # each span's end index can be capped at the next span's start (never
+    # swallowing a neighbour's class), then write each span with its
+    # resolved [start_index, end_index) text range -- or fall back to the
+    # whole-page-range behavior (with a warning) when its own heading was
+    # never matched anywhere in its page range.
+    start_indices: dict[str, int | None] = {
+        span.seg_id: _class_start_index(paragraphs, span) for span in class_spans
+    }
+    resolved_starts = sorted(i for i in start_indices.values() if i is not None)
+
+    # Judgement finding 1 (B10c-mand6 follow-up): resolve every span's own
+    # back-extended TEXT start and its own exclusive pre-heading "flavor"
+    # paragraphs (Alignment:/Religion:/...) up front, from EVERY discovered
+    # span regardless of `kinds` -- same rationale as `start_indices`/
+    # `resolved_starts` above -- so that below, a class's own flavor
+    # paragraph can be excluded from the PREVIOUS class's end-capped range
+    # even when that previous span itself isn't one of the requested
+    # `kinds`. A span's "flavor indices" are whichever of its own
+    # back-extended pre-heading paragraphs look like the class-opening
+    # flavor run-in (see `_is_class_flavor_paragraph`) -- NOT the whole
+    # back-extended prefix, since that prefix can also hold unrelated
+    # content (e.g. the PREVIOUS class's own Starting Package section) that
+    # must stay available to whichever span the heading-anchored end cap
+    # already puts it in.
+    text_start_indices: dict[str, int] = {}
+    flavor_indices_by_span: dict[str, frozenset[int]] = {}
+    for span in class_spans:
+        start_index = start_indices[span.seg_id]
+        if start_index is None:
+            continue
+        text_start_index = _back_extend_start_index(paragraphs, start_index, resolved_starts)
+        text_start_indices[span.seg_id] = text_start_index
+        flavor_indices_by_span[span.seg_id] = frozenset(
+            i
+            for i in range(text_start_index, start_index)
+            if _is_class_flavor_paragraph(paragraphs[i].text)
+        )
+    all_flavor_indices: frozenset[int] = frozenset().union(*flavor_indices_by_span.values())
+
+    spans_to_write = class_spans if kinds is None else [s for s in class_spans if s.kind in kinds]
+
+    for span in spans_to_write:
+        start_index = start_indices[span.seg_id]
+        if start_index is None:
+            print(
+                f"warning: {entry.book_id}: no heading match for class span "
+                f"'{span.heading}' (toc page {span.start}) -- using whole-page fallback",
+                file=sys.stderr,
+            )
+            _write_class_segment(
+                span,
+                paragraphs,
+                entry,
+                out_dir,
+                pages_json,
+                covered_pages,
+                summary,
+                force,
+                start_index=None,
+                end_index=None,
+            )
+            continue
+
+        next_starts = [i for i in resolved_starts if i > start_index]
+        page_cap_index = _first_index_after_page(paragraphs, span.end)
+        end_index = min(min(next_starts), page_cap_index) if next_starts else page_cap_index
+
+        # B10c-mand6: the TEXT start is back-extended to the top of the
+        # heading's own page (see `_back_extend_start_index`'s docstring
+        # for the PHB p0050 evidence) -- `start_indices`/`resolved_starts`
+        # themselves stay the heading anchors, since the end cap above
+        # must stay the NEXT class's heading index: capping at the next
+        # class's own back-extended start would take its pre-heading tail
+        # away from THIS class again, losing whatever it back-extended for
+        # (e.g. a Starting Package section).
+        text_start_index = text_start_indices[span.seg_id]
+
+        # Judgement finding 1: exclude any OTHER span's own flavor
+        # paragraph that the heading-anchored end cap above would
+        # otherwise still sweep into this span's range -- e.g. the next
+        # class's own Alignment:/Religion: paragraph, back-extended into
+        # ITS segment above, must not also survive in THIS (previous)
+        # span's text.
+        own_flavor_indices = flavor_indices_by_span.get(span.seg_id, frozenset())
+        exclude_indices = frozenset(
+            i
+            for i in all_flavor_indices
+            if text_start_index <= i < end_index and i not in own_flavor_indices
+        )
+
+        _write_class_segment(
+            span,
+            paragraphs,
+            entry,
+            out_dir,
+            pages_json,
+            covered_pages,
+            summary,
+            force,
+            start_index=text_start_index,
+            end_index=end_index,
+            exclude_indices=exclude_indices,
+        )
+
+    superseded_total = 0
+    released_total = 0
+    for span in spans_to_write:
+        stamped, released = _supersede_segments_in_span(
+            out_dir, entry.book_id, span.seg_id, span.start, span.end, data_dir=data_dir
+        )
+        superseded_total += stamped
+        released_total += released
+    summary.superseded = superseded_total
+    summary.released = released_total
+
+
 def segment_book(
     entry: ManifestEntry,
     *,
     data_dir: Path,
     force: bool = False,
     page_range: tuple[int, int] | None = None,
+    kinds: frozenset[str] | None = None,
 ) -> BookSegmentSummary:
     text_dir = data_dir / "text" / entry.book_id
     if not text_dir.is_dir():
@@ -650,14 +927,44 @@ def segment_book(
     if not paragraphs:
         return BookSegmentSummary(entry.book_id, note="no page text in range")
 
-    body_median = compute_body_median(paragraphs)
-    raw_segments = build_segments(paragraphs, body_median)
-
     out_dir = data_dir / "segments" / entry.book_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    if force:
+    if force and kinds is None:
         _remove_stale_segments(out_dir, entry.book_id, page_range)
     pages_json = _load_pages_json(text_dir)
+
+    if kinds is not None:
+        # B10c-mand6 criterion 6: `--kinds class[,prestige_class]` runs
+        # ONLY the toc-driven class pass below -- no whole-book
+        # `build_segments` pass, no stale-file removal (a class segment's
+        # id derives from the toc start page and so never goes stale the
+        # way a page-ordinal fragment id can under a plain rerun), and no
+        # "page(s) with text but no segment coverage" warning (there is no
+        # `build_segments` output for that check to run against). Writing
+        # over an existing class segment file (`--force`) resets it to
+        # `pending` with no claims -- any records it previously claimed
+        # are left orphaned on disk unless deleted first (`queue reset
+        # --hard`) before re-segmenting.
+        summary = BookSegmentSummary(entry.book_id)
+        _run_class_pass(
+            entry,
+            paragraphs=paragraphs,
+            text_dir=text_dir,
+            out_dir=out_dir,
+            pages_json=pages_json,
+            data_dir=data_dir,
+            force=force,
+            summary=summary,
+            covered_pages=set(),
+            kinds=kinds,
+        )
+        if not summary.class_note:
+            kinds_str = ",".join(sorted(kinds))
+            summary.class_note = f"--kinds {kinds_str}: only the toc-driven class pass ran"
+        return summary
+
+    body_median = compute_body_median(paragraphs)
+    raw_segments = build_segments(paragraphs, body_median)
 
     summary = BookSegmentSummary(entry.book_id)
     first_page_counters: dict[int, int] = {}
@@ -691,80 +998,18 @@ def segment_book(
     # Batch B10c: a separate, toc-driven pass for class/prestige_class
     # segments (see this module's docstring, point 7) -- entirely additive,
     # never touching what build_segments produced above.
-    toc = load_toc(data_dir, entry.book_id)
-    if toc is None or not toc.entries:
-        summary.class_note = "no toc -- no class/prestige_class segments"
-        return summary
-
-    last_page = max(_discover_text_pages(text_dir, None), default=None)
-    if last_page is None:
-        return summary
-
-    class_spans = _discover_class_spans(
-        toc, text_dir=text_dir, book_id=entry.book_id, last_page=last_page
+    _run_class_pass(
+        entry,
+        paragraphs=paragraphs,
+        text_dir=text_dir,
+        out_dir=out_dir,
+        pages_json=pages_json,
+        data_dir=data_dir,
+        force=force,
+        summary=summary,
+        covered_pages=covered_pages,
+        kinds=None,
     )
-
-    # Part 1 (B10c-mand3): resolve every span's own start index FIRST, so
-    # each span's end index can be capped at the next span's start (never
-    # swallowing a neighbour's class), then write each span with its
-    # resolved [start_index, end_index) text range -- or fall back to the
-    # whole-page-range behavior (with a warning) when its own heading was
-    # never matched anywhere in its page range.
-    start_indices: dict[str, int | None] = {
-        span.seg_id: _class_start_index(paragraphs, span) for span in class_spans
-    }
-    resolved_starts = sorted(i for i in start_indices.values() if i is not None)
-
-    for span in class_spans:
-        start_index = start_indices[span.seg_id]
-        if start_index is None:
-            print(
-                f"warning: {entry.book_id}: no heading match for class span "
-                f"'{span.heading}' (toc page {span.start}) -- using whole-page fallback",
-                file=sys.stderr,
-            )
-            _write_class_segment(
-                span,
-                paragraphs,
-                entry,
-                out_dir,
-                pages_json,
-                covered_pages,
-                summary,
-                force,
-                start_index=None,
-                end_index=None,
-            )
-            continue
-
-        next_starts = [i for i in resolved_starts if i > start_index]
-        page_cap_index = _first_index_after_page(paragraphs, span.end)
-        end_index = min(min(next_starts), page_cap_index) if next_starts else page_cap_index
-
-        _write_class_segment(
-            span,
-            paragraphs,
-            entry,
-            out_dir,
-            pages_json,
-            covered_pages,
-            summary,
-            force,
-            start_index=start_index,
-            end_index=end_index,
-        )
-
-    superseded_total = 0
-    released_total = 0
-    for span in class_spans:
-        stamped, released = _supersede_segments_in_span(
-            out_dir, entry.book_id, span.seg_id, span.start, span.end, data_dir=data_dir
-        )
-        superseded_total += stamped
-        released_total += released
-    summary.superseded = superseded_total
-    summary.released = released_total
-
     return summary
 
 
@@ -823,11 +1068,28 @@ def run_segment(
     manifest_path: Path | None = None,
     force: bool = False,
     page_range: tuple[int, int] | None = None,
+    kinds: frozenset[str] | None = None,
     out: Any = None,
 ) -> int:
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
     manifest_path = manifest_path if manifest_path is not None else default_manifest_path()
+
+    # B10c-mand6 criterion 6: validated up front, before any per-book work
+    # (or even the manifest load below matters) -- other kinds come from
+    # the single whole-book `build_segments` pass and can't be produced
+    # selectively, so a bad `--kinds` value must cause no writes at all.
+    if kinds is not None:
+        invalid = sorted(kinds - _SELECTABLE_KINDS)
+        if invalid:
+            selectable = ", ".join(sorted(_SELECTABLE_KINDS))
+            print(
+                f"error: --kinds only supports {selectable} (every other kind "
+                f"comes from the single whole-book segmentation pass and can't "
+                f"be produced selectively), got: {', '.join(invalid)}",
+                file=sys.stderr,
+            )
+            return 1
 
     entries = load_manifest(manifest_path)
     by_id = {e.book_id: e for e in entries}
@@ -838,7 +1100,9 @@ def run_segment(
             if status_for(entry, entries) not in ("in_scope", "override"):
                 continue
             try:
-                summary = segment_book(entry, data_dir=data_dir, force=force, page_range=page_range)
+                summary = segment_book(
+                    entry, data_dir=data_dir, force=force, page_range=page_range, kinds=kinds
+                )
             except SegmentError as exc:
                 print(f"{entry.book_id}: error: {exc}", file=out)
                 exit_code = 1
@@ -853,7 +1117,7 @@ def run_segment(
 
     try:
         summary = segment_book(
-            resolved_entry, data_dir=data_dir, force=force, page_range=page_range
+            resolved_entry, data_dir=data_dir, force=force, page_range=page_range, kinds=kinds
         )
     except SegmentError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -95,11 +95,13 @@ members -- see the comment in the root `pyproject.toml`):
 uv sync                              # install deps (both workspace members)
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
-uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
+uv run owlsperch segment <book_id|all> [--force] [--pages A-B] [--kinds class[,prestige_class]]
   # (batch B10c) also emits toc-driven `class`/`prestige_class` segments
   # (needs toc/<book_id>.json from `owlsperch toc` first) and stamps every
   # segment their page span swallows `superseded_by` -- additive, so a
-  # plain (non --force) run is always safe to re-run.
+  # plain (non --force) run is always safe to re-run. (B10c-mand6) `--kinds`
+  # re-runs ONLY that toc-driven pass (only class/prestige_class accepted);
+  # everything else about a plain run is unaffected.
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
 uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json] [--dry-run]
@@ -250,12 +252,42 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   never matches anywhere in the span falls back to the old whole-page-range
   text (a class is never dropped) and prints a `warning:` line naming the
   book and heading. The page-based supersede pass itself, and `seg_id`
-  derivation, are UNCHANGED by this. Known, accepted limitation: the column
-  reconstructor sometimes emits a later class's flavor prose BEFORE that
-  class's own heading on a shared page (e.g. PHB p.31's Cleric flavor text
-  sitting above the "CLERIC" heading, still on the Bard's own page) -- such
-  prose still lands in the previous class's own segment text; this batch
-  fixes the page-granularity problem, not that reading-order one.
+  derivation, are UNCHANGED by this. Batch B10c-mand6 fixes the reading-
+  order limitation this section used to describe (the column reconstructor
+  emitting a class's OWN flavor prose -- or even the previous class's
+  Starting Package -- BEFORE that class's own heading on a shared page,
+  e.g. PHB p0050's paragraph order for rogue: its own six flavor run-in
+  sections, then ranger's Starting Package, then "ROGUE"): each resolved
+  span's TEXT start is back-extended, via `_back_extend_start_index`, from
+  its own heading paragraph to the top of the heading's own page, bounded
+  so it never reaches past a still-earlier class's own heading. The END
+  cap (the next class's own heading index) is UNCHANGED, so this raw index
+  range still OVERLAPS the previous class's own on a shared page -- there
+  is no single cut point that gives the previous class its own full
+  trailing prose (its Starting Package) AND the next class its own
+  pre-heading flavor sections. A judgement follow-up (B10c-mand6 follow-up,
+  finding 1) resolves the one piece of that overlap that must not be
+  duplicated: `_run_class_pass` identifies each span's own opening flavor
+  run-in paragraph specifically -- the one carrying BOTH an "Alignment:"
+  and a "Religion:" marker (`_is_class_flavor_paragraph`) -- and excludes
+  it from the PREVIOUS class's own written text (`_write_class_segment`'s
+  `exclude_indices`), so it survives in exactly the class it actually
+  belongs to; verified against the real corpus for all 11 phb1 classes
+  (`test_phb1_real_corpus_class_segments`). The rest of the overlap (e.g. a
+  Starting Package section, which isn't flavor-marked) is left alone --
+  the extraction prompt's own attribution rule (see
+  `pipeline/owlsperch/queue/prompt.py` below) resolves that remaining
+  ambiguity instead of the segmenter picking an owner. Also from
+  B10c-mand6: `owlsperch segment <book_id> --kinds class[,prestige_class]`
+  re-runs ONLY this toc-driven class/prestige_class pass -- no whole-book
+  `build_segments` pass, no stale-segment-file removal, no coverage
+  warning -- so a class-segmentation fix can be re-applied without
+  resetting every other segment's extraction status; any other kind is a
+  hard error (exit 1, nothing written), since every kind besides class/
+  prestige_class comes from the single whole-book pass and can't be
+  produced selectively. Rewriting a class segment file this way (`--force`)
+  resets it to `pending` with no claims -- its previously claimed records
+  are orphaned on disk unless deleted first (`queue reset --hard`).
 
 - `pipeline/owlsperch/supersede.py` (batch B10c-mand2) -- `release_segment_
   claims(segment, *, data_dir)`, the shared helper behind both the
@@ -514,8 +546,20 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the bare heading) since `slug`/`id` derive from `name` and an unqualified
   generic name collides across chapters -- modeled by
   `schemas/examples/rules_section.json`'s own "Class Features (Sable
-  Knight)" example; table's verbatim title, column/row padding, and
-  caption-only-segment `no_content` guidance -- a kind_hint with no entry,
+  Knight)" example; class/prestige_class's (batch B10c-mand6) pre-heading-
+  tail attribution rule (this segment's own text may begin with a column-
+  reconstruction tail from BEFORE its heading -- attribute each such
+  passage by the class/entry it actually names, never by position),
+  `class_features` sourced from the printed "Class Features" section's own
+  run-in headings rather than the level table's Special column (a CROSS-
+  CHECK only, whose bleed/precedence handling folds into the existing
+  COLUMN BLEED paragraph), `weapon_and_armor_proficiency` filed apart from
+  `class_features`, printed "<Race> <Class> Starting Package" sections kept
+  as `description_sections` entries (class only), and `alignment` as the
+  short verbatim GAME RULE INFORMATION line, distinct from the flavor
+  "Alignment" `description_sections` entry of the same name; table's
+  verbatim title, column/row padding, and caption-only-segment `no_content`
+  guidance -- a kind_hint with no entry,
   e.g. `stat_block`, gets no rules section), a shared "### Tables belonging
   to this entity" convention for every non-table kind (write a second
   `table` record alongside the entity's own when the segment's text
