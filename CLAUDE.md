@@ -208,7 +208,28 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   carried `superseded_by` (from an earlier run, before this
   release-at-stamp-time behavior existed) is skipped by the WHOLE pass
   (stamp and release both) -- `queue audit --fix` is the separate,
-  retroactive path for those.
+  retroactive path for those. Batch B10c-mand3 (Part 1) anchors a class
+  span's own `text`/`pages` to paragraph indices instead of its whole toc
+  page range: `_class_start_index` finds the first paragraph on the span's
+  own toc start page whose text matches the toc entry's title
+  (`_heading_matches_title` -- case/punctuation/whitespace-insensitive,
+  tolerating a trailing plural "s" on either side, since PHB 3.5 prints
+  "WIZARDS" for the toc's "Wizard"), falling back to the first such match
+  anywhere in the span's page range; every span's start index is resolved
+  FIRST, then each span's end index is capped at whichever comes first of
+  the next span's own start index or the first paragraph past its own toc
+  `pdf_page_end` -- so a class segment's text stops where the next class's
+  own heading actually begins, even when they share a pdf page, rather
+  than always swallowing D2's one-page extension whole. A heading that
+  never matches anywhere in the span falls back to the old whole-page-range
+  text (a class is never dropped) and prints a `warning:` line naming the
+  book and heading. The page-based supersede pass itself, and `seg_id`
+  derivation, are UNCHANGED by this. Known, accepted limitation: the column
+  reconstructor sometimes emits a later class's flavor prose BEFORE that
+  class's own heading on a shared page (e.g. PHB p.31's Cleric flavor text
+  sitting above the "CLERIC" heading, still on the Bard's own page) -- such
+  prose still lands in the previous class's own segment text; this batch
+  fixes the page-granularity problem, not that reading-order one.
 
 - `pipeline/owlsperch/supersede.py` (batch B10c-mand2) -- `release_segment_
   claims(segment, *, data_dir)`, the shared helper behind both the
@@ -275,7 +296,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `prestige-classes` category (right after `classes`), and
   `owlsperch.toc.categories` gets a `Prestige Class(es)` pattern tried
   BEFORE the generic `Classes` one, so a prestige-class chapter/section
-  resolves to `prestige-classes` instead.
+  resolves to `prestige-classes` instead. Batch B10c-mand3 (Part 4) bumps
+  `class.json` (and `registry.json`'s `types.class.version`) to schema
+  version 2 and adds an `allOf`/`if`/`then` conditional (draft 2020-12):
+  when `fields.class_type` is `"base"`, `class_skills`, `skill_points`,
+  `alignment` (now required as a plain string, not nullable), non-empty
+  `description_sections`, and `weapon_and_armor_proficiency` (also
+  required as a plain string) all become required -- a `prestige`/`npc`-
+  typed `class` record is unaffected, and `prestige_class.json` itself is
+  untouched at version 1 (its own `class_type` is never `"base"` in
+  practice). `schemas/examples/class.json` gains `fields.abbreviation`
+  and bumps to `schema_version: 2`.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -322,7 +353,20 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   present, must match a real `levels[].class` value from the book's own
   spell records -- but is skipped entirely (not failed) when the book has
   no spell records loaded yet, since that's simply not extracted yet, not
-  wrong.
+  wrong. Batch B10c-mand3 (Part 3): `_normalize_special_token` (shared by
+  the Special/`class_features[].name` prefix match above) now also strips
+  a trailing numeric bonus (`+N`, `+NdN`) and folds a trailing plural "s"
+  per word (skipping words ending `ss`/`us`/`is`, so "bonus"/"class"
+  survive) before the `startswith` comparison -- so a Special cell reading
+  "Bonus feat" now matches a `class_features` entry spelled "Bonus Feats"
+  (the fighter's own printed heading) without the record having to
+  misspell the feature to validate. `check_class_fields` also now requires,
+  whenever `fields.spellcasting` is set, that the resolved `level_table`
+  has at least one column matching `/per day|known|points/i` (checked
+  against the SAME "Spells per Day `<slot>`" naming convention
+  `_KIND_RULES["class"]`/`["prestige_class"]` states in the prompt) --
+  a caster class whose level table has no spells-per-day/known/points
+  column now fails validation instead of silently passing.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -461,7 +505,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   that behavior existed. `runner.py` wires all of it (including `queue
   audit [--fix]`, whose non-JSON `--fix` output now also prints a "`N`
   claim(s) released, `M` record file(s) moved to superseded/" line) into
-  the CLI. `owlsperch validate` promotes a path from
+  the CLI. Batch B10c-mand3 (Part 8): `queue reset --hard` resets a
+  segment's `tier` via `ladder.starting_tier(segment.kind_hint)` rather
+  than unconditionally to haiku, so a hard-reset `class`/`prestige_class`
+  segment lands back on sonnet (its own `STARTING_TIERS` entry) instead of
+  being demoted -- the mandated post-merge recovery hard-resets all 11
+  class segments and needs them to stay on sonnet. `owlsperch validate`
+  promotes a path from
   `pending_records` to `records` on PASS and drops it (deleting the file
   too, unless it's also in `records`) on FAIL. The skill itself is
   `.claude/skills/extract/SKILL.md`
@@ -705,7 +755,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   class features (one with an empty `text_md`), and
   `spellcasting.spell_list: "Wizard"` -- matching one of the `_SPELLS`
   entries' own `levels[].class` -- so the class Playwright spec's Spells
-  section has a real fixture spell to render) into `<dir>` and builds
+  section has a real fixture spell to render; plus, since batch
+  B10c-mand3, a `description_sections` entry and `schema_version: 2` on
+  the class record (class.json's base-class conditional requires both) and
+  a "Spells per Day 1st" column + cell on the level table (the caster
+  spells-per-day/known/points column check), and a fourth toc chapter/
+  section pair ("Chapter 4: Classes" / "Fixture Mage", both category
+  `classes`, pdf page 5) so the class record resolves to a real `classes`
+  toc category instead of `uncategorized`, giving the web tree's Classes
+  branch a fixture to open) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.
@@ -818,7 +876,9 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   spell), (batch B10b) `tree.spec.ts` (flow C: follow the header nav's
   "Rules" link, expand Combat and its chapter, open "Grapple Ranks", see
   the breadcrumb; plus a header quick-link into a pre-filtered, auto-
-  expanded category), and (batch B10c) `class.spec.ts` (flow D: nav
+  expanded category; plus, since B10c-mand3, expanding the Classes
+  category and its "Chapter 4: Classes" chapter to open the fixture class
+  record), and (batch B10c) `class.spec.ts` (flow D: nav
   Classes, open the fixture class, see its progression table and both
   class features render, click a Spells-section spell link through to the
   spell page) -- run by `playwright.config.ts`'s `webServer` against
