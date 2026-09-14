@@ -75,9 +75,16 @@ Per book:
    reconstruction routinely prints the tail of a page (a class's own
    pre-heading flavor sections, or even the PREVIOUS class's Starting
    Package) before the current class's ALL-CAPS heading. The extension
-   never reaches past a still-earlier class's own heading, and
-   deliberately still overlaps the previous class's own (heading-anchored)
-   end on a shared page -- see the function's own docstring for why.
+   never reaches past a still-earlier class's own heading. It still
+   overlaps the previous class's own (heading-anchored) end on a shared
+   page for non-flavor content (e.g. a Starting Package section, resolved
+   by the extraction prompt's own attribution rule) -- but (judgement
+   finding 1, follow-up) a class's own opening flavor run-in paragraph
+   specifically (the one carrying BOTH an "Alignment:" and a "Religion:"
+   marker -- `_is_class_flavor_paragraph`) is excluded from the previous
+   class's own written text, so it survives in exactly one segment: the
+   class it actually belongs to. See the function's own docstring for
+   why the rest of the overlap can't be resolved the same way.
    `--kinds class[,prestige_class]` (`owlsperch segment <book_id> --kinds
    class`) re-runs ONLY this toc-driven pass, for exactly the requested
    kind(s): no whole-book `build_segments` pass, no stale-segment-file
@@ -404,6 +411,21 @@ def _pages_spanned(paragraphs: list[Paragraph], start: int, end: int) -> list[in
     return pages
 
 
+def _pages_spanned_indices(paragraphs: list[Paragraph], indices: list[int]) -> list[int]:
+    """Like `_pages_spanned`, but over an explicit, possibly non-contiguous
+    list of paragraph indices (judgement finding 1, B10c-mand6 follow-up --
+    `_write_class_segment` excludes specific paragraphs from a contiguous
+    `[start, end)` range rather than shrinking the range itself)."""
+    pages: list[int] = []
+    seen: set[int] = set()
+    for i in indices:
+        page = paragraphs[i].page
+        if page not in seen:
+            seen.add(page)
+            pages.append(page)
+    return pages
+
+
 def _pages_in_range(paragraphs: list[Paragraph], start_page: int, end_page: int) -> list[int]:
     """Every distinct page in `[start_page, end_page]` that at least one
     paragraph in `paragraphs` actually falls on, in encounter order (mirrors
@@ -487,6 +509,22 @@ def _page_start_index(paragraphs: list[Paragraph], page: int) -> int:
     return len(paragraphs)
 
 
+#: A class's own opening flavor run-in paragraph (Alignment:/Religion:/
+#: Background:/Races:/Other Classes:/Role:, all folded into one printed
+#: paragraph) is identified by carrying BOTH of these two markers --
+#: `_run_class_pass` uses this to tell a class's own pre-heading flavor
+#: text apart from unrelated content (e.g. a Starting Package section)
+#: that a column-reconstruction quirk also happens to strand in the same
+#: ambiguous, shared-page zone (judgement finding 1, B10c-mand6 follow-up),
+#: so the flavor paragraph can be excluded from the PREVIOUS class's own
+#: end-capped range instead of surviving in both.
+_CLASS_FLAVOR_MARKERS = ("Alignment:", "Religion:")
+
+
+def _is_class_flavor_paragraph(text: str) -> bool:
+    return all(marker in text for marker in _CLASS_FLAVOR_MARKERS)
+
+
 def _back_extend_start_index(
     paragraphs: list[Paragraph], heading_index: int, resolved_starts: list[int]
 ) -> int:
@@ -505,15 +543,20 @@ def _back_extend_start_index(
     Never extend past a still-earlier class's own heading -- bounded by
     `previous_heading_index` (the greatest entry in `resolved_starts`
     strictly below `heading_index`, if any) -- so back-extension from one
-    class can't reach all the way into a class two spans back. This
-    deliberately still OVERLAPS the previous class's own (heading-anchored,
-    unchanged) end index on a shared-page boundary: both the ranger and
-    rogue segments end up containing p0050's paragraphs 0-2. That overlap
-    is intentional, not a bug -- there is no single cut point that gives
-    ranger its own Starting Package AND rogue its own flavor sections, so
-    it's resolved by the extraction prompt's own attribution rule (see
-    `owlsperch.queue.prompt`'s `class`/`prestige_class` rules) rather than
-    by picking one owner here."""
+    class can't reach all the way into a class two spans back. This still
+    OVERLAPS the previous class's own (heading-anchored, unchanged) end
+    index on a shared-page boundary: both the ranger and rogue segments'
+    raw index ranges cover p0050's paragraphs 0-2. `_run_class_pass`
+    resolves the one piece of that overlap that matters exclusively
+    (rogue's own paragraph 0, its flavor run-in -- see
+    `_is_class_flavor_paragraph`) by excluding it from ranger's own
+    written text; the rest of the overlap (paragraphs 1-2, ranger's own
+    Starting Package, which also falls in rogue's back-extended range) is
+    left alone -- there is no single cut point that gives ranger its own
+    Starting Package AND rogue its own flavor paragraph AND excludes every
+    duplicate, so that residual non-flavor overlap is resolved by the
+    extraction prompt's own attribution rule (see `owlsperch.queue.prompt`'s
+    `class`/`prestige_class` rules) rather than by picking one owner here."""
     page_start = _page_start_index(paragraphs, paragraphs[heading_index].page)
     earlier = [i for i in resolved_starts if i < heading_index]
     previous_heading_index = max(earlier) if earlier else None
@@ -597,6 +640,7 @@ def _write_class_segment(
     *,
     start_index: int | None,
     end_index: int | None,
+    exclude_indices: frozenset[int] = frozenset(),
 ) -> None:
     # Lazy import: `owlsperch.queue.ladder` imports `Segment` from this
     # module at module scope, so importing `starting_tier` from it up top
@@ -609,8 +653,13 @@ def _write_class_segment(
         # anchor the TEXT to paragraph indices so a neighbouring class's
         # prose is never included (the supersede pass below stays
         # page-based on purpose; only this text/pages pair changes).
-        pages = _pages_spanned(paragraphs, start_index, end_index)
-        text = "\n\n".join(p.text for p in paragraphs[start_index:end_index])
+        # `exclude_indices` (judgement finding 1, B10c-mand6 follow-up)
+        # drops specific paragraphs from THIS span's own range that a
+        # later class's back-extension has already claimed as its own
+        # opening flavor paragraph -- see `_run_class_pass`'s own comments.
+        kept_indices = [i for i in range(start_index, end_index) if i not in exclude_indices]
+        pages = _pages_spanned_indices(paragraphs, kept_indices)
+        text = "\n\n".join(paragraphs[i].text for i in kept_indices)
     else:
         # Fallback: the heading was never matched anywhere in the span (a
         # column-reconstruction oddity, or a toc title that just doesn't
@@ -750,6 +799,35 @@ def _run_class_pass(
     }
     resolved_starts = sorted(i for i in start_indices.values() if i is not None)
 
+    # Judgement finding 1 (B10c-mand6 follow-up): resolve every span's own
+    # back-extended TEXT start and its own exclusive pre-heading "flavor"
+    # paragraphs (Alignment:/Religion:/...) up front, from EVERY discovered
+    # span regardless of `kinds` -- same rationale as `start_indices`/
+    # `resolved_starts` above -- so that below, a class's own flavor
+    # paragraph can be excluded from the PREVIOUS class's end-capped range
+    # even when that previous span itself isn't one of the requested
+    # `kinds`. A span's "flavor indices" are whichever of its own
+    # back-extended pre-heading paragraphs look like the class-opening
+    # flavor run-in (see `_is_class_flavor_paragraph`) -- NOT the whole
+    # back-extended prefix, since that prefix can also hold unrelated
+    # content (e.g. the PREVIOUS class's own Starting Package section) that
+    # must stay available to whichever span the heading-anchored end cap
+    # already puts it in.
+    text_start_indices: dict[str, int] = {}
+    flavor_indices_by_span: dict[str, frozenset[int]] = {}
+    for span in class_spans:
+        start_index = start_indices[span.seg_id]
+        if start_index is None:
+            continue
+        text_start_index = _back_extend_start_index(paragraphs, start_index, resolved_starts)
+        text_start_indices[span.seg_id] = text_start_index
+        flavor_indices_by_span[span.seg_id] = frozenset(
+            i
+            for i in range(text_start_index, start_index)
+            if _is_class_flavor_paragraph(paragraphs[i].text)
+        )
+    all_flavor_indices: frozenset[int] = frozenset().union(*flavor_indices_by_span.values())
+
     spans_to_write = class_spans if kinds is None else [s for s in class_spans if s.kind in kinds]
 
     for span in spans_to_write:
@@ -786,7 +864,20 @@ def _run_class_pass(
         # class's own back-extended start would take its pre-heading tail
         # away from THIS class again, losing whatever it back-extended for
         # (e.g. a Starting Package section).
-        text_start_index = _back_extend_start_index(paragraphs, start_index, resolved_starts)
+        text_start_index = text_start_indices[span.seg_id]
+
+        # Judgement finding 1: exclude any OTHER span's own flavor
+        # paragraph that the heading-anchored end cap above would
+        # otherwise still sweep into this span's range -- e.g. the next
+        # class's own Alignment:/Religion: paragraph, back-extended into
+        # ITS segment above, must not also survive in THIS (previous)
+        # span's text.
+        own_flavor_indices = flavor_indices_by_span.get(span.seg_id, frozenset())
+        exclude_indices = frozenset(
+            i
+            for i in all_flavor_indices
+            if text_start_index <= i < end_index and i not in own_flavor_indices
+        )
 
         _write_class_segment(
             span,
@@ -799,6 +890,7 @@ def _run_class_pass(
             force,
             start_index=text_start_index,
             end_index=end_index,
+            exclude_indices=exclude_indices,
         )
 
     superseded_total = 0

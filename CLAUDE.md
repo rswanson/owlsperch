@@ -261,13 +261,22 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   span's TEXT start is back-extended, via `_back_extend_start_index`, from
   its own heading paragraph to the top of the heading's own page, bounded
   so it never reaches past a still-earlier class's own heading. The END
-  cap (the next class's own heading index) is UNCHANGED, so this
-  deliberately leaves a documented OVERLAP on a shared page -- both
-  neighbours' segments end up containing that page's pre-heading tail --
-  since there is no single cut point that gives the previous class its own
-  full trailing prose (its Starting Package) AND the next class its own
-  pre-heading flavor sections; the extraction prompt's own attribution
-  rule (see `pipeline/owlsperch/queue/prompt.py` below) resolves the
+  cap (the next class's own heading index) is UNCHANGED, so this raw index
+  range still OVERLAPS the previous class's own on a shared page -- there
+  is no single cut point that gives the previous class its own full
+  trailing prose (its Starting Package) AND the next class its own
+  pre-heading flavor sections. A judgement follow-up (B10c-mand6 follow-up,
+  finding 1) resolves the one piece of that overlap that must not be
+  duplicated: `_run_class_pass` identifies each span's own opening flavor
+  run-in paragraph specifically -- the one carrying BOTH an "Alignment:"
+  and a "Religion:" marker (`_is_class_flavor_paragraph`) -- and excludes
+  it from the PREVIOUS class's own written text (`_write_class_segment`'s
+  `exclude_indices`), so it survives in exactly the class it actually
+  belongs to; verified against the real corpus for all 11 phb1 classes
+  (`test_phb1_real_corpus_class_segments`). The rest of the overlap (e.g. a
+  Starting Package section, which isn't flavor-marked) is left alone --
+  the extraction prompt's own attribution rule (see
+  `pipeline/owlsperch/queue/prompt.py` below) resolves that remaining
   ambiguity instead of the segmenter picking an owner. Also from
   B10c-mand6: `owlsperch segment <book_id> --kinds class[,prestige_class]`
   re-runs ONLY this toc-driven class/prestige_class pass -- no whole-book

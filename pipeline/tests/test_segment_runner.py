@@ -1007,15 +1007,19 @@ def test_class_span_back_extends_to_recover_a_pre_heading_flavor_tail(tmp_path: 
     assert "CLERIC" not in bard["text"]
     assert "master of divine magic" not in bard["text"]
 
-    # Barbarian's own (heading-anchored, UNCHANGED) end cap already
-    # extended up to Bard's own heading -- so it already contained this
-    # shared page-3 tail, flavor paragraph included, before this batch.
-    # That overlap is deliberate (see `_back_extend_start_index`'s
-    # docstring): there is no single cut point that gives barbarian its
-    # own full trailing prose AND bard its own pre-heading flavor section,
-    # so it's left to the extraction prompt's own attribution rule to
-    # resolve rather than to the segmenter.
-    assert "Alignment: Any nonlawful" in barbarian["text"]
+    # Barbarian's own (heading-anchored, UNCHANGED) end cap still reaches
+    # up to Bard's own heading, so it still contains barbarian's own
+    # trailing prose from that shared page-3 tail ...
+    assert "Barbarians continue raging" in barbarian["text"]
+    # ... but (judgement finding 1, B10c-mand6 follow-up) NOT bard's own
+    # flavor paragraph any more -- that paragraph carries BOTH an
+    # "Alignment:" and a "Religion:" marker (see
+    # `_is_class_flavor_paragraph`), which is what makes it recognizable
+    # as bard's own opening flavor content and excludes it from
+    # barbarian's end-capped range, even though its raw paragraph index
+    # still falls inside that range.
+    assert "Alignment: Any nonlawful" not in barbarian["text"]
+    assert "Bards revere whichever deity" not in barbarian["text"]
     assert "BARD" not in barbarian["text"]
 
     # Cleric is unaffected -- nothing precedes "CLERIC" on page 4 that
@@ -1473,14 +1477,32 @@ def test_phb1_real_corpus_class_segments() -> None:
         # flavor paragraph, back-extended from wherever it lands relative
         # to the ALL-CAPS heading -- rogue's, ranger's, and wizard's most
         # visibly (the judgement's own concrete examples), but verified
-        # here for all 11. NOTE: this deliberately does NOT also assert
-        # the previous class's segment lacks it -- under the back-
-        # extension's overlap design (see `_back_extend_start_index`'s own
-        # docstring), a shared-page tail legitimately belongs to BOTH
-        # neighbours' segments, e.g. PHB p0050 puts ranger's own Starting
-        # Package ahead of rogue's own Alignment/Religion paragraph, and
-        # ranger's (heading-anchored, unchanged) end cap already included
-        # that whole tail before this batch.
+        # here for all 11.
         for class_segment in classes:
             assert "Alignment:" in class_segment["text"], class_segment["heading"]
             assert "Religion:" in class_segment["text"], class_segment["heading"]
+
+        # Judgement finding 1 (blocker, B10c-mand6 follow-up): criterion 1
+        # also requires that the PREVIOUS class's segment does NOT contain
+        # the next class's own Alignment:/Religion: run-in paragraph.
+        # Every PHB base class prints its own "Alignment:" marker exactly
+        # TWICE (once in its flavor blurb, e.g. "Alignment: Barbarians are
+        # never lawful...", once in the stat-block intro line right after
+        # the heading, e.g. "Alignment: Any nonlawful. Hit Die: d12.") and
+        # its own "Religion:" marker exactly ONCE (the flavor blurb only)
+        # -- verified against the real corpus text directly, independent
+        # of this segmenter, for all 11 classes. Before this follow-up,
+        # PHB p0050's column-reconstruction bleed (see
+        # `_back_extend_start_index`'s docstring) gave 4 of the 10
+        # neighbouring class pairs (bard/cleric, paladin/ranger, ranger/
+        # rogue, sorcerer/wizard) a THIRD "Alignment:"/SECOND "Religion:"
+        # -- the following class's own flavor paragraph, back-extended
+        # into ITS OWN segment but never excluded from the previous
+        # class's (heading-anchored, unchanged) end-capped range. A
+        # regression that reopens that bleed shows up here as a count of
+        # 3/2 instead of 2/1 on whichever class comes right before the
+        # regression.
+        for class_segment in classes:
+            text = class_segment["text"]
+            assert text.count("Alignment:") == 2, (class_segment["heading"], text)
+            assert text.count("Religion:") == 1, (class_segment["heading"], text)
