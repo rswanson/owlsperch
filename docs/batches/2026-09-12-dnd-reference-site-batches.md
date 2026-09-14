@@ -668,7 +668,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `CLAUDE.md`.
 
 ## B10c: Class pages (class + prestige_class types), modeled on the original site
-- **Status:** in-progress
+- **Status:** merged
 - **Why (user feedback, 2026-09-13):** after B10b, "The classes pages have
   turned into just the full contents of each chapter exactly. This is not
   what I want. The original version of owlsperch that I created is here as
