@@ -641,6 +641,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
 - `web/` -- the frontend (spec 4.10, batch B7, plus `/browse/:type` from
   B9): Vite + React 18 + TypeScript, React Router for `/` (search),
   `/browse/:type` (browse + facets), and `/r/:type/:slug` (record detail).
+  The toolchain floor is Vite 6 / Vitest 4, with CI on Node 20 (batch
+  B10c-mand1, resolving 7 Dependabot alerts); Dependabot's proposed Vite 8/
+  Vitest 5 are deliberately deferred since Vitest 5 requires Node >=22.12,
+  which would drag a CI runtime bump into a security-fix change. Both
+  `web/tsconfig.app.json` and `web/tsconfig.node.json` must keep
+  `DOM.Iterable` in `lib`: `BrowsePage` iterates
+  `URLSearchParams.entries()`/`.keys()`, which `lib.dom` alone doesn't
+  declare -- under Vitest 2 these arrived implicitly via `@types/node`, and
+  dropping `DOM.Iterable` silently re-breaks `npm run typecheck`.
   `src/api.ts` has typed wrappers for every server endpoint;
   `src/components/SearchBox.tsx` is the debounced (150ms), cancellable
   (`AbortController`), keyboard-navigable (arrows/Enter/Escape) typeahead;
