@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from owlsperch.queue.common import resolve_staged_record_path
 from owlsperch.queue.complete import QueueError, complete_segment
 from owlsperch.segment.runner import Segment
 
@@ -45,12 +46,28 @@ def _read_segment(data_dir: Path, book_id: str, seg_id: str) -> dict[str, Any]:
 
 def _write_record_file(data_dir: Path, rel_path: str) -> None:
     """Create an (empty-content-wise) record file on disk at `rel_path`
-    (relative to `data_dir`) -- `complete_segment` (B5 follow-up) requires a
-    claimed record path to actually exist, not just be a well-formed
-    string."""
+    (relative to `data_dir`) -- used for a file that must already sit at
+    its final destination under `records/<book_id>/`, e.g. to simulate
+    another segment's already-validated (or already-pending) record."""
     path = data_dir / rel_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{}")
+
+
+def _write_staged_record(
+    data_dir: Path, book_id: str, seg_id: str, type_dir: str, slug: str, content: str = "{}"
+) -> str:
+    """Create a record file in `seg_id`'s own STAGING directory (batch
+    B10c-mand4) -- `complete_segment` requires a claimed record path to
+    resolve inside the claiming segment's own staging tree and actually
+    exist there, not just be a well-formed string. Returns the STAGED path
+    (relative to `data_dir`) to put in a reply's `records` list; the
+    corresponding DESTINATION path (what ends up in `pending_records`/
+    `records` once accepted) is `records/<book_id>/<type_dir>/<slug>.json`."""
+    path = data_dir / "staging" / book_id / seg_id / "records" / type_dir / f"{slug}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path.relative_to(data_dir).as_posix()
 
 
 # ---------------------------------------------------------------------------
@@ -61,11 +78,11 @@ def _write_record_file(data_dir: Path, rel_path: str) -> None:
 def test_records_result_sets_pending_records_and_status_pending(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": "found one spell",
         }
@@ -82,6 +99,52 @@ def test_records_result_sets_pending_records_and_status_pending(tmp_path: Path) 
     assert segment["notes"] == ["found one spell"]
 
 
+def test_records_result_stamps_claim_tier_to_segment_tier(tmp_path: Path) -> None:
+    """Batch B10c-mand4: accepting at least one record path stamps
+    `claim_tier` to the segment's current `tier` -- `owlsperch.validate.
+    runner` uses this to keep re-validation idempotent when a claim later
+    vanishes with no file left to read an `extraction.tier` from."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", tier="sonnet")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
+    result = json.dumps(
+        {"seg_id": "book-p0010-01", "records": [staged], "no_content": None, "notes": ""}
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["claim_tier"] == "sonnet"
+
+
+def test_reply_that_accepts_nothing_does_not_stamp_claim_tier(tmp_path: Path) -> None:
+    """A reply whose every claimed path is rejected (invalid/missing) must
+    not overwrite an earlier, real claim's `claim_tier` with the segment's
+    now-escalated current tier."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        tier="sonnet",
+        claim_tier="haiku",
+        pending_records=["records/book/spell/fireball.json"],
+    )
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": ["records/book/spell/never-written.json"],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["claim_tier"] == "haiku"
+
+
 def test_records_result_merges_without_duplicating(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(
@@ -90,12 +153,12 @@ def test_records_result_merges_without_duplicating(tmp_path: Path) -> None:
         "book-p0010-01",
         pending_records=["records/book/spell/fireball.json"],
     )
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
-    _write_record_file(data_dir, "records/book/spell/icy-bolt.json")
+    fireball = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
+    icy_bolt = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "icy-bolt")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json", "records/book/spell/icy-bolt.json"],
+            "records": [fireball, icy_bolt],
             "no_content": None,
             "notes": "",
         }
@@ -314,11 +377,11 @@ def test_notes_not_a_string_or_list_of_strings_is_malformed(tmp_path: Path) -> N
 def test_notes_merge_across_multiple_completes_without_duplicating(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
     first = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": ["first note"],
         }
@@ -412,17 +475,188 @@ def test_record_path_that_does_not_exist_on_disk_is_rejected(tmp_path: Path) -> 
     ]
 
 
-def test_mix_of_valid_and_invalid_record_paths(tmp_path: Path) -> None:
+def test_record_path_in_a_different_segments_staging_dir_is_rejected(tmp_path: Path) -> None:
+    """Batch B10c-mand4: a claim must resolve inside THIS segment's own
+    staging tree -- a well-formed staging path belonging to a different
+    segment (even one that exists on disk) is still rejected."""
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    other_staged = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "fireball")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": [
-                "records/book/spell/fireball.json",
-                "records/book/spell/never-written.json",
-            ],
+            "records": [other_staged],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {other_staged}"]
+
+
+def test_record_path_at_the_wrong_depth_under_its_own_staging_dir_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Batch B10c-mand4: a staged file must sit exactly two levels under the
+    segment's own staging records root (`<type>/<file>.json`) --
+    `destination_rel_path_for_staged` refuses anything else, e.g. a claim
+    missing the type directory."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    too_shallow = data_dir / "staging" / "book" / "book-p0010-01" / "records" / "fireball.json"
+    too_shallow.parent.mkdir(parents=True, exist_ok=True)
+    too_shallow.write_text("{}")
+    claimed = too_shallow.relative_to(data_dir).as_posix()
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [claimed],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {claimed}"]
+
+
+def test_record_path_at_an_extra_depth_under_its_own_staging_dir_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Batch B10c-mand4: the too-deep counterpart of the wrong-depth test
+    above -- AC7's "an extra or missing directory level" also covers a claim
+    nesting one directory too many under the segment's own staging records
+    root."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    too_deep = (
+        data_dir
+        / "staging"
+        / "book"
+        / "book-p0010-01"
+        / "records"
+        / "spell"
+        / "extra"
+        / "fireball.json"
+    )
+    too_deep.parent.mkdir(parents=True, exist_ok=True)
+    too_deep.write_text("{}")
+    claimed = too_deep.relative_to(data_dir).as_posix()
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [claimed],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {claimed}"]
+    # `complete_segment` always removes the WHOLE staging dir for this
+    # segment on its way out (AC10), so the too-deep file itself is gone
+    # along with it -- what proves nothing was moved is that no destination
+    # was ever created.
+    assert not (data_dir / "records").exists()
+
+
+def test_staging_rooted_path_that_escapes_via_traversal_is_rejected(tmp_path: Path) -> None:
+    """Batch B10c-mand4, AC11(c): a claim that STARTS inside this segment's
+    own staging root but walks back out via `..` must still be rejected by
+    `resolve_staged_record_path`'s own traversal guard -- distinct from the
+    existing traversal test, which never enters the staging root at all."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    victim = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "fireball")
+    claimed = "staging/book/book-p0010-01/records/../../book-p0011-01/records/spell/fireball.json"
+    # Pin `resolve_staged_record_path`'s OWN guard directly, not just the
+    # end-to-end outcome -- `_resolve_claimed_staged_path` also runs
+    # `destination_rel_path_for_staged`'s independent `relative_to` check
+    # against the same root, which would reject this path even if
+    # `resolve_staged_record_path`'s guard were removed.
+    assert resolve_staged_record_path(data_dir, "book", "book-p0010-01", claimed) is None
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [claimed],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {claimed}"]
+    assert (data_dir / victim).is_file()
+    assert not (data_dir / "records").exists()
+
+
+def test_unparseable_existing_destination_is_refused_as_a_collision(tmp_path: Path) -> None:
+    """Batch B10c-mand4: covers the defensive
+    `_UNPARSEABLE_DESTINATION_OWNER` branch -- a destination file that
+    already exists but isn't valid JSON is refused as a collision rather
+    than silently overwritten or crashing."""
+    from owlsperch.queue.complete import _UNPARSEABLE_DESTINATION_OWNER
+
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
+    dest = data_dir / "records" / "book" / "spell" / "fireball.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest_text = "not json at all"
+    dest.write_text(dest_text)
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [staged],
+            "no_content": None,
+            "notes": "",
+        }
+    )
+
+    outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert dest.read_text() == dest_text
+    # `complete_segment` always removes the WHOLE staging dir for this
+    # segment on its way out (AC10), so the staged file itself is gone
+    # along with it regardless of outcome -- the destination's untouched
+    # content is what proves the collision refusal, not the staged file's
+    # survival.
+    assert not (data_dir / staged).exists()
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [
+        f"record_path_collision: records/book/spell/fireball.json is owned by "
+        f"segment {_UNPARSEABLE_DESTINATION_OWNER}"
+    ]
+
+
+def test_mix_of_valid_and_invalid_record_paths(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
+    never_written = "staging/book/book-p0010-01/records/spell/never-written.json"
+    result = json.dumps(
+        {
+            "seg_id": "book-p0010-01",
+            "records": [staged, never_written],
             "no_content": None,
             "notes": "",
         }
@@ -433,9 +667,7 @@ def test_mix_of_valid_and_invalid_record_paths(tmp_path: Path) -> None:
     assert outcome.outcome == "pending_records"
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["pending_records"] == ["records/book/spell/fireball.json"]
-    assert segment["attempts"][0]["errors"] == [
-        "missing_record_path: records/book/spell/never-written.json"
-    ]
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {never_written}"]
 
 
 # ---------------------------------------------------------------------------
@@ -521,11 +753,11 @@ def test_bare_json_reply_is_parsed(tmp_path: Path) -> None:
 def test_fenced_reply_with_records_still_validates_paths(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
     payload = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": [],
         }
@@ -550,25 +782,24 @@ def test_fenced_reply_with_records_still_validates_paths(tmp_path: Path) -> None
 def test_accepted_record_gets_authoritative_extraction_overwritten(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", tier="haiku", model="claude-haiku-4-5")
-    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
-    record_path.parent.mkdir(parents=True, exist_ok=True)
-    record_path.write_text(
-        json.dumps(
-            {
-                "name": "Fireball",
-                "extraction": {
-                    "tier": "bogus-tier",
-                    "model": "bogus-model",
-                    "segment_id": "bogus-segment",
-                    "timestamp": "1999-01-01T00:00:00+00:00",
-                },
-            }
-        )
+    staged_content = json.dumps(
+        {
+            "name": "Fireball",
+            "extraction": {
+                "tier": "bogus-tier",
+                "model": "bogus-model",
+                "segment_id": "bogus-segment",
+                "timestamp": "1999-01-01T00:00:00+00:00",
+            },
+        }
+    )
+    staged = _write_staged_record(
+        data_dir, "book", "book-p0010-01", "spell", "fireball", content=staged_content
     )
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": [],
         }
@@ -576,6 +807,7 @@ def test_accepted_record_gets_authoritative_extraction_overwritten(tmp_path: Pat
 
     complete_segment("book-p0010-01", result, data_dir=data_dir)
 
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
     record = json.loads(record_path.read_text())
     assert record["extraction"]["tier"] == "haiku"
     assert record["extraction"]["model"] == "claude-haiku-4-5"
@@ -592,11 +824,11 @@ def test_accepted_record_extraction_falls_back_to_default_model_when_segment_has
     # No `model` override -- simulates a segment that never went through
     # `queue next` (e.g. hand-crafted in a test or an old segment file).
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": [],
         }
@@ -673,15 +905,20 @@ def test_accepted_record_gets_authoritative_pages_and_book_id_overwritten(
         pages=[197, 198],
         printed_pages=[196, 197],
     )
-    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
-    record_path.parent.mkdir(parents=True, exist_ok=True)
     # The model wrongly wrote the printed page number instead of the PDF
     # page indices.
-    record_path.write_text(json.dumps(_full_spell_record(pages=[196])))
+    staged = _write_staged_record(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        "spell",
+        "fireball",
+        content=json.dumps(_full_spell_record(pages=[196])),
+    )
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": [],
         }
@@ -689,6 +926,7 @@ def test_accepted_record_gets_authoritative_pages_and_book_id_overwritten(
 
     complete_segment("book-p0010-01", result, data_dir=data_dir)
 
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
     record = json.loads(record_path.read_text())
     assert record["pages"] == [197, 198]
     assert record["book_id"] == "book"
@@ -707,15 +945,20 @@ def test_record_with_wrong_pages_is_corrected_after_complete_and_then_passes_val
         pages=[197, 198],
         printed_pages=[196, 197],
     )
-    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
-    record_path.parent.mkdir(parents=True, exist_ok=True)
     # Wrong: the printed page number (196) instead of the PDF indices
     # ([197, 198]) -- would fail check_pages_within_segment.
-    record_path.write_text(json.dumps(_full_spell_record(pages=[196])))
+    staged = _write_staged_record(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        "spell",
+        "fireball",
+        content=json.dumps(_full_spell_record(pages=[196])),
+    )
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
             "notes": [],
         }
@@ -728,6 +971,7 @@ def test_record_with_wrong_pages_is_corrected_after_complete_and_then_passes_val
 
     assert exit_code == 0
     assert "PASS records/book/spell/fireball.json" in out.getvalue()
+    record_path = data_dir / "records" / "book" / "spell" / "fireball.json"
     record = json.loads(record_path.read_text())
     assert record["pages"] == [197, 198]
 
@@ -1017,11 +1261,10 @@ def test_proposed_type_without_name_is_malformed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Record path collisions: `queue complete` must never let one segment's
 # claimed record path silently overwrite a file another segment already
-# owns. Ownership here comes from the SEGMENT index (a segment's own
-# `records`/`pending_records`) -- not from the record file's own
-# `extraction.segment_id`, which is only a subagent-copied placeholder by
-# the time `queue complete` runs (see `owlsperch.queue.prompt`) and would
-# already name the new claimant on a just-clobbered file.
+# owns. Ownership comes from either the SEGMENT index (a segment's own
+# `records`/`pending_records`) or, for a destination file no live segment's
+# index claims, that file's own `extraction.segment_id` (batch B10c-mand4's
+# staging move) -- see `owlsperch.queue.complete`'s module docstring.
 # ---------------------------------------------------------------------------
 
 
@@ -1057,10 +1300,15 @@ def test_claim_on_a_path_owned_by_another_segments_records_is_a_collision(
     )
     record_path.write_text(original_body)
 
+    # The thief staged its OWN copy of the same slug -- never written
+    # directly to the shared destination.
+    staged = _write_staged_record(
+        data_dir, "book", "book-p0148-01", "rules_section", "class-features"
+    )
     result = json.dumps(
         {
             "seg_id": "book-p0148-01",
-            "records": ["records/book/rules_section/class-features.json"],
+            "records": [staged],
             "no_content": None,
         }
     )
@@ -1100,10 +1348,11 @@ def test_claim_on_a_path_owned_by_another_segments_pending_records_is_a_collisio
     _write_segment(data_dir, "book", "book-p0011-01")
     _write_record_file(data_dir, "records/book/spell/fireball.json")
 
+    staged = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "fireball")
     result = json.dumps(
         {
             "seg_id": "book-p0011-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
         }
     )
@@ -1121,6 +1370,11 @@ def test_claim_on_a_path_owned_by_another_segments_pending_records_is_a_collisio
 def test_a_differently_spelled_claim_on_an_owned_path_is_still_a_collision(
     tmp_path: Path,
 ) -> None:
+    """A staging claim spelled with a redundant `..` component that still
+    resolves (within the segment's own staging tree) to the same staged
+    file is still a collision against the pre-existing destination -- and
+    the error names the clean DESTINATION path, not the odd claimed
+    spelling."""
     data_dir = tmp_path / "data"
     _write_segment(
         data_dir,
@@ -1146,10 +1400,14 @@ def test_a_differently_spelled_claim_on_an_owned_path_is_still_a_collision(
     )
     record_path.write_text(original_body)
 
+    _write_staged_record(data_dir, "book", "book-p0148-01", "rules_section", "class-features")
+    odd_claim = (
+        "staging/book/book-p0148-01/records/rules_section/../rules_section/class-features.json"
+    )
     result = json.dumps(
         {
             "seg_id": "book-p0148-01",
-            "records": ["records/book/rules_section/../rules_section/class-features.json"],
+            "records": [odd_claim],
             "no_content": None,
         }
     )
@@ -1166,8 +1424,8 @@ def test_a_differently_spelled_claim_on_an_owned_path_is_still_a_collision(
     assert len(victim["attempts"]) == 1
     assert victim["attempts"][0]["kind"] == "malformed"
     assert victim["attempts"][0]["errors"] == [
-        "record_path_collision: records/book/rules_section/../rules_section/"
-        "class-features.json is owned by segment book-p0026-01"
+        "record_path_collision: records/book/rules_section/class-features.json "
+        "is owned by segment book-p0026-01"
     ]
 
     owner = _read_segment(data_dir, "book", "book-p0026-01")
@@ -1184,12 +1442,16 @@ def test_segment_reclaiming_its_own_already_owned_path_is_not_a_collision(
         "book-p0010-01",
         pending_records=["records/book/spell/fireball.json"],
     )
+    # The destination already exists (as if from an earlier attempt by this
+    # SAME segment) with no `extraction.segment_id` of its own -- a retry
+    # claiming it again from its own staging dir is not a collision.
     _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
 
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
         }
     )
@@ -1212,17 +1474,15 @@ def test_mix_of_valid_invalid_and_colliding_paths_is_one_attempt(tmp_path: Path)
         records=["records/book/spell/icy-bolt.json"],
     )
     _write_segment(data_dir, "book", "book-p0011-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    fireball = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "fireball")
+    icy_bolt = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "icy-bolt")
     _write_record_file(data_dir, "records/book/spell/icy-bolt.json")
+    never_written = "staging/book/book-p0011-01/records/spell/never-written.json"
 
     result = json.dumps(
         {
             "seg_id": "book-p0011-01",
-            "records": [
-                "records/book/spell/fireball.json",
-                "records/book/spell/icy-bolt.json",
-                "records/book/spell/never-written.json",
-            ],
+            "records": [fireball, icy_bolt, never_written],
             "no_content": None,
         }
     )
@@ -1236,7 +1496,7 @@ def test_mix_of_valid_invalid_and_colliding_paths_is_one_attempt(tmp_path: Path)
     # bad path.
     assert len(segment["attempts"]) == 1
     assert segment["attempts"][0]["errors"] == [
-        "missing_record_path: records/book/spell/never-written.json",
+        f"missing_record_path: {never_written}",
         "record_path_collision: records/book/spell/icy-bolt.json is owned by segment book-p0010-01",
     ]
     assert "1 record(s) claimed" in outcome.detail
@@ -1247,14 +1507,14 @@ def test_mix_of_valid_invalid_and_colliding_paths_is_one_attempt(tmp_path: Path)
 def test_ownership_index_scan_skips_a_file_that_is_not_valid_json(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01")
-    _write_record_file(data_dir, "records/book/spell/fireball.json")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
     bogus = data_dir / "segments" / "book" / "book-p9999-01.json"
     bogus.write_text("{not json")
 
     result = json.dumps(
         {
             "seg_id": "book-p0010-01",
-            "records": ["records/book/spell/fireball.json"],
+            "records": [staged],
             "no_content": None,
         }
     )
@@ -1276,11 +1536,14 @@ def test_collision_at_opus_moves_the_victim_to_human(tmp_path: Path) -> None:
     )
     _write_segment(data_dir, "book", "book-p0148-01", tier="opus")
     _write_record_file(data_dir, "records/book/rules_section/class-features.json")
+    staged = _write_staged_record(
+        data_dir, "book", "book-p0148-01", "rules_section", "class-features"
+    )
 
     result = json.dumps(
         {
             "seg_id": "book-p0148-01",
-            "records": ["records/book/rules_section/class-features.json"],
+            "records": [staged],
             "no_content": None,
         }
     )
@@ -1305,6 +1568,98 @@ def test_collision_at_opus_moves_the_victim_to_human(tmp_path: Path) -> None:
     # The original owner's own segment is unaffected.
     owner = _read_segment(data_dir, "book", "book-p0026-01")
     assert owner["records"] == ["records/book/rules_section/class-features.json"]
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand4: staged writes. A subagent's claimed record must live in
+# its OWN staging directory (`staging/<book_id>/<seg_id>/records/<type>/
+# <slug>.json`) -- `queue complete` is the only thing that ever moves a file
+# into the shared `records/<book_id>/` directory, and only after checking
+# ownership. This is what makes the historical bug (two segments' subagents
+# racing to write the SAME `records/<book_id>/...` path directly, before
+# either's `queue complete` ever ran) structurally impossible: there is no
+# shared path for either of them to write to until one of them wins the
+# ownership check below.
+# ---------------------------------------------------------------------------
+
+
+def test_claim_colliding_with_an_orphaned_destination_no_live_segment_owns_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A destination file can exist without any LIVE segment's index
+    claiming it (e.g. left over from data predating this batch, or a
+    segment that was deleted by hand) -- `_record_path_owners` (checked
+    first) finds no owner, but the file's own `extraction.segment_id` still
+    names a different id, so the claim is refused rather than silently
+    clobbering whatever produced that file."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0011-01")
+    original_body = json.dumps(
+        {
+            "extraction": {
+                "tier": "haiku",
+                "model": "claude-haiku-4-5",
+                "segment_id": "book-p9999-01",  # no segments/human file exists for this id
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            },
+            "pages": [10],
+            "book_id": "book",
+        },
+        indent=2,
+    )
+    dest_path = data_dir / "records" / "book" / "spell" / "fireball.json"
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_text(original_body)
+
+    staged = _write_staged_record(data_dir, "book", "book-p0011-01", "spell", "fireball")
+    result = json.dumps(
+        {
+            "seg_id": "book-p0011-01",
+            "records": [staged],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-p0011-01", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" in outcome.detail
+    assert dest_path.read_text() == original_body
+    segment = _read_segment(data_dir, "book", "book-p0011-01")
+    assert segment["pending_records"] == []
+    assert segment["attempts"][0]["errors"] == [
+        "record_path_collision: records/book/spell/fireball.json is owned by segment book-p9999-01"
+    ]
+
+
+def test_staging_directory_is_removed_after_complete_on_every_branch(tmp_path: Path) -> None:
+    """A segment's whole `staging/<book_id>/<seg_id>/` directory is cleaned
+    up once its reply has been fully handled -- regardless of which branch
+    (records, no_content, malformed) handled it."""
+    data_dir = tmp_path / "data"
+
+    _write_segment(data_dir, "book", "book-p0010-01")
+    staged = _write_staged_record(data_dir, "book", "book-p0010-01", "spell", "fireball")
+    complete_segment(
+        "book-p0010-01",
+        json.dumps({"seg_id": "book-p0010-01", "records": [staged], "no_content": None}),
+        data_dir=data_dir,
+    )
+    assert not (data_dir / "staging" / "book" / "book-p0010-01").exists()
+
+    _write_segment(data_dir, "book", "book-p0020-01")
+    _write_staged_record(data_dir, "book", "book-p0020-01", "spell", "unused")
+    complete_segment(
+        "book-p0020-01",
+        json.dumps({"seg_id": "book-p0020-01", "records": [], "no_content": {"reason": "art"}}),
+        data_dir=data_dir,
+    )
+    assert not (data_dir / "staging" / "book" / "book-p0020-01").exists()
+
+    _write_segment(data_dir, "book", "book-p0030-01")
+    _write_staged_record(data_dir, "book", "book-p0030-01", "spell", "unused")
+    complete_segment("book-p0030-01", "{not json", data_dir=data_dir)
+    assert not (data_dir / "staging" / "book" / "book-p0030-01").exists()
 
 
 def test_proposed_type_takes_precedence_over_needs_context(tmp_path: Path) -> None:
@@ -1375,10 +1730,13 @@ def test_a_superseded_segments_claim_no_longer_blocks_a_new_owner(tmp_path: Path
         )
     )
 
+    staged = _write_staged_record(
+        data_dir, "book", "book-class-p0034", "table", "table-3-8-the-druid"
+    )
     result = json.dumps(
         {
             "seg_id": "book-class-p0034",
-            "records": ["records/book/table/table-3-8-the-druid.json"],
+            "records": [staged],
             "no_content": None,
         }
     )

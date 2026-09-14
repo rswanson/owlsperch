@@ -28,48 +28,77 @@ came back fenced and were wrongly rejected before this. In precedence order:
   `owlsperch.queue.ladder.record_failure`.
 - `no_content` is not null: the segment is done, `outcome` is `"no_content"`
   and `outcome_reason` records the reason.
-- Otherwise, `records` is a list of strings: each path is checked to (a)
-  resolve inside `records/<book_id>/` under `$OWLSPERCH_DATA` (this
-  segment's own book, not any other), (b) actually exist on disk, and (c)
-  not already be owned by a *different* segment of the same book. A path
-  failing (a) or (b) escalates the segment (spec: "treated as a validation
-  failure and escalated", batch B8) with error `"missing_record_path:
-  <path>"`; a path failing (c) escalates it with error
-  `"record_path_collision: <path> is owned by segment <seg_id>"` and is
-  left completely untouched on disk -- neither its content nor its
-  `extraction` block is written to, so the earlier claimant's extracted
-  content survives. Ownership for (c) comes from the SEGMENT index (every
-  other segment's own `records`/`pending_records`, see
-  `_record_path_owners`), never from the record file's own
-  `extraction.segment_id` -- `owlsperch.queue.prompt` tells a subagent to
-  copy its own `seg_id` there as a placeholder, so a file that has just
-  been clobbered already carries the new (thieving) claimant's id, not the
-  real owner's. A segment re-claiming a path it already owns itself (its
-  own `records`/`pending_records`) is still allowed -- an idempotent retry
-  of the same claim is not a collision. Nor does a claim held by a segment
-  whose own `superseded_by` is set count as ownership at all (batch
-  B10c-mand2): that claim is meant to be RELEASED (moved to
+- Otherwise, `records` is a list of strings, each claiming a file the
+  subagent wrote into its own private STAGING directory (batch
+  B10c-mand4): `staging/<book_id>/<seg_id>/records/<type>/<slug>.json`
+  (`owlsperch.queue.common.staging_records_root`), never
+  `records/<book_id>/...` directly -- `owlsperch.queue.prompt` tells every
+  subagent to write there and nowhere else, so two concurrent extraction
+  attempts can never clobber each other's bytes before either ever reaches
+  this guard. Each claimed path is checked to (a) resolve inside THIS
+  segment's own staging records root under `$OWLSPERCH_DATA`
+  (`resolve_staged_record_path`) and actually exist on disk there, and (b)
+  translate to a well-formed `<type>/<file>.json` destination
+  (`destination_rel_path_for_staged`) -- `records/<book_id>/<type>/
+  <file>.json`. A path failing either escalates the segment (spec: "treated
+  as a validation failure and escalated", batch B8) with error
+  `"missing_record_path: <path>"` (the path exactly as claimed, i.e. the
+  staging spelling). A path that resolves and exists is then checked to (c)
+  not already be owned by a *different* segment of the same book -- from
+  the SEGMENT index (every other segment's own `records`/`pending_records`,
+  see `_record_path_owners`, run against the DESTINATION path) -- and (d)
+  not collide with an already-written destination file whose own
+  `extraction.segment_id` names a different, still-live segment (a
+  destination this segment already wrote, on a retry, is fair game to
+  overwrite; a destination that fails to parse as JSON is treated as a
+  collision rather than clobbered). Either failing escalates the segment
+  with error `"record_path_collision: <dest> is owned by segment <seg_id>"`
+  (`<dest>` being the computed destination path, not the staging spelling)
+  and the destination is left completely untouched -- neither its content
+  nor its `extraction` block is written to, so the earlier claimant's
+  extracted content survives. Ownership for (c)/(d) never trusts the
+  record file's own `extraction.segment_id` on its own to prove theft --
+  `owlsperch.queue.prompt` tells a subagent to copy its own `seg_id` there
+  as a placeholder, so a file that has just been clobbered would already
+  carry the new (thieving) claimant's id, not the real owner's -- but (d)
+  DOES use it to recognize a legitimate destination owned by a segment that
+  is itself frozen (see the `superseded_by` exemption below), and to let a
+  segment overwrite its own prior write on a retry. A segment re-claiming a
+  path it already owns itself (its own `records`/`pending_records`) is
+  still allowed -- an idempotent retry of the same claim is not a
+  collision. Nor does a claim held by a segment whose own `superseded_by`
+  is set count as ownership at all (batch B10c-mand2, and its (d) analog
+  here): that claim is meant to be RELEASED (moved to
   `superseded/<book_id>/<type>/<file>.json`, never deleted, and cleared
   from the segment's own lists -- see `owlsperch.supersede.
   release_segment_claims`, run by the class-span stamp pass and by
   `owlsperch queue audit --fix`) precisely so the class segment superseding
-  it can claim the SAME path -- most often a level table sharing the
-  class's own printed title, and so the same slug/id/path. This guard's
-  exemption for it is belt-and-braces, for a claim that survives release
-  for any reason (a segment stamped by an older `segment` run, or a claim
-  restored by hand): without it, the class's own claim on that path would
-  be wrongly refused as a collision and the class could never be
-  extracted. Every path that passes all three checks has its own
-  `extraction` overwritten with the authoritative
-  `{tier, model, segment_id, timestamp}` (B5 follow-up 3), and
-  (B6 follow-up) its `pages` and `book_id` overwritten with the segment's
-  own `pages` (PDF page indices) and `book_id` -- see
-  `_overwrite_authoritative_fields`; `model` is whatever `owlsperch queue
-  next` recorded on the segment at selection time, not whatever placeholder
-  the subagent wrote. The record is then merged into the segment's
-  `pending_records` (not `records` -- `owlsperch validate` promotes a path
-  once the record actually conforms), and `status` goes back to `"pending"`
-  so validate can run.
+  it can claim the SAME destination path -- most often a level table
+  sharing the class's own printed title, and so the same slug/id/path.
+  This guard's exemption for it is belt-and-braces, for a claim that
+  survives release for any reason (a segment stamped by an older `segment`
+  run, or a claim restored by hand): without it, the class's own claim on
+  that path would be wrongly refused as a collision and the class could
+  never be extracted. Every path that passes all these checks is MOVED
+  (`os.replace`, same filesystem, a rename not a copy) from its staging
+  location to its destination, which then has its own `extraction`
+  overwritten with the authoritative `{tier, model, segment_id, timestamp}`
+  (B5 follow-up 3), and (B6 follow-up) its `pages` and `book_id`
+  overwritten with the segment's own `pages` (PDF page indices) and
+  `book_id` -- see `_overwrite_authoritative_fields`; `model` is whatever
+  `owlsperch queue next` recorded on the segment at selection time, not
+  whatever placeholder the subagent wrote. The DESTINATION path is then
+  merged into the segment's `pending_records` (not `records` --
+  `owlsperch validate` promotes a path once the record actually conforms),
+  `claim_tier` is stamped to the segment's current `tier` (batch
+  B10c-mand4 -- only when at least one path was actually accepted, so a
+  reply that claims nothing doesn't overwrite a real earlier claim; see
+  `owlsperch.validate.runner` for why this is needed), and `status` goes
+  back to `"pending"` so validate can run. Whatever
+  happens, the segment's whole `staging/<book_id>/<seg_id>/` directory is
+  removed once this reply has been fully handled (every branch above, not
+  just this one) -- a subagent's staged files are scratch space for one
+  attempt, never meant to outlive it.
 
 Anything else (invalid JSON, not an object, missing `records`/`no_content`/
 `seg_id`, a `seg_id` that doesn't match the segment being completed, wrong
@@ -93,21 +122,32 @@ Every branch that doesn't move the segment to `human/` clears
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import (
+    destination_rel_path_for_staged,
     find_segment_path,
     finish_after_failure,
     move_segment_to_human,
     now_iso,
     resolve_record_path_under_book,
+    resolve_staged_record_path,
+    staging_records_root,
 )
 from owlsperch.queue.ladder import TIER_MODELS, record_failure
 from owlsperch.segment.runner import Segment
+
+#: Sentinel "owner" name for a `record_path_collision` triggered by a
+#: destination file that exists but won't parse as JSON (check (d) in the
+#: module docstring) -- there's no real segment id to name, but it must
+#: still refuse to clobber the file rather than silently overwrite it.
+_UNPARSEABLE_DESTINATION_OWNER = "<unparseable-existing-record>"
 
 
 class QueueError(Exception):
@@ -224,11 +264,41 @@ def _merge_notes(existing: list[str], new: list[str]) -> list[str]:
     return list(dict.fromkeys([*existing, *new]))
 
 
-def _is_valid_record_path(data_dir: Path, book_id: str, record_path: str) -> bool:
+def _resolve_claimed_staged_path(
+    data_dir: Path, book_id: str, seg_id: str, record_path: str, staging_root: Path
+) -> tuple[Path, str] | None:
     """Whether `record_path` (as claimed by a subagent) resolves inside
-    `records/<book_id>/` under `data_dir` and exists on disk."""
-    candidate = resolve_record_path_under_book(data_dir, book_id, record_path)
-    return candidate is not None and candidate.is_file()
+    `seg_id`'s own staging records root, exists on disk there, and
+    translates to a well-formed destination -- `(staged_path, dest_rel)` if
+    so, `None` otherwise (a bare `records/<book_id>/...` claim included --
+    batch B10c-mand4 accepts staging paths only)."""
+    staged = resolve_staged_record_path(data_dir, book_id, seg_id, record_path)
+    if staged is None or not staged.is_file():
+        return None
+    dest_rel = destination_rel_path_for_staged(staging_root, staged, book_id)
+    if dest_rel is None:
+        return None
+    return staged, dest_rel
+
+
+def _segment_is_superseded(data_dir: Path, book_id: str, seg_id: str) -> bool:
+    """Whether `seg_id` (found under `segments/<book_id>/` or
+    `human/<book_id>/`) itself carries a non-empty `superseded_by` --
+    mirrors `_record_path_owners`'s batch B10c-mand2 exemption, applied here
+    to a destination file's own `extraction.segment_id` (check (d) in the
+    module docstring) rather than the segment index, so a class segment can
+    still claim a destination path a superseded segment's file happens to
+    still name. A missing or unparseable segment file is not superseded."""
+    for base in ("segments", "human"):
+        path = data_dir / base / book_id / f"{seg_id}.json"
+        if path.is_file():
+            try:
+                raw = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return False
+            superseded_by = raw.get("superseded_by") if isinstance(raw, dict) else None
+            return isinstance(superseded_by, str) and bool(superseded_by)
+    return False
 
 
 def _overwrite_authoritative_fields(
@@ -252,9 +322,8 @@ def _overwrite_authoritative_fields(
     `pages` instead of the PDF index despite explicit prompt instructions,
     which fails validate's page-within-segment-span check; the pipeline
     already knows the correct values, so it doesn't need the model to get
-    them right). Runs only for a path that already passed
-    `_is_valid_record_path`, so it's known to resolve inside
-    `records/<book_id>/` and exist."""
+    them right). Runs only for a path already moved into place at
+    `record_path` (under `records/<book_id>/`), so it's known to exist."""
     path = data_dir / record_path
     record: dict[str, Any] = json.loads(path.read_text())
     record["extraction"] = {
@@ -340,6 +409,21 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
         raise QueueError(f"unknown segment '{seg_id}' (no segments/*/{seg_id}.json found)")
 
     segment = Segment.model_validate_json(path.read_text())
+    book_id = segment.book_id
+    try:
+        return _complete_segment_body(
+            seg_id, result_text, segment=segment, path=path, data_dir=data_dir
+        )
+    finally:
+        # The whole reply has now been handled (whichever branch below it
+        # took) -- this segment's staged files are scratch space for one
+        # attempt and must never outlive it.
+        shutil.rmtree(data_dir / "staging" / book_id / seg_id, ignore_errors=True)
+
+
+def _complete_segment_body(
+    seg_id: str, result_text: str, *, segment: Segment, path: Path, data_dir: Path
+) -> CompleteOutcome:
     segment.in_progress_since = None
 
     parsed, error = _parse_result(result_text, seg_id)
@@ -391,38 +475,71 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
         return CompleteOutcome(seg_id=seg_id, outcome="no_content", detail=reason)
 
     records: list[str] = parsed["records"]
-    valid_paths: list[str] = []
+    staging_root = staging_records_root(data_dir, segment.book_id, segment.seg_id).resolve()
+    valid_entries: list[tuple[str, Path, str]] = []  # (claimed, staged_path, dest_rel)
     invalid_paths: list[str] = []
     for record_path in records:
-        if _is_valid_record_path(data_dir, segment.book_id, record_path):
-            valid_paths.append(record_path)
-        else:
+        resolved = _resolve_claimed_staged_path(
+            data_dir, segment.book_id, segment.seg_id, record_path, staging_root
+        )
+        if resolved is None:
             invalid_paths.append(record_path)
+        else:
+            staged, dest_rel = resolved
+            valid_entries.append((record_path, staged, dest_rel))
 
-    # A path that resolves and exists may still be owned by a DIFFERENT
-    # segment -- only build the (~1500-file, for phb1) ownership index when
-    # there's at least one candidate worth checking, so a no_content/
-    # needs_context/proposed_type reply never pays for this scan.
+    # A path that resolves and exists in staging may still collide with a
+    # destination owned by someone else -- only build the (~1500-file, for
+    # phb1) ownership index when there's at least one candidate worth
+    # checking, so a no_content/needs_context/proposed_type reply never pays
+    # for this scan.
     colliding: list[tuple[str, str]] = []
-    if valid_paths:
+    if valid_entries:
         owners = _record_path_owners(data_dir, segment.book_id, segment.seg_id)
-        still_valid: list[str] = []
-        for record_path in valid_paths:
-            resolved = resolve_record_path_under_book(data_dir, segment.book_id, record_path)
-            owner = owners.get(resolved) if resolved is not None else None
+        still_valid: list[tuple[str, Path, str]] = []
+        for record_path, staged, dest_rel in valid_entries:
+            dest_abs = resolve_record_path_under_book(data_dir, segment.book_id, dest_rel)
+            owner = owners.get(dest_abs) if dest_abs is not None else None
+            if owner is None and dest_abs is not None and dest_abs.is_file():
+                # Check (d): the destination already exists (even though no
+                # LIVE segment's index claims it) -- refuse to clobber it
+                # unless it's our own prior write (a retry) or its owning
+                # segment has since been superseded.
+                try:
+                    existing = json.loads(dest_abs.read_text())
+                except (json.JSONDecodeError, OSError):
+                    owner = _UNPARSEABLE_DESTINATION_OWNER
+                else:
+                    existing_extraction = (
+                        existing.get("extraction") if isinstance(existing, dict) else None
+                    )
+                    existing_seg = (
+                        existing_extraction.get("segment_id")
+                        if isinstance(existing_extraction, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(existing_seg, str)
+                        and existing_seg != segment.seg_id
+                        and not _segment_is_superseded(data_dir, segment.book_id, existing_seg)
+                    ):
+                        owner = existing_seg
             if owner is not None:
-                colliding.append((record_path, owner))
+                colliding.append((dest_rel, owner))
             else:
-                still_valid.append(record_path)
-        valid_paths = still_valid
+                still_valid.append((record_path, staged, dest_rel))
+        valid_entries = still_valid
 
     # Extraction provenance is authoritative from here, not whatever
     # (possibly placeholder) values the subagent put in its own record.
     model = segment.model if segment.model is not None else TIER_MODELS["haiku"]
-    for record_path in valid_paths:
+    for _claimed, staged, dest_rel in valid_entries:
+        dest = data_dir / dest_rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staged, dest)
         _overwrite_authoritative_fields(
             data_dir,
-            record_path,
+            dest_rel,
             tier=segment.tier,
             model=model,
             segment_id=segment.seg_id,
@@ -431,13 +548,15 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
         )
 
     merged = list(segment.pending_records)
-    for record_path in valid_paths:
-        if record_path not in merged:
-            merged.append(record_path)
+    for _claimed, _staged, dest_rel in valid_entries:
+        if dest_rel not in merged:
+            merged.append(dest_rel)
     segment.pending_records = merged
+    if valid_entries:
+        segment.claim_tier = segment.tier
 
     errors = [f"missing_record_path: {p}" for p in invalid_paths] + [
-        f"record_path_collision: {p} is owned by segment {owner}" for p, owner in colliding
+        f"record_path_collision: {dest} is owned by segment {owner}" for dest, owner in colliding
     ]
     if errors:
         result = record_failure(segment, errors, kind="malformed")
@@ -446,11 +565,11 @@ def complete_segment(seg_id: str, result_text: str, *, data_dir: Path) -> Comple
         segment.status = "pending"
         atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
 
-    detail = f"{len(valid_paths)} record(s) claimed"
+    detail = f"{len(valid_entries)} record(s) claimed"
     if invalid_paths:
         detail += f", {len(invalid_paths)} invalid path(s)"
     if colliding:
         detail += f", {len(colliding)} collision(s): " + "; ".join(
-            f"{p} owned by {owner}" for p, owner in colliding
+            f"{dest} owned by {owner}" for dest, owner in colliding
         )
     return CompleteOutcome(seg_id=seg_id, outcome="pending_records", detail=detail)

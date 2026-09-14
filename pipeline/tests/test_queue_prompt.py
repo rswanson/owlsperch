@@ -122,9 +122,31 @@ def test_prompt_contains_absolute_output_directory(tmp_path: Path) -> None:
         segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
     )
 
-    expected_dir = (data_dir / "records" / "phb1" / "spell").resolve()
+    expected_dir = (data_dir / "staging" / "phb1" / "phb1-p0257-04" / "records" / "spell").resolve()
     assert str(expected_dir) in text
     assert expected_dir.is_absolute()
+
+
+def test_prompt_example_reply_records_path_is_a_staging_path(tmp_path: Path) -> None:
+    """AC12: the '## How to respond' example reply's `records` entry must be
+    the data-dir-relative *staging* path, not the old direct
+    `records/<book_id>/<kind_hint>/<slug>.json` shape -- so a reverted
+    `example_result` f-string in prompt.py fails this test."""
+    data_dir = tmp_path / "data"
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    expected_example_path = (
+        f"staging/{segment.book_id}/{segment.seg_id}/records/{segment.kind_hint}/<slug>.json"
+    )
+    assert expected_example_path in text
+    # The old, pre-staging example path must not appear anywhere.
+    old_example_path = f"records/{segment.book_id}/{segment.kind_hint}/<slug>.json"
+    assert old_example_path not in text
 
 
 def test_prompt_contains_exact_response_contract(tmp_path: Path) -> None:
@@ -447,7 +469,7 @@ def test_prompt_procedure_section_instructs_write_then_read_back(tmp_path: Path)
         segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
     )
 
-    expected_dir = (data_dir / "records" / "phb1" / "spell").resolve()
+    expected_dir = (data_dir / "staging" / "phb1" / "phb1-p0257-04" / "records" / "spell").resolve()
 
     # Rendered near the top, before the segment text / schemas, so a reader
     # cannot miss it.
@@ -714,8 +736,8 @@ def test_prompt_table_writing_convention_prints_both_output_dirs(tmp_path: Path)
         segment, data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
     )
 
-    feat_dir = (data_dir / "records" / "phb1" / "feat").resolve()
-    table_dir = (data_dir / "records" / "phb1" / "table").resolve()
+    feat_dir = (data_dir / "staging" / "phb1" / "phb1-p0257-04" / "records" / "feat").resolve()
+    table_dir = (data_dir / "staging" / "phb1" / "phb1-p0257-04" / "records" / "table").resolve()
     assert "### Tables belonging to this entity" in text
     assert str(feat_dir) in text
     assert str(table_dir) in text

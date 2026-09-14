@@ -235,6 +235,16 @@ class Segment(BaseModel):
     #: `[]`), since `Segment` is `extra="forbid"` and this field has a
     #: default.
     released_records: list[ReleasedRecord] = []
+    #: Batch B10c-mand4: the tier this segment's current `pending_records`
+    #: claim was registered at, stamped by `owlsperch queue complete` when it
+    #: accepts record paths. `owlsperch validate`'s group write-back uses it
+    #: as the attempt tier when NO failing record in the group carries a
+    #: readable `extraction.tier` of its own (the `missing_record_path` case
+    #: -- the file isn't there to read one from), so re-validating an
+    #: unchanged segment stays idempotent instead of walking the ladder once
+    #: per run. `None` for a segment that has never had a claim accepted
+    #: (and for every segment written before this field existed).
+    claim_tier: str | None = None
 
 
 @dataclass

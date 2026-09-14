@@ -55,10 +55,36 @@ marks a swallowed `rules_section`/`table` record `canonical = 0` with
 `superseded_by` set (excluding a class's own owned table); and `web/`
 renders a class/prestige_class record as a structured page (header facts,
 description, skills, proficiency, the progression table, features, and a
-live Spells section) instead of the generic field-groups body. CI.
-Everything else is a future-batch stub (`check-completeness`, `coverage`,
-`schema review`, `sample`, and `web/`'s own `/tools/*` routes from spec
-4.10).
+live Spells section) instead of the generic field-groups body. Batch
+B10c-mand4 fixes four pipeline data-integrity defects the B10c class-
+quality judgement surfaced: `validate` writes each segment back exactly
+once per run, atomically, for every record it owns
+(`validate_record_files`) instead of once per record in file-discovery
+order, so a passing
+sibling record (e.g. a class's owned level table) can no longer silently
+overwrite a failing sibling's (the class record's own) escalation with
+`status: "done"`; a subagent's `queue complete` record claims must now
+resolve inside that segment's own private `staging/<book_id>/<seg_id>/
+records/<type>/` directory (`owlsperch.queue.prompt` tells it to write
+there, never directly to the shared `records/<book_id>/`), so two
+segments' subagents can no longer race on the same shared file before
+`queue complete`'s ownership guard ever runs -- `queue complete` is the
+only thing that moves an accepted file into `records/<book_id>/`, and only
+after checking the destination isn't already owned by a different, still-
+live segment; and `build-db` reports (and, with `--strict`, fails on) any
+`table` record whose `parent_record` names an id that never made it into
+`records`, since such a table previously rendered in `/browse/table` with
+no warning while its owning record 404s; and a follow-up ladder-
+idempotency defect this review left open -- a group failure with no
+failing record's own `extraction.tier` to read (the pure
+`missing_record_path` case) fell back to the segment's current `tier`,
+which the *previous* run had just advanced, so re-validating an
+unchanged segment walked the escalation ladder once per run -- is fixed
+by a new `Segment.claim_tier` field (see `pipeline/owlsperch/validate/
+runner.py` below) that anchors the attempt tier to something stable
+across runs instead. CI. Everything else is a
+future-batch stub (`check-completeness`, `coverage`, `schema review`,
+`sample`, and `web/`'s own `/tools/*` routes from spec 4.10).
 
 ### Commands
 
@@ -322,7 +348,45 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   consistency + the page-within-segment-span check (segment looked up by
   `extraction.segment_id`), prints PASS/FAIL (or `--json`/`--stale`), and
   writes the outcome back to the originating segment (via the `Segment`
-  model) idempotently. Bumping a type's `schema_version` in
+  model) idempotently -- batch B10c-mand4: `validate_record_files` checks
+  every record file in one run first (`_check_record_file`, pure, no
+  writes), then groups the results by `(book_id, segment_id)` and writes
+  each segment back exactly ONCE for its whole group (`_write_back_group`):
+  any FAIL in the group (or a `pending_records` claim this run's discovery
+  never found at all, `missing_record_path: <p>`) fails the WHOLE group --
+  one combined `record_failure` attempt, every group path dropped from
+  `pending_records`, and any of them that was a live claim there and never
+  reached `records` deleted from disk -- otherwise every passing path is
+  promoted and the segment is `done`/`validated` only once
+  `pending_records` is left empty. This is what stops a passing sibling
+  record (e.g. a class's owned level table) from silently overwriting a
+  failing sibling's (the class record's own) escalation, which is what
+  buried 4 of 11 PHB classes before this fix. The group failure's own
+  ladder-attempt `tier` is, in order: the first failing record's own
+  `extraction.tier`; else the segment's `claim_tier` (a new `Segment`
+  field, stamped by `owlsperch queue complete` to the segment's current
+  `tier` whenever a reply actually claims at least one record path, and
+  cleared by `queue reset --hard`); else the segment's current `tier`. The
+  middle rung fixes a ladder-idempotency defect the B10c-mand4 review left
+  open: a group whose only problem is a `missing_record_path` has no file
+  on disk to read an `extraction.tier` from, and falling straight back to
+  the segment's *current* `tier` picked up whatever tier the *previous*
+  run had just advanced it to -- so re-validating an entirely unchanged
+  segment walked the escalation ladder once per `validate` run instead of
+  recording one idempotent repeat, eventually exhausting opus and landing
+  the segment in `human/` with zero new extraction attempts. `claim_tier`
+  is stable across runs (only `queue complete` moves it), so this stays
+  idempotent; `owlsperch.queue.ladder`'s own stale-attempt guard (see its
+  module docstring) is what stops the ladder from moving once the group's
+  first real failure has already advanced it past `claim_tier`. A real
+  `$OWLSPERCH_DATA` segment written before this field existed has no
+  `claim_tier` (`None`) and still falls back to its current `tier`, same as
+  before this fix, until it next goes through `queue complete` or a
+  `queue reset --hard`. `validate_record_file` is
+  kept as a single-record convenience wrapper around it; a caller checking
+  several files that might share a segment (`run_validate`,
+  `owlsperch.queue.driver`) must call `validate_record_files` directly with
+  the whole list, or it loses this atomicity. Bumping a type's `schema_version` in
   `schemas/registry.json` requires following up with `uv run owlsperch
   validate <book_id|all> --bump-compatible` against the data dir --
   otherwise every older record stays stale, `owlsperch build-db` skips all
@@ -430,6 +494,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   than `null` -- envelope build-time keys may simply be omitted), the output
   contract including `needs_context`/`proposed_type`, and
   `extraction.model` from `--model`) to `prompts/<book_id>/<seg_id>.md`.
+  Batch B10c-mand4: every output directory the prompt shows a subagent (its
+  own `output_dir` and, for a non-`table` kind, the "Tables belonging to
+  this entity" convention's second directory) is that segment's own
+  private staging tree (`owlsperch.queue.common.staging_records_root` --
+  `staging/<book_id>/<seg_id>/records/<type>/`), never
+  `records/<book_id>/<type>/` directly, with one added sentence in the
+  output contract explaining that `queue complete` moves an accepted file
+  from there into the shared records directory itself.
   `pipeline/tests/test_queue_prompt.py` carries a per-registered-kind
   prompt-coverage guard (`_prompt_coverage_failures`, B10 retrospective
   proposal 9): it renders a prompt for every type in `schemas/registry.json`
@@ -442,8 +514,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   (ids must exist under `segments/<book_id>/`) merges into
   `context_seg_ids` and retries the same tier once before escalating;
   `no_content` marks the segment done; otherwise `records` ->
-  `pending_records` after checking each path resolves inside
-  `records/<book_id>/`, exists on disk, AND (B10 mandated follow-up) is not
+  `pending_records` after checking each claimed path (batch B10c-mand4)
+  resolves inside THIS segment's own staging records root
+  (`resolve_staged_record_path`) and exists on disk there, and translates
+  to a well-formed `<type>/<file>.json` destination
+  (`destination_rel_path_for_staged` -- `records/<book_id>/<type>/
+  <file>.json`; a bare `records/<book_id>/...` claim, with no staging
+  prefix, is now `missing_record_path` too), and that DESTINATION is not
   already owned by a *different* segment of the same book --
   `_record_path_owners` scans every `segments/<book_id>/*.json` and
   `human/<book_id>/*.json` file's own `records`/`pending_records` for this,
@@ -455,11 +532,25 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `pipeline/owlsperch/supersede.py` above), most commonly a level table
   sharing its superseding class's own printed title (and so the same
   slug/id/path), and this exemption is belt-and-braces for a claim that
-  survives release for any reason. A missing or colliding
+  survives release for any reason. Additionally (batch B10c-mand4), a
+  destination that already exists is refused if its own
+  `extraction.segment_id` names a different, still-live (not superseded)
+  segment -- catching an orphaned destination no live segment's index
+  claims -- but a destination this same segment already wrote (a retry)
+  may be overwritten. A missing or colliding
   path, like a malformed reply, escalates the segment via
   `ladder.record_failure` (both kinds folded into the one attempt for a
-  single reply), moving it to `human/` if already on opus; a colliding path
-  is left completely untouched on disk. `summary.py` reports per-tier
+  single reply), moving it to `human/` if already on opus; a colliding
+  destination is left completely untouched on disk. Only once every
+  claimed path survives all these checks does `complete.py` actually move
+  anything: `os.replace` (same filesystem, a rename) from staging to
+  destination, then `_overwrite_authoritative_fields` as before. The
+  segment's own `staging/<book_id>/<seg_id>/` directory is removed once
+  the reply has been fully handled, on every branch (records, no_content,
+  needs_context, proposed_type, malformed) -- `pipeline/owlsperch/queue/
+  common.py`'s `staging_records_root`/`resolve_staged_record_path`/
+  `destination_rel_path_for_staged` are the shared staging-path helpers,
+  next to `resolve_record_path_under_book`. `summary.py` reports per-tier
   pass/escalated counts (from both `segments/` and `human/`) plus
   `needs_context_retries`, `human`, and `pending_by_kind`/`pending_by_tier`
   (pending-only, so a wave can be planned without `queue next`);
@@ -609,7 +700,18 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   loaded (B10-mand3 -- the corpus has genuine name/slug collisions across
   segments) is caught as `sqlite3.IntegrityError` around `_insert_record`
   and counted the same way, rather than aborting the whole build. Batch
-  B10b adds four more `records` columns -- `toc_category` (`NOT NULL
+  B10c-mand4 adds a read-only check, run once after every record is loaded
+  and after `_apply_superseding`: `_find_dangling_parents` selects every
+  `tables` row whose `parent_record` names an id that never made it into
+  `records` (missing, invalid, skipped, or superseded away) -- such a
+  table previously rendered fine in `/browse/table` while
+  `GET /records/<type>/<slug>` 404s for the entity it claims to belong to,
+  with no warning anywhere. `BuildResult.dangling_parents` (a
+  `DanglingParent(record_id, parent_record)` list) gets its own "Dangling
+  table parents: N" render line and its own `run_build_db` WARNING (first
+  5, same shape as the skipped-invalid one); `--strict` now also exits 1
+  when there's any dangling parent, in addition to `skipped_invalid > 0`.
+  Batch B10b adds four more `records` columns -- `toc_category` (`NOT NULL
   DEFAULT 'uncategorized'`), `toc_chapter`, `toc_section`, `toc_path` (a
   JSON array) -- derived, per record, from `owlsperch.toc.lookup.load_toc`
   (cached per book_id) and `entry_for_page` against `min(record["pages"])`;

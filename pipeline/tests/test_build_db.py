@@ -699,6 +699,120 @@ def test_build_db_tables_row_round_trips_columns_and_rows_as_json(tmp_path: Path
     assert row["parent_record"] == "rules_section:book:sable-rites"
 
 
+# ---------------------------------------------------------------------------
+# Batch B10c-mand4: a `tables` row whose `parent_record` names an id that
+# never made it into `records` (missing, invalid, skipped, or superseded
+# away) renders fine in `/browse/table` while the entity it claims to
+# belong to 404s -- with no warning at all before this. `BuildResult.
+# dangling_parents` and `run_build_db`'s WARNING line report it.
+# ---------------------------------------------------------------------------
+
+
+def test_build_db_reports_dangling_table_parent(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "table",
+        "table-1-1-sable-ranks",
+        _valid_table_record(parent_record="rules_section:book:never-loaded"),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert len(result.dangling_parents) == 1
+    dangling = result.dangling_parents[0]
+    assert dangling.record_id == "table:book:table-1-1-sable-ranks"
+    assert dangling.parent_record == "rules_section:book:never-loaded"
+
+
+def test_build_db_reports_no_dangling_parent_when_the_owner_loads(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "sable-rites",
+        _rules_section_record(
+            book_id="book", slug="sable-rites", pages=[10], seg_id="book-p0010-01"
+        ),
+    )
+    _write_record(
+        data_dir,
+        "book",
+        "table",
+        "table-1-1-sable-ranks",
+        _valid_table_record(parent_record="rules_section:book:sable-rites"),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert result.dangling_parents == []
+
+
+def test_run_build_db_prints_dangling_parent_warning(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "table",
+        "table-1-1-sable-ranks",
+        _valid_table_record(parent_record="rules_section:book:never-loaded"),
+    )
+
+    out = io.StringIO()
+    err = io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    assert exit_code == 0  # not --strict
+    assert "Dangling table parents: 1" in out.getvalue()
+    err_text = err.getvalue()
+    assert "WARNING: 1 table record(s) name a parent_record that is not loaded" in err_text
+    assert "table:book:table-1-1-sable-ranks -> rules_section:book:never-loaded" in err_text
+
+
+def test_run_build_db_strict_fails_on_dangling_parent_even_with_no_skipped_invalid(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "book",
+        "table",
+        "table-1-1-sable-ranks",
+        _valid_table_record(parent_record="rules_section:book:never-loaded"),
+    )
+
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        strict=True,
+        out=io.StringIO(),
+        err=io.StringIO(),
+    )
+
+    assert exit_code == 1
+
+
 def test_build_db_table_rows_produce_no_record_fields_rows(tmp_path: Path) -> None:
     """The `rows` grid must not also be flattened into `record_fields` --
     that would duplicate its content and defeat the point of the dedicated

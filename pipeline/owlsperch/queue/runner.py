@@ -262,8 +262,9 @@ def run_queue_reset(
     `proposal` cleared (they no longer describe an active segment).
 
     `--hard` additionally clears `attempts`, `pending_records`, `records`,
-    `notes`, `outcome`, `outcome_reason`, and `context_seg_ids` back to
-    empty/`None`, resets `tier` back to haiku, and deletes every record
+    `notes`, `outcome`, `outcome_reason`, `context_seg_ids`, and
+    `claim_tier` back to empty/`None`, resets `tier` back to haiku, and
+    deletes every record
     file named in `records`/`pending_records` (only ones that actually
     resolve under `records/<book_id>/` -- see
     `_delete_record_file_under_book`) -- for fully discarding a trial run's
@@ -296,6 +297,7 @@ def run_queue_reset(
             segment.outcome_reason = None
             segment.proposal = None
             segment.context_seg_ids = []
+            segment.claim_tier = None
             segment.tier = starting_tier(segment.kind_hint)
         elif was_human:
             segment.outcome = None

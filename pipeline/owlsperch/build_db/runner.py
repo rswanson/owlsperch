@@ -105,6 +105,19 @@ precedence (B11) and macro eligibility (B22) are future work.
    exit 1 -- such a record may be perfectly schema-valid, it just belongs
    to a frozen segment.
 
+10. (Batch B10c-mand4) After every record is loaded and after
+    `_apply_superseding`, one query finds every `tables` row whose
+    `parent_record` names an id that never made it into `records` at all
+    (missing entirely, invalid, skipped, or -- see criterion 9 above --
+    superseded away): a table left dangling like this renders fine in
+    `/browse/table` while `GET /records/<type>/<slug>` 404s for the entity
+    it claims to belong to, with no warning anywhere. `run_build_db` prints
+    each as one `WARNING` line (first 5, same shape as the "skipped N
+    invalid record(s)" warning below) naming both ids; `--strict` exits 1
+    when there is any (in addition to `skipped_invalid > 0`), same as that
+    warning. This is purely a read-time report -- no row is loaded
+    differently or dropped because of it.
+
 The whole build writes to a temp file in the same directory as the final
 `db/owlsperch.sqlite` and only then atomically renames it into place
 (`os.replace`), so a server reading the DB mid-build never sees a
@@ -312,6 +325,16 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
 
 
 @dataclass
+class DanglingParent:
+    """One `tables` row whose `parent_record` names an id that never made it
+    into `records` -- see `_find_dangling_parents` and `BuildResult.
+    dangling_parents`."""
+
+    record_id: str
+    parent_record: str
+
+
+@dataclass
 class SkippedRecord:
     """One record skipped as invalid: its path (relative to `$OWLSPERCH_DATA`)
     and the first error that failed it -- either the load/parse error, or
@@ -350,6 +373,11 @@ class BuildResult:
     #: record may well be perfectly schema-valid, so it must never trigger
     #: the "skipped N invalid record(s)" WARNING or `--strict`'s exit 1.
     skipped_superseded: int = 0
+    #: Batch B10c-mand4: every `tables` row whose `parent_record` names an
+    #: id that never made it into `records` (missing, invalid, skipped, or
+    #: superseded away). Purely a read-time report -- nothing about how
+    #: rows are loaded changes because of this.
+    dangling_parents: list[DanglingParent] = field(default_factory=list)
 
     def render(self) -> str:
         lines = ["Records loaded by type:"]
@@ -363,6 +391,7 @@ class BuildResult:
         lines.append(f"Skipped (invalid): {self.skipped_invalid}")
         lines.append(f"Skipped (superseded segment): {self.skipped_superseded}")
         lines.append(f"Superseded (class/prestige_class span): {self.superseded}")
+        lines.append(f"Dangling table parents: {len(self.dangling_parents)}")
         lines.append(f"Books: {self.books}")
         lines.append(f"DB: {self.db_path}")
         return "\n".join(lines)
@@ -666,6 +695,23 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
     return superseded
 
 
+def _find_dangling_parents(conn: sqlite3.Connection) -> list[DanglingParent]:
+    """Batch B10c-mand4: every `tables` row whose `parent_record` names an
+    id that isn't loaded into `records` at all -- run once, after every
+    record is loaded and after `_apply_superseding` (a table's parent could
+    only ever go missing by never loading in the first place; superseding
+    itself never removes a `records` row, only flips `canonical`/
+    `superseded_by`, so ordering relative to it doesn't matter, but running
+    last keeps this a simple final check over the finished tables)."""
+    rows = conn.execute(
+        "SELECT record_id, parent_record FROM tables "
+        "WHERE parent_record IS NOT NULL AND TRIM(parent_record) != '' "
+        "AND parent_record NOT IN (SELECT id FROM records) "
+        "ORDER BY record_id"
+    ).fetchall()
+    return [DanglingParent(record_id=r[0], parent_record=r[1]) for r in rows]
+
+
 def build_db(
     *,
     data_dir: Path | None = None,
@@ -696,6 +742,7 @@ def build_db(
                 conn, data_dir=data_dir, compiled=compiled, result=result, context=context
             )
             result.superseded = _apply_superseding(conn)
+            result.dangling_parents = _find_dangling_parents(conn)
             conn.execute(
                 "INSERT INTO names_fts (rowid, name, aliases, record_id) "
                 "SELECT rowid, name, aliases, record_id FROM records"
@@ -747,6 +794,15 @@ def run_build_db(
             file=err,
         )
 
-    if strict and result.skipped_invalid > 0:
+    if result.dangling_parents:
+        print(
+            f"WARNING: {len(result.dangling_parents)} table record(s) name a "
+            "parent_record that is not loaded:",
+            file=err,
+        )
+        for dangling in result.dangling_parents[:5]:
+            print(f"  {dangling.record_id} -> {dangling.parent_record}", file=err)
+
+    if strict and (result.skipped_invalid > 0 or result.dangling_parents):
         return 1
     return 0

@@ -33,6 +33,21 @@ Default model string ("claude-haiku-4-5") is only ever a placeholder for
 value actually rendered into a prompt's `extraction.model` example is
 whatever the caller passed (or that default), never a generic instruction
 to the subagent to substitute its own name.
+
+Batch B10c-mand4: every output directory this prompt shows a subagent
+(the segment's own `output_dir` and, for a non-`table` kind, the second
+`table` output directory printed by `_table_convention_lines`) is that
+segment's own private STAGING directory
+(`staging/<book_id>/<seg_id>/records/<type>/`, `owlsperch.queue.common.
+staging_records_root`), never `records/<book_id>/<type>/` directly -- two
+concurrent extraction attempts writing into the shared records directory
+is exactly how one subagent's record file used to get silently clobbered
+by another's before a human ever saw either. `owlsperch queue complete`
+moves an accepted staged file into the shared `records/<book_id>/`
+directory itself, once it has checked the destination isn't already owned
+by a different segment (see `owlsperch.queue.complete`); the prompt tells
+the subagent this so it never tries to guess or write directly to the
+shared path.
 """
 
 from __future__ import annotations
@@ -44,6 +59,7 @@ from typing import Any
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.manifest import ManifestEntry, ManifestError, default_manifest_path, load_manifest
 from owlsperch.queue.abbrev import CLASS_ABBREVIATIONS
+from owlsperch.queue.common import staging_records_root
 from owlsperch.schemas import Registry, load_registry
 from owlsperch.segment.runner import Segment
 
@@ -586,7 +602,7 @@ def _kind_rules_lines(kind_hint: str) -> list[str]:
 
 
 def _table_convention_lines(
-    data_dir: Path, book_id: str, kind_hint: str, *, registry: Registry
+    data_dir: Path, book_id: str, seg_id: str, kind_hint: str, *, registry: Registry
 ) -> list[str]:
     """The shared "tables belonging to this entity" convention (criterion
     3): for any kind other than `table` itself, a subagent that finds a
@@ -607,7 +623,7 @@ def _table_convention_lines(
     `table` type still renders a prompt instead of crashing."""
     if kind_hint == "table":
         return []
-    table_output_dir = (data_dir / "records" / book_id / "table").resolve()
+    table_output_dir = (staging_records_root(data_dir, book_id, seg_id) / "table").resolve()
     lines = [
         "### Tables belonging to this entity",
         "",
@@ -687,7 +703,9 @@ def render_prompt(
     prev_seg_id, next_seg_id = _adjacent_seg_ids(data_dir, segment.book_id, segment.seg_id)
 
     registry = load_registry(schemas_dir)
-    output_dir = (data_dir / "records" / segment.book_id / segment.kind_hint).resolve()
+    output_dir = (
+        staging_records_root(data_dir, segment.book_id, segment.seg_id) / segment.kind_hint
+    ).resolve()
     envelope_lines = _render_schema_properties(registry.envelope_schema)
     candidate_lines, schema_version = _render_candidate_schema(segment.kind_hint, registry)
     example_record = _load_example_record(segment.kind_hint, registry)
@@ -705,7 +723,10 @@ def render_prompt(
     example_result = json.dumps(
         {
             "seg_id": segment.seg_id,
-            "records": [f"records/{segment.book_id}/{segment.kind_hint}/<slug>.json"],
+            "records": [
+                f"staging/{segment.book_id}/{segment.seg_id}/records/"
+                f"{segment.kind_hint}/<slug>.json"
+            ],
             "no_content": None,
             "notes": ["free-text notes, e.g. an unnamed_entity note -- [] if none"],
         }
@@ -814,6 +835,14 @@ def render_prompt(
         "",
         f"    {output_dir}",
         "",
+        "This is a staging directory private to this one extraction attempt",
+        "-- it is not the book's shared records directory. Once you reply,",
+        "`owlsperch queue complete` moves each accepted file from here into",
+        "the shared records directory for the book (after checking it isn't",
+        "already owned by a different segment). Write only inside the",
+        "directory shown above (and, for a table record below, the",
+        "directory shown there) -- never anywhere else.",
+        "",
         f"- `id` is `<type>:<book_id>:<slug>`, e.g. `{example_id}`.",
         "- `slug` is the ASCII-folded kebab-case of the entity's `name`,",
         "  VERBATIM in the name's own word order -- never reorder words, not",
@@ -865,7 +894,9 @@ def render_prompt(
         "  for it entirely and report it in `notes` as",
         "  `unnamed_entity: <first 60 chars of its text>`.",
         "",
-        *_table_convention_lines(data_dir, segment.book_id, segment.kind_hint, registry=registry),
+        *_table_convention_lines(
+            data_dir, segment.book_id, segment.seg_id, segment.kind_hint, registry=registry
+        ),
         schema_version_line,
         "- `extraction` is exactly:",
         "",

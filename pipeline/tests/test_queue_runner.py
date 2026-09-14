@@ -310,15 +310,15 @@ def test_run_queue_next_renders_explicit_model_into_prompt(tmp_path: Path) -> No
 def test_run_queue_complete_reads_result_from_file(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     _write_segment(data_dir, "book", "book-p0010-01", status="in_progress")
-    record_dir = data_dir / "records" / "book" / "spell"
-    record_dir.mkdir(parents=True)
-    (record_dir / "fireball.json").write_text("{}")
+    staged_dir = data_dir / "staging" / "book" / "book-p0010-01" / "records" / "spell"
+    staged_dir.mkdir(parents=True)
+    (staged_dir / "fireball.json").write_text("{}")
     result_path = tmp_path / "result.json"
     result_path.write_text(
         json.dumps(
             {
                 "seg_id": "book-p0010-01",
-                "records": ["records/book/spell/fireball.json"],
+                "records": ["staging/book/book-p0010-01/records/spell/fireball.json"],
                 "no_content": None,
                 "notes": "",
             }
@@ -628,6 +628,7 @@ def test_run_queue_reset_hard_clears_state_and_deletes_record_files(tmp_path: Pa
         notes=["a note"],
         outcome="no_content",
         outcome_reason="art",
+        claim_tier="sonnet",
     )
 
     out = io.StringIO()
@@ -644,6 +645,7 @@ def test_run_queue_reset_hard_clears_state_and_deletes_record_files(tmp_path: Pa
     assert segment["notes"] == []
     assert segment["outcome"] is None
     assert segment["outcome_reason"] is None
+    assert segment["claim_tier"] is None
     assert not (record_dir / "fireball.json").exists()
     assert not (record_dir / "icy-bolt.json").exists()
 
@@ -893,10 +895,11 @@ def test_dry_run_next_complete_validate_marks_segment_done(tmp_path: Path) -> No
     selected = json.loads(next_out.getvalue())
     assert len(selected) == 1
 
-    # 2. Fake subagent: writes a valid synthetic record to the expected path.
-    record_dir = data_dir / "records" / "book" / "spell"
-    record_dir.mkdir(parents=True)
-    (record_dir / "fireball.json").write_text(
+    # 2. Fake subagent: writes a valid synthetic record to its own staging
+    # directory (batch B10c-mand4), exactly as the real prompt tells it to.
+    staged_dir = data_dir / "staging" / "book" / "book-p0010-01" / "records" / "spell"
+    staged_dir.mkdir(parents=True)
+    (staged_dir / "fireball.json").write_text(
         json.dumps(_valid_spell_record(seg_id="book-p0010-01"))
     )
     result_path = tmp_path / "result.json"
@@ -904,7 +907,7 @@ def test_dry_run_next_complete_validate_marks_segment_done(tmp_path: Path) -> No
         json.dumps(
             {
                 "seg_id": "book-p0010-01",
-                "records": ["records/book/spell/fireball.json"],
+                "records": ["staging/book/book-p0010-01/records/spell/fireball.json"],
                 "no_content": None,
                 "notes": "found Fireball",
             }

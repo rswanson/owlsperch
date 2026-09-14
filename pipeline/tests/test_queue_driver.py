@@ -133,13 +133,13 @@ def test_dry_run_pass(tmp_path: Path) -> None:
         1,
         {
             "files": {
-                "records/book/spell/fireball.json": _spell_record(
+                "staging/book/book-p0010-01/records/spell/fireball.json": _spell_record(
                     book_id="book", seg_id="book-p0010-01", slug="fireball"
                 )
             },
             "reply": {
                 "seg_id": "book-p0010-01",
-                "records": ["records/book/spell/fireball.json"],
+                "records": ["staging/book/book-p0010-01/records/spell/fireball.json"],
                 "no_content": None,
                 "notes": [],
             },
@@ -181,13 +181,13 @@ def test_dry_run_fail_escalate_twice_then_human(tmp_path: Path) -> None:
             n,
             {
                 "files": {
-                    "records/book/spell/badspell.json": _spell_record(
+                    "staging/book/book-p0020-01/records/spell/badspell.json": _spell_record(
                         book_id="book", seg_id="book-p0020-01", slug="badspell", valid=False
                     )
                 },
                 "reply": {
                     "seg_id": "book-p0020-01",
-                    "records": ["records/book/spell/badspell.json"],
+                    "records": ["staging/book/book-p0020-01/records/spell/badspell.json"],
                     "no_content": None,
                     "notes": [],
                 },
@@ -249,13 +249,13 @@ def test_dry_run_needs_context_merge_then_pass(tmp_path: Path) -> None:
         2,
         {
             "files": {
-                "records/book/spell/mage-armor.json": _spell_record(
+                "staging/book/book-p0030-01/records/spell/mage-armor.json": _spell_record(
                     book_id="book", seg_id="book-p0030-01", slug="mage-armor"
                 )
             },
             "reply": {
                 "seg_id": "book-p0030-01",
-                "records": ["records/book/spell/mage-armor.json"],
+                "records": ["staging/book/book-p0030-01/records/spell/mage-armor.json"],
                 "no_content": None,
                 "notes": [],
             },
@@ -332,13 +332,13 @@ def test_dry_run_second_needs_context_escalates(tmp_path: Path) -> None:
         3,
         {
             "files": {
-                "records/book/spell/shield.json": _spell_record(
+                "staging/book/book-p0040-01/records/spell/shield.json": _spell_record(
                     book_id="book", seg_id="book-p0040-01", slug="shield"
                 )
             },
             "reply": {
                 "seg_id": "book-p0040-01",
-                "records": ["records/book/spell/shield.json"],
+                "records": ["staging/book/book-p0040-01/records/spell/shield.json"],
                 "no_content": None,
                 "notes": [],
             },
@@ -387,13 +387,13 @@ def test_dry_run_stale_in_progress_segment_is_reset_then_processed(tmp_path: Pat
         1,
         {
             "files": {
-                "records/book/spell/light.json": _spell_record(
+                "staging/book/book-p0050-01/records/spell/light.json": _spell_record(
                     book_id="book", seg_id="book-p0050-01", slug="light"
                 )
             },
             "reply": {
                 "seg_id": "book-p0050-01",
-                "records": ["records/book/spell/light.json"],
+                "records": ["staging/book/book-p0050-01/records/spell/light.json"],
                 "no_content": None,
                 "notes": [],
             },
@@ -433,13 +433,13 @@ def test_fixture_exhausted_raises_when_no_more_fixtures_for_a_reselected_segment
         1,
         {
             "files": {
-                "records/book/spell/badspell.json": _spell_record(
+                "staging/book/book-p0060-01/records/spell/badspell.json": _spell_record(
                     book_id="book", seg_id="book-p0060-01", slug="badspell", valid=False
                 )
             },
             "reply": {
                 "seg_id": "book-p0060-01",
-                "records": ["records/book/spell/badspell.json"],
+                "records": ["staging/book/book-p0060-01/records/spell/badspell.json"],
                 "no_content": None,
                 "notes": [],
             },
@@ -527,13 +527,13 @@ def test_run_queue_run_dry_run_prints_summary(tmp_path: Path) -> None:
         1,
         {
             "files": {
-                "records/book/spell/flare.json": _spell_record(
+                "staging/book/book-p0070-01/records/spell/flare.json": _spell_record(
                     book_id="book", seg_id="book-p0070-01", slug="flare"
                 )
             },
             "reply": {
                 "seg_id": "book-p0070-01",
-                "records": ["records/book/spell/flare.json"],
+                "records": ["staging/book/book-p0070-01/records/spell/flare.json"],
                 "no_content": None,
                 "notes": [],
             },
