@@ -424,6 +424,12 @@ _CLASS: dict[str, Any] = {
             },
             {"name": "Bonus Feat", "level": 3, "text_md": ""},
         ],
+        "description_sections": [
+            {
+                "heading": "Adventures",
+                "text_md": "A fixture mage adventures to stress-test the extraction pipeline.",
+            }
+        ],
         "weapon_and_armor_proficiency": (
             "A fixture mage is proficient with all simple weapons, but not with any armor."
         ),
@@ -434,7 +440,7 @@ _CLASS: dict[str, Any] = {
     "variant_of": None,
     "applied_overrides": [],
     "macro_eligible": False,
-    "schema_version": 1,
+    "schema_version": 2,
     "extraction": {
         "tier": "sonnet",
         "model": "fixture",
@@ -463,11 +469,12 @@ _CLASS_TABLE: dict[str, Any] = {
             "Ref Save",
             "Will Save",
             "Special",
+            "Spells per Day 1st",
         ],
         "rows": [
-            ["1st", "+0", "+0", "+0", "+2", "Arcane bond"],
-            ["2nd", "+1", "+0", "+0", "+3", "-"],
-            ["3rd", "+1", "+1", "+1", "+3", "Bonus feat"],
+            ["1st", "+0", "+0", "+0", "+2", "Arcane bond", "1"],
+            ["2nd", "+1", "+0", "+0", "+3", "-", "2"],
+            ["3rd", "+1", "+1", "+1", "+3", "Bonus feat", "3"],
         ],
         "parent_record": "class:fixture-book:fixture-mage",
     },
