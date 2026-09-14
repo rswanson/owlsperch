@@ -3,7 +3,7 @@
   "$id": "https://owlsperch.dev/schemas/class.json",
   "title": "Class fields",
   "description": "The `fields` object of a base-class record, per spec 4.6 and batch B10c.",
-  "version": 1,
+  "version": 2,
   "type": "object",
   "properties": {
     "hit_die": {
@@ -154,5 +154,24 @@
     "class_features",
     "source_pages"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "class_type": { "const": "base" } }, "required": ["class_type"] },
+      "then": {
+        "required": [
+          "class_skills",
+          "skill_points",
+          "alignment",
+          "description_sections",
+          "weapon_and_armor_proficiency"
+        ],
+        "properties": {
+          "alignment": { "type": "string" },
+          "weapon_and_armor_proficiency": { "type": "string" },
+          "description_sections": { "minItems": 1 }
+        }
+      }
+    }
+  ]
 }
