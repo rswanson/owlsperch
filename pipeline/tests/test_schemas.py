@@ -194,8 +194,8 @@ def test_load_skills_returns_the_committed_skill_list() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _minimal_class_fields(**overrides: object) -> dict:
-    fields: dict = {
+def _minimal_class_fields(**overrides: object) -> dict[str, object]:
+    fields: dict[str, object] = {
         "hit_die": "d6",
         "class_type": "base",
         "max_level": 3,

@@ -414,7 +414,7 @@ def _heading_matches_title(text: str, title: str) -> bool:
     return a == b or a == b + "s" or b == a + "s"
 
 
-def _class_start_index(paragraphs: list[Paragraph], span: "_ClassSpan") -> int | None:
+def _class_start_index(paragraphs: list[Paragraph], span: _ClassSpan) -> int | None:
     """The paragraph index this class span's own text should start at (Part
     1, B10c-mand3): the first paragraph on the span's own toc start page
     whose text matches the span's heading (see `_heading_matches_title`);

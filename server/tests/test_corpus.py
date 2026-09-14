@@ -199,9 +199,7 @@ def test_all_eleven_phb1_classes_are_extracted_and_validated() -> None:
         spellcasting = record["fields"].get("spellcasting")
         if spellcasting is not None:
             columns = table["fields"]["columns"]
-            assert any(
-                isinstance(c, str) and _SPELL_COLUMN_RE.search(c) for c in columns
-            ), (
+            assert any(isinstance(c, str) and _SPELL_COLUMN_RE.search(c) for c in columns), (
                 f"{name}: spellcasting is set but level_table {level_table_id!r} has no "
                 f"spells-per-day/known column (columns: {columns!r})"
             )
