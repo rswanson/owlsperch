@@ -876,21 +876,33 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   full stat block fields grouped per hints.
 - **Touches:** `schemas/`, validators, skill prompt, `server/`, `web/`.
 
-## B13: Class, prestige class, race, skill, equipment, magic item types
+## B13: Race, skill, equipment, magic item types
 - **Status:** pending
-- **User-visible outcome:** those six types are searchable and browsable;
-  class pages show their level tables; magic items filter by slot and price.
+- **Note (added by B10c):** `class`/`prestige_class` were pulled forward
+  into batch B10c and are done there (schemas, toc-driven segmentation,
+  extraction rules, data-quality validators, build-db superseding, and the
+  web class page) -- this batch's scope is now the remaining four types
+  only. Each of those four must meet the same quality-gate pattern B10c
+  established: structural, per-field validators with unit tests (not just
+  JSON Schema conformance) PLUS a real-corpus quality gate -- extract a
+  sample, then have an Opus judge spot-check the records against the
+  source pages before the batch is called done (B10c's acceptance
+  criterion 5). Treat B10c's `validate/checks.py` additions (`ValidationContext`,
+  the cross-record lookups, the empty-string-allowed escape hatch for a
+  printed-but-undescribed value) as the reference shape for these types'
+  own validators, not just spell/feat's simpler single-record checks.
+- **User-visible outcome:** those four types are searchable and browsable;
+  magic items filter by slot and price.
 - **Acceptance criteria:**
-  1. Six schema files with fields from spec 4.6 and UI hints; `price`,
+  1. Four schema files with fields from spec 4.6 and UI hints; `price`,
      `cost`, `weight`, `caster_level` stored numeric and rangeable.
-  2. Validators: class has `hit_die` and a `level_table` id that exists;
-     race has six `ability_adjustments` keys (zero allowed); magic_item has
-     numeric `price`; equipment weapons have `damage`.
-  3. Extraction rules per type; class extraction writes the level table as a
-     table record and references it.
-  4. Unit tests per validator.
-- **How to observe:** browser: Magic Items → slot Hands, sort by price;
-  Classes → Wizard shows its level table.
+  2. Validators: race has six `ability_adjustments` keys (zero allowed);
+     magic_item has numeric `price`; equipment weapons have `damage`.
+  3. Extraction rules per type.
+  4. Unit tests per validator, plus the real-corpus quality gate described
+     above (spot-check judge findings recorded in
+     `~/owlsperch-data/notes/process-retro.md`, per B10c's precedent).
+- **How to observe:** browser: Magic Items → slot Hands, sort by price.
 - **Touches:** `schemas/`, validators, skill prompt.
 
 ## B14: Psionic power and lore types

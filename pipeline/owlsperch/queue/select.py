@@ -226,7 +226,8 @@ def select_and_mark(
     "pending"`, `tier == tier`, and whose `kind_hint` is in the resolved
     kind set. `kind=None` (the default, criterion 6) resolves to every
     kind_hint with a registered schema (`set(load_registry(schemas_dir)
-    .types)` -- currently spell/feat/table/rules_section); a kind with no
+    .types)` -- currently spell/feat/table/rules_section/class/
+    prestige_class); a kind with no
     registered schema (e.g. `stat_block`) is then never selected by
     default, so segments a later batch needs aren't burned as
     `no_content`. Pass an explicit `kind` (e.g. `"stat_block"`) to restrict

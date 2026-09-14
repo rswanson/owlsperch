@@ -42,9 +42,23 @@ record-detail table resolution, and web rendering of a record's owned
 tables (see "Architecture" below). Batch B10b reorganizes
 `/browse/rules_section` around each book's own table of contents instead
 of the flat, extractor-guessed `chapter` field (which stops being a facet).
-CI. Everything else is a future-batch stub (`check-completeness`,
-`coverage`, `schema review`, `sample`, and `web/`'s own `/tools/*`
-routes from spec 4.10).
+Batch B10c adds the `class`/`prestige_class` record types: `segment` gains
+a separate, toc-driven pass that turns a book's own class/prestige-class
+toc entries (discriminated from same-chapter non-class sections by a `Hit
+Die: dN` marker) into `class`/`prestige_class` segments starting at the
+sonnet tier, and stamps every other segment their page span swallows as
+`superseded_by` rather than deleting it; `validate` gains a class-specific
+validator suite (level-table row count/columns/BAB/save progressions,
+Special<->class_features reconciliation, class-skill names, and a
+spell_list cross-check against the book's own spell records); `build-db`
+marks a swallowed `rules_section`/`table` record `canonical = 0` with
+`superseded_by` set (excluding a class's own owned table); and `web/`
+renders a class/prestige_class record as a structured page (header facts,
+description, skills, proficiency, the progression table, features, and a
+live Spells section) instead of the generic field-groups body. CI.
+Everything else is a future-batch stub (`check-completeness`, `coverage`,
+`schema review`, `sample`, and `web/`'s own `/tools/*` routes from spec
+4.10).
 
 ### Commands
 
@@ -56,9 +70,16 @@ uv sync                              # install deps (both workspace members)
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
 uv run owlsperch segment <book_id|all> [--force] [--pages A-B]
+  # (batch B10c) also emits toc-driven `class`/`prestige_class` segments
+  # (needs toc/<book_id>.json from `owlsperch toc` first) and stamps every
+  # segment their page span swallows `superseded_by` -- additive, so a
+  # plain (non --force) run is always safe to re-run.
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
 uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json] [--dry-run]
+  # `--kind class`/`--kind prestige_class` resolves to the sonnet tier on
+  # its own (batch B10c: those kinds start above haiku, per
+  # `owlsperch.queue.ladder.STARTING_TIERS`)
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
 uv run owlsperch queue summary <book_id> [--json]
@@ -154,7 +175,27 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the stream once to produce the final segment spans (anchors, plus
   `rules_section` for everything between them, split at headings);
   `runner.py` loads a book's text+meta, calls the splitter, and writes
-  `segments/<book_id>/<seg_id>.json`.
+  `segments/<book_id>/<seg_id>.json`. Batch B10c adds a SEPARATE, toc-driven
+  pass at the end of `segment_book`: if `toc/<book_id>.json` exists, every
+  level >= 2 toc entry whose resolved `category` is `classes`/
+  `prestige-classes` AND whose own pdf pages contain a `Hit Die: dN` marker
+  (the discriminator that tells an actual class entry from a same-chapter
+  section that only talks ABOUT classes, e.g. "Multiclass Characters")
+  becomes a `class`/`prestige_class` segment, id `<book_id>-<kind>-p<NNNN>`
+  (`NNNN` = the entry's own first pdf page -- a form that never collides
+  with the `<book_id>-p<NNNN>-<NN>` ordinal scheme, so it never renumbers
+  existing segments), spanning the entry's own pdf pages extended ONE page
+  past `pdf_page_end` (a class's last column routinely spills onto the page
+  the toc assigns to the next class). Every OTHER segment whose `pages`
+  fall entirely inside that span then gets `superseded_by` stamped in
+  place (not deleted) if not already set. This whole pass is additive and
+  idempotent, which is what makes a plain (non `--force`) `owlsperch
+  segment <book_id>` do the entire job on a book that already has segments:
+  the handful of class segments get written and every existing
+  class-chapter fragment gets stamped, without touching anyone's
+  `records`/`outcome`/`attempts`. A toc-less book gets no class segments at
+  all (reported in the summary), and a `--force` covering a class segment's
+  first page still deletes and recreates it like any other segment.
 
 - `schemas/` (repo root, not under `pipeline/`) -- the single source of truth
   for record types (spec 4.6, 4.14): `envelope.json` is the common record
@@ -185,7 +226,21 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `owlsperch_server.browse`'s `category` facet (for its order and labels).
   `rules_section.json`'s `chapter` field is `x-ui.filterable: false` as of
   B10b -- the derived `toc_chapter` column (see `build_db/` below) is the
-  single source of truth for chapter filtering now.
+  single source of truth for chapter filtering now. Batch B10c adds
+  `class.json`/`prestige_class.json` (`hit_die`, `class_type`, `max_level`,
+  `alignment`, `abbreviation`, `class_skills`, `skill_points`,
+  `bab_progression`, `save_progressions`, `spellcasting` -- omitted
+  entirely for a non-caster, never `null` -- `level_table`,
+  `class_features`, `description_sections`,
+  `weapon_and_armor_proficiency`, `source_pages`, plus `requirements` on
+  the prestige schema only) and `schemas/skills.json` -- a committed,
+  plain (non-JSON-Schema) list of the 36 3.5e skill names, loaded by a new
+  `owlsperch.schemas.load_skills` beside `load_categories` and used by
+  `validate/checks.py`'s class-skill check. `categories.json` gains a
+  `prestige-classes` category (right after `classes`), and
+  `owlsperch.toc.categories` gets a `Prestige Class(es)` pattern tried
+  BEFORE the generic `Classes` one, so a prestige-class chapter/section
+  resolves to `prestige-classes` instead.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -206,7 +261,33 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   validate <book_id|all> --bump-compatible` against the data dir --
   otherwise every older record stays stale, `owlsperch build-db` skips all
   of them, and `server/tests/test_corpus.py` fails (or skips, naming this
-  command) until the migration is run.
+  command) until the migration is run. Batch B10c adds a `ValidationContext`
+  dataclass (`record_by_id`, `spell_list_classes`) for the checks that need
+  a cross-record lookup a single-record check can't do alone -- `checks.py`
+  itself stays I/O-free (`NULL_CONTEXT` is the no-lookup default);
+  `validate/runner.py`'s `build_validation_context(data_dir)` builds the
+  real, disk-backed one (`record_by_id` parses `<type>:<book_id>:<slug>`
+  into a records path; `spell_list_classes` scans a book's own spell
+  records once, memoized) and both `validate_record_file` and
+  `owlsperch.build_db.runner` thread it through `validate_record`. The
+  class/`prestige_class` checks this feeds (`TYPE_CONTEXT_CHECKS`,
+  `check_class_fields`): `hit_die` in the valid set; `level_table` resolves
+  to a real `table` record cross-linked both ways; that table's row
+  count/Level column matches `max_level`; its Base-Attack-Bonus and save
+  columns match the class's own declared progressions (normalizing every
+  dash glyph and stray space in a cell before comparing); every
+  Special-column entry (split on commas, parentheticals like `(Ex)`
+  stripped) matches a `class_features[].name` by prefix, and vice versa
+  every feature's `level` appears in the table -- EXCEPT `class_features
+  [].text_md` may be the empty string, so a Special entry the book prints
+  with no description of its own (e.g. PHB's Barbarian "Bonus Feat") is
+  recorded rather than forcing an endless escalation; `class_skills[]
+  .skill` (trailing parentheticals stripped) must be a name from the
+  committed `schemas/skills.json` list; `spellcasting.spell_list`, when
+  present, must match a real `levels[].class` value from the book's own
+  spell records -- but is skipped entirely (not failed) when the book has
+  no spell records loaded yet, since that's simply not extracted yet, not
+  wrong.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -329,7 +410,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   -- a short Claude-Code-facing loop over these commands plus Agent-tool
   subagent launches, using whatever tier `queue next` returns per item; all
   the logic that can be unit tested lives in `queue/` instead of the skill
-  doc.
+  doc. Batch B10c adds `ladder.STARTING_TIERS` (`{"class": "sonnet",
+  "prestige_class": "sonnet"}`) and `starting_tier(kind)`, which
+  `segment/runner.py` uses instead of a flat `SEGMENT_TIER` constant when
+  writing a fresh segment of any kind -- a class/prestige_class entry (a
+  level table plus several structured sub-objects) is reliably too complex
+  for haiku on a first attempt, so it starts one rung up; everything else
+  still starts at haiku. A segment with `superseded_by` set is frozen:
+  `select.py`'s stale-reset/lazy-escalation heal pass and its selection
+  filter both skip it outright (never reset, never escalated, never
+  selected), and `summary.py` excludes it from `pending`/`pending_by_kind`/
+  `pending_by_tier` while reporting a separate `superseded` count.
 
 - `pipeline/owlsperch/toc/` -- the `toc` subcommand (batch B10b): `parser.py`
   scans pdf pages 1-12 of `text/<book_id>/` for a page with >= 3
@@ -422,6 +513,19 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `uncategorized`/`NULL` for all of them plus exactly one `WARNING` line on
   stderr naming `uv run owlsperch toc <book_id> --force` (plain `owlsperch
   toc <book_id>` is a no-op once an, even empty, toc file already exists).
+  Batch B10c adds a `superseded_by TEXT` column to `records` and a second
+  pass run once every record is loaded (`_apply_superseding`): for every
+  `class`/`prestige_class` record, `fields.source_pages` (falling back to
+  `min(pages)..max(pages)`) gives its whole entry's pdf page span, and
+  every `rules_section`/`table` record of the SAME book whose own `pages`
+  fall entirely inside that span gets `canonical = 0`/`superseded_by =
+  <class id>` set -- EXCEPT a `table` owned by some class in that book
+  (its id in that class's own `tables` array, or its own
+  `fields.parent_record` naming a class/prestige_class record), which is
+  never superseded -- otherwise a class's own progression table would
+  disappear from its own page (the most likely bug this pass could have).
+  A record already superseded by an earlier class is left alone. Printed
+  as one informational line (never a WARNING -- superseding is expected).
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be
@@ -489,7 +593,20 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   validates the file header lazily) answers 503 with a distinct "database
   unreadable" detail naming the same rebuild command, via the `_query_db`
   helper every data endpoint routes its DB work through; `/health` and
-  `/schemas` don't touch the database and always answer normally.
+  `/schemas` don't touch the database and always answer normally. Batch
+  B10c relaxes `/records/{type}/{slug}` to also resolve a superseded
+  (`canonical = 0`) record when no canonical row matches, adding
+  `superseded_by` (`null` otherwise) to the response body -- `/search`,
+  `/records/{type}`, and `/facets/{type}` stay canonical-only (already
+  true via their existing `canonical = 1` clauses; nothing needed there).
+  `browse.py`'s `FilterableField` gains a `combined` flag: a filterable
+  field typed `object` (not array-of-object), e.g. class `spellcasting`,
+  now derives per-sub-property filters/facets the same way an
+  array-of-object field's items do, but `combined` stays `False` for it
+  since `build_db.runner.flatten_fields` writes no *combined*
+  `record_fields` row for a plain dict -- every sub-param for it always
+  goes through its own `<parent>.<sub>` key, never the array-of-object
+  cross-product path.
 - `pipeline/owlsperch/dev.py` -- the `dev` subcommand (spec 4.10, batch B7):
   `build_dev_commands` decides what to run (`python -m owlsperch serve`,
   then `npm run dev` in `web/`) and where; `run_dev` spawns both as child
@@ -512,7 +629,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   (Magic pdf 1-2, Combat pdf 3-3, Equipment pdf 4-4), each with one
   level-2 section -- so "Grapple Ranks" resolves to category combat and
   "Hauling Gear" to equipment, giving the web tree two populated branches
-  for the tree Playwright spec's flow C) into `<dir>` and builds
+  for the tree Playwright spec's flow C; plus, since batch B10c, an
+  invented class ("Fixture Mage") with a 3-row level table it owns, two
+  class features (one with an empty `text_md`), and
+  `spellcasting.spell_list: "Wizard"` -- matching one of the `_SPELLS`
+  entries' own `levels[].class` -- so the class Playwright spec's Spells
+  section has a real fixture spell to render) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.
@@ -569,13 +691,39 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   section; `RecordTree` renders nested `<details>/<summary>` groups with
   per-group counts, auto-expanding when exactly one category is selected in
   the URL. `src/components/Layout.tsx`'s header nav lists every registered
-  type EXCEPT `rules_section` from `/schemas`, linking to `/browse/<type>`;
+  type EXCEPT `rules_section` from `/schemas`, linking to `/browse/<type>`
+  (batch B10c: `class`/`prestige_class` are now registered types, so they
+  get "Classes"/"Prestige classes" nav links this way for free);
   batch B10b adds a dedicated "Rules" link (`/browse/rules_section`) plus
   quick links -- fetched once from `/facets/rules_section`'s `category`
-  facet -- for whichever of classes/equipment/skills/races have count > 0,
+  facet -- for whichever of equipment/skills/races have count > 0
+  (`QUICK_LINK_CATEGORIES`; batch B10c drops "classes" from this list --
+  class has its own nav link now, and its rules_section fragments are
+  non-canonical/superseded anyway),
   as `/browse/rules_section?category=<key>`; either fetch failing just
   leaves that part of the nav empty, same defensive pattern as the existing
-  `/schemas` fetch.
+  `/schemas` fetch. Batch B10c adds `src/components/ClassRecord.tsx`,
+  rendered by `RecordPage` in place of the generic `FieldGroups`/`text_md`/
+  `RecordTables` body whenever `record.type` is `class`/`prestige_class`:
+  header facts (hit die, alignment, BAB progression, saves, skill points,
+  requirements), `text_md` (opening overview), `description_sections`,
+  class skills, weapon and armor proficiency, the progression table (the
+  existing `RecordTables` component reused against the already-resolved
+  `record.tables` -- no new table-rendering code), class features (an
+  empty `text_md` renders no body, matching the extraction rule that
+  allows one), and a live Spells section, in that order. The Spells
+  section pages through `GET /records/spell?class=<spell_list>&page_size=
+  200` until every result is collected, groups them by the level parsed
+  out of each item's `facets.levels` -- `/records/spell` items carry
+  `facets` as `{key: [values]}`, and `levels` holds the array-of-object
+  field's COMBINED values (e.g. `"Wizard 3"`), so `levelForClass` looks for
+  the entry starting with `"<spell_list> "` and parses the remainder as the
+  level -- and links each spell to `/r/spell/<slug>`; renders nothing (not
+  an error) when `fields.spellcasting` is absent. `RecordPage` also gains a
+  `superseded_by` notice (any record type, not just class): when set, a
+  short "Superseded by <link>" line renders above the heading, the link
+  target parsed straight out of the id (`<type>:<book_id>:<slug>` ->
+  `/r/<type>/<slug>`) rather than a second fetch.
   `vite.config.ts`'s dev server proxies `/api/*` to the FastAPI server on
   127.0.0.1:8000 (path rewrite strips `/api`) and binds `127.0.0.1`
   explicitly (Node's default `"localhost"` host can resolve to the IPv6
@@ -587,10 +735,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `<table>` below the text), `mobile.spec.ts` (flow A at 400px width),
   (batch B9) `browse.spec.ts` (flow B: nav to Spells, check Cleric/3/
   Conjuration in the facet sidebar, sort by name, open the one matching
-  spell), and (batch B10b) `tree.spec.ts` (flow C: follow the header nav's
+  spell), (batch B10b) `tree.spec.ts` (flow C: follow the header nav's
   "Rules" link, expand Combat and its chapter, open "Grapple Ranks", see
   the breadcrumb; plus a header quick-link into a pre-filtered, auto-
-  expanded category) -- run by `playwright.config.ts`'s `webServer` against
+  expanded category), and (batch B10c) `class.spec.ts` (flow D: nav
+  Classes, open the fixture class, see its progression table and both
+  class features render, click a Spells-section spell link through to the
+  spell page) -- run by `playwright.config.ts`'s `webServer` against
   two freshly started servers: `e2e/serve-fixture.py` (the fixture DB +
   FastAPI, see `fixture_db.py` above) and `npm run dev` (Vite, which
   proxies to it).

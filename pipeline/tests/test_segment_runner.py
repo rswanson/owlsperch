@@ -848,3 +848,63 @@ def test_no_toc_means_no_class_segments(tmp_path: Path) -> None:
     assert _by_kind(segments, "prestige_class") == []
     assert "no toc" in summary.class_note
     assert "no toc" in summary.render()
+
+
+@pytest.mark.corpus
+def test_phb1_real_corpus_class_segments() -> None:
+    """Acceptance criterion 2 (batch B10c): against the real PHB text and
+    its own toc, `segment` finds exactly the 11 base classes and marks
+    every other segment inside a class's span as superseded. Skipped (not
+    failed) without the real corpus or `pdftotext` -- see the sibling spell
+    corpus test above for why. NOTE: the page range below is a generous
+    guess at where PHB 3.5's "Chapter 3: Classes" (plus its own contents
+    pages) falls in the pdf -- widen it if a real run shows the chapter
+    extends past it."""
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir, load_manifest
+    from owlsperch.text.runner import run_text
+    from owlsperch.toc.runner import run_toc
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+
+    entries = load_manifest(default_manifest_path())
+    book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
+    page_range = (1, 80)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        text_exit = run_text(
+            book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=page_range, force=True
+        )
+        assert text_exit == 0
+
+        toc_exit = run_toc(book_id, data_dir=data_dir, force=True)
+        assert toc_exit == 0
+
+        segment_exit = run_segment(book_id, data_dir=data_dir, page_range=page_range, force=True)
+        assert segment_exit == 0
+
+        segments = _segment_files(data_dir, book_id)
+        classes = _by_kind(segments, "class")
+        assert len(classes) == 11, sorted(s["heading"] for s in classes)
+        assert {s["heading"] for s in classes} == {
+            "Barbarian",
+            "Bard",
+            "Cleric",
+            "Druid",
+            "Fighter",
+            "Monk",
+            "Paladin",
+            "Ranger",
+            "Rogue",
+            "Sorcerer",
+            "Wizard",
+        }
+        for class_segment in classes:
+            assert class_segment["tier"] == "sonnet"
