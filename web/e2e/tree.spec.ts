@@ -43,6 +43,35 @@ test("open Rules, expand Combat, open a section, see the breadcrumb", async ({ p
   await expect(breadcrumb.getByText("Grapple Ranks")).toBeVisible();
 });
 
+// B10c-mand3 Part 6: the fixture toc now gives the fixture class record
+// ("Fixture Mage") a real "classes" toc category, so the tree's Classes
+// branch (populated via BrowsePage's TREE_MERGE_TYPES pulling class/
+// prestige_class records into the rules_section tree) has something to
+// open here, alongside the pre-existing Combat/Equipment branches.
+test("expand Classes, open Fixture Mage", async ({ page }) => {
+  await page.goto("/browse/rules_section");
+  await expect(page.getByRole("heading", { name: "Rules sections" })).toBeVisible();
+
+  const classesSummary = page.locator("summary", { hasText: /^Classes\s/ });
+  await expect(classesSummary).toBeVisible();
+  // The pre-existing categories are still there alongside the new one.
+  await expect(page.locator("summary", { hasText: /^Combat\s/ })).toBeVisible();
+  await expect(page.locator("summary", { hasText: /^Equipment\s/ })).toBeVisible();
+  await classesSummary.click();
+
+  const chapterSummary = page.locator("summary", { hasText: /^Chapter 4: Classes\s/ });
+  await expect(chapterSummary).toBeVisible();
+  await chapterSummary.click();
+
+  const sectionSummary = page.locator("summary", { hasText: /^Fixture Mage\s/ });
+  await expect(sectionSummary).toBeVisible();
+  await sectionSummary.click();
+
+  await page.getByRole("link", { name: "Fixture Mage" }).click();
+  await expect(page).toHaveURL(/\/r\/class\/fixture-mage$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Fixture Mage" })).toBeVisible();
+});
+
 test("a quick link from the header nav opens the tree pre-filtered to that category", async ({
   page,
 }) => {
