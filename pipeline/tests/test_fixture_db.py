@@ -104,9 +104,12 @@ def test_write_fixture_data_writes_toc_file(tmp_path: Path) -> None:
     toc = json.loads(toc_path.read_text())
     chapters = [e for e in toc["entries"] if e["level"] == 1]
     sections = [e for e in toc["entries"] if e["level"] == 2]
-    assert len(chapters) == 3
-    assert len(sections) == 3
-    assert {e["category"] for e in toc["entries"]} == {"magic", "combat", "equipment"}
+    # B10c-mand3 Part 6: a fourth chapter/section pair ("Chapter 4:
+    # Classes" / "Fixture Mage", category "classes") gives the fixture
+    # class record a real toc category instead of "uncategorized".
+    assert len(chapters) == 4
+    assert len(sections) == 4
+    assert {e["category"] for e in toc["entries"]} == {"magic", "combat", "equipment", "classes"}
 
 
 def test_write_fixture_data_writes_hauling_gear_rules_section(tmp_path: Path) -> None:
@@ -186,3 +189,29 @@ def test_fixture_class_owns_its_level_table_and_matches_a_real_spell_list(tmp_pa
         assert wizard_spell_count > 0
     finally:
         conn.close()
+
+
+def test_fixture_class_resolves_to_the_classes_toc_category(tmp_path: Path) -> None:
+    """B10c-mand3 Part 6: the fixture class record's own pages (5) fall
+    inside the new "Chapter 4: Classes" / "Fixture Mage" toc entries, so it
+    resolves to toc_category "classes" (not "uncategorized") -- the web
+    tree's Classes branch has a fixture to open in Playwright."""
+    data_dir = tmp_path / "data"
+    write_fixture_data(data_dir)
+
+    conn = sqlite3.connect(default_db_path(data_dir))
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT toc_category, toc_chapter, toc_section FROM records WHERE id = ?",
+            ("class:fixture-book:fixture-mage",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert (row["toc_category"], row["toc_chapter"], row["toc_section"]) == (
+        "classes",
+        "Chapter 4: Classes",
+        "Fixture Mage",
+    )

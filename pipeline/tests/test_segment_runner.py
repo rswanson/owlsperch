@@ -698,12 +698,25 @@ def _classes_toc_entries() -> list[dict[str, Any]]:
 
 
 def _write_classes_book(data_dir: Path, book_id: str = "book") -> None:
+    # Part 1 (B10c-mand3): page 2 begins with a chapter-intro paragraph
+    # ABOVE the "BARBARIAN" heading, and page 3 begins with a barbarian
+    # tail paragraph BEFORE the "BARD" heading -- the two-classes-sharing-
+    # a-page case: a heading-anchored class span must exclude prose that
+    # precedes its own heading on its own start page (the chapter intro),
+    # while still picking up its own trailing prose on a page it shares
+    # with the NEXT class (the barbarian tail), because that prose comes
+    # before the next class's own heading.
     _write_book(
         data_dir,
         book_id,
         {
             1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
             2: [
+                _para(
+                    "Read the chapter introduction before you choose a class for your "
+                    "character here.",
+                    line_count=3,
+                ),
                 _para("BARBARIAN"),
                 _para(
                     "Hit Die: d12. A barbarian is a fierce warrior, savage and strong in "
@@ -712,6 +725,11 @@ def _write_classes_book(data_dir: Path, book_id: str = "book") -> None:
                 ),
             ],
             3: [
+                _para(
+                    "Barbarians continue raging fiercely across every battlefield they "
+                    "enter for a while.",
+                    line_count=3,
+                ),
                 _para("BARD"),
                 _para(
                     "Hit Die: d6. Bards are trained in music and magic together for adventuring.",
@@ -749,15 +767,122 @@ def test_class_segments_are_discovered_from_toc_and_hit_die_marker(tmp_path: Pat
 
     assert barbarian["seg_id"] == "book-class-p0002"
     assert barbarian["tier"] == "sonnet"  # starting_tier("class")
-    # D2: span extended one page past pdf_page_end (2) -> page 3 included,
-    # where Bard's own table/heading text lives in the real corpus case.
+    # Part 1 (B10c-mand3): the span's TEXT is anchored to the "BARBARIAN"
+    # heading paragraph, not the whole toc page range -- it still spans
+    # pages [2, 3] because the barbarian's own trailing prose on page 3
+    # (before "BARD" begins) legitimately belongs to it.
     assert barbarian["pages"] == [2, 3]
+    assert barbarian["text"].startswith("BARBARIAN")
+    assert "Barbarians continue raging" in barbarian["text"]
+    assert "BARD" not in barbarian["text"]
+    assert "trained in music and magic" not in barbarian["text"]
 
     assert bard["seg_id"] == "book-class-p0003"
     assert bard["tier"] == "sonnet"
     # Bard's own pdf_page_end (4) is already the book's last page, so the
     # +1 extension is capped there, not pushed past the end of the book.
     assert bard["pages"] == [3, 4]
+    assert bard["text"].startswith("BARD")
+    assert "Barbarians continue raging" not in bard["text"]
+    assert "Read the chapter introduction" not in bard["text"]
+
+
+def test_class_span_start_tolerates_a_trailing_plural_heading(tmp_path: Path) -> None:
+    """PHB 3.5 prints "WIZARDS" for the toc's "Wizard" -- `_heading_matches_
+    title` must tolerate a trailing plural "s" on either side (Part 1)."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("WIZARDS"),
+                _para(
+                    "Hit Die: d4. A wizard learns arcane magic through diligent study here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        "book",
+        [
+            {
+                "title": "Wizard",
+                "level": 2,
+                "printed_page": 2,
+                "pdf_page_start": 2,
+                "pdf_page_end": 2,
+                "path": ["Chapter 3: Classes", "Wizard"],
+                "category": "classes",
+            },
+        ],
+    )
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    class_segments = _by_kind(segments, "class")
+    assert len(class_segments) == 1
+    wizard = class_segments[0]
+    assert wizard["heading"] == "Wizard"
+    assert wizard["text"].startswith("WIZARDS")
+
+
+def test_class_span_falls_back_to_whole_page_when_heading_never_matches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A class is never dropped: when no paragraph in the span matches the
+    toc title at all (a column-reconstruction oddity, or a toc title that
+    just doesn't match the printed heading), the class segment falls back
+    to today's whole-page-range text and a warning is printed -- but the
+    segment is still written (Part 1)."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("THE ARCANE SPELLCASTER"),  # doesn't match "Wizard" at all
+                _para(
+                    "Hit Die: d4. A wizard learns arcane magic through diligent study here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        "book",
+        [
+            {
+                "title": "Wizard",
+                "level": 2,
+                "printed_page": 2,
+                "pdf_page_start": 2,
+                "pdf_page_end": 2,
+                "path": ["Chapter 3: Classes", "Wizard"],
+                "category": "classes",
+            },
+        ],
+    )
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    class_segments = _by_kind(segments, "class")
+    assert len(class_segments) == 1  # never dropped
+    wizard = class_segments[0]
+    assert wizard["heading"] == "Wizard"
+    assert "THE ARCANE SPELLCASTER" in wizard["text"]  # whole-page fallback
+
+    captured = capsys.readouterr()
+    assert "warning" in captured.err
+    assert "book" in captured.err
+    assert "Wizard" in captured.err
 
 
 def test_class_span_supersedes_fragment_segments_but_not_unrelated_ones(tmp_path: Path) -> None:
@@ -769,13 +894,21 @@ def test_class_span_supersedes_fragment_segments_but_not_unrelated_ones(tmp_path
     segments = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
 
     front_matter = segments["book-p0001-01"]
-    assert front_matter["pages"] == [1]
+    # The plain (page-order, heading-split) segmenter doesn't know about
+    # class spans -- its own front-matter fragment absorbs page 2's
+    # chapter-intro paragraph too, since no heading closes it out until
+    # "BARBARIAN". It still isn't superseded: page 1 falls outside every
+    # class span, so the fragment as a whole doesn't fall ENTIRELY inside
+    # one.
+    assert front_matter["pages"] == [1, 2]
     assert front_matter["superseded_by"] is None  # outside every class span
 
     barbarian_fragment = next(
         s
         for s in segments.values()
-        if s["kind_hint"] == "rules_section" and s["pages"] == [2] and s["heading"] == "BARBARIAN"
+        if s["kind_hint"] == "rules_section"
+        and s["pages"] == [2, 3]
+        and s["heading"] == "BARBARIAN"
     )
     assert barbarian_fragment["superseded_by"] == "book-class-p0002"
 
@@ -939,7 +1072,7 @@ def test_class_segmentation_is_additive_and_idempotent(tmp_path: Path) -> None:
         == next(
             s["seg_id"]
             for s in first_pass.values()
-            if s["kind_hint"] == "rules_section" and s["pages"] == [2]
+            if s["kind_hint"] == "rules_section" and s["pages"] == [2, 3]
         )
     )
     fragment = json.loads(fragment_path.read_text())

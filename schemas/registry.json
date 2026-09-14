@@ -28,7 +28,7 @@
       "schema": "class.json",
       "label": "Class",
       "plural_label": "Classes",
-      "version": 1
+      "version": 2
     },
     "prestige_class": {
       "schema": "prestige_class.json",

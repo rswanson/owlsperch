@@ -8,6 +8,7 @@ under the real corpus (batch B5's `/extract`, book_id `phb1`) and confirms
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -139,3 +140,66 @@ def test_attacks_of_opportunity_detail_resolves_to_combat_category(tmp_path: Pat
     response = client.get("/records/rules_section/attacks-of-opportunity")
     assert response.status_code == 200
     assert response.json()["toc"]["category"] == "combat"
+
+
+#: Same column-header check `check_class_fields` (Part 3b) runs, kept as a
+#: literal copy rather than an import so this standing gate doesn't
+#: silently stop meaning anything if that check is ever loosened.
+_SPELL_COLUMN_RE = re.compile(r"per day|known|points", re.IGNORECASE)
+
+
+@pytest.mark.corpus
+def test_all_eleven_phb1_classes_are_extracted_and_validated() -> None:
+    """B10c-mand3 Part 7 (criterion 5's standing gate): once all 11 PHB
+    base classes have been re-extracted under the new heading-anchored
+    segmenter, the amended prompt rules, and the stricter validators, each
+    class record is at the current class schema version, owns a
+    `level_table` that resolves to a real `table` record with exactly 20
+    rows, and (when it casts spells) that table has a spells-per-day/
+    known/points column. Skipped -- naming batch B10c-mand3 and `/extract
+    phb1 --kind class` -- until all 11 exist and none is stale. Today's
+    corpus has 6 (post B10c's initial judge spot-check), so this SKIPS,
+    not fails."""
+    real_data_dir = default_data_dir()
+    class_dir = real_data_dir / "records" / "phb1" / "class"
+    class_files = sorted(class_dir.glob("*.json")) if class_dir.is_dir() else []
+    records = [json.loads(f.read_text()) for f in class_files]
+
+    current_class_version = load_registry().types["class"].version
+    stale = [r.get("name") for r in records if r.get("schema_version") != current_class_version]
+
+    if len(records) < 11 or stale:
+        pytest.skip(
+            f"{len(records)}/11 phb1 class records extracted"
+            + (f" (stale: {stale})" if stale else "")
+            + " -- run `/extract phb1 --kind class` (batch B10c-mand3's "
+            "re-extraction under the new segmenter/prompt/validator rules) "
+            "to produce all 11 at the current schema version, then rerun "
+            "this test"
+        )
+
+    assert len(records) == 11
+
+    table_dir = real_data_dir / "records" / "phb1" / "table"
+    for record in records:
+        name = record["name"]
+        level_table_id = record["fields"]["level_table"]
+        slug = level_table_id.split(":")[-1]
+        table_path = table_dir / f"{slug}.json"
+        assert table_path.is_file(), (
+            f"{name}: level_table {level_table_id!r} not found at {table_path}"
+        )
+
+        table = json.loads(table_path.read_text())
+        rows = table["fields"]["rows"]
+        assert len(rows) == 20, (
+            f"{name}: level_table {level_table_id!r} has {len(rows)} row(s), expected 20"
+        )
+
+        spellcasting = record["fields"].get("spellcasting")
+        if spellcasting is not None:
+            columns = table["fields"]["columns"]
+            assert any(isinstance(c, str) and _SPELL_COLUMN_RE.search(c) for c in columns), (
+                f"{name}: spellcasting is set but level_table {level_table_id!r} has no "
+                f"spells-per-day/known column (columns: {columns!r})"
+            )

@@ -927,6 +927,101 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   (`complete.py`, `audit.py`, `runner.py`),
   `pipeline/owlsperch/build_db/runner.py`, `CLAUDE.md`, batch doc.
 
+## B10c-mand3: class extraction quality: heading-anchored spans, prompt rules, stricter validators
+- **Status:** merged
+- **Follow-up to:** B10c (a data-quality defect in B10c's class work, not a
+  crash): B10c's class spans were cut at whole toc *page* boundaries, so a
+  class segment swallowed its neighbour's opening prose whenever two classes
+  shared a pdf page, the extraction prompt said nothing about the resulting
+  bleed or about the printed level table's detached/wrapped spell columns,
+  and the class validators were strict in the wrong places (a Special cell
+  reading "Bonus feat" could not match a `class_features` entry spelled
+  "Bonus Feats") while silent in the right ones (a caster class whose level
+  table had no spells-per-day column passed).
+- **User-visible outcome:** re-extracted class pages carry only their own
+  chapter text and a level table whose spell columns survive, and a caster
+  class that loses its spells-per-day column now fails validation instead of
+  shipping. No runtime/API/UI surface change; this batch changes the
+  pipeline that produces class records, not the site that renders them.
+- **Acceptance criteria:**
+  1. A class span's own `text`/`pages`/`printed_pages` are recomputed from
+     paragraph indices rather than its whole toc page range:
+     `_class_start_index` finds the first paragraph on the span's own toc
+     start page whose text matches the toc entry's title, falling back to
+     the first such match anywhere in the span's page range; every span's
+     start index is resolved first, then each span's end is capped at
+     whichever comes first of the next span's start index or the first
+     paragraph past its own toc `pdf_page_end`. `seg_id` derivation and the
+     page-based supersede pass are unchanged. A heading that never matches
+     falls back to the old whole-page-range text (a class is never dropped)
+     and prints a `warning:` line naming the book and the heading.
+  2. Segmenter regression tests cover: (a) a class keeping its own tail
+     prose while the next class excludes it and starts at its own heading;
+     (b) a chapter-intro paragraph above the first heading excluded;
+     (c) a trailing-plural heading tolerated ("WIZARDS" vs. the toc's
+     "Wizard"); (d) an unmatchable heading falling back to the whole page
+     range with the warning. A `@pytest.mark.corpus` test asserts the real
+     PHB yields all 11 base classes.
+  3. `_KIND_RULES["class"]`/`["prestige_class"]` in `queue/prompt.py` are
+     amended (not appended) with: the neighbouring-class bleed rule, the
+     detached/wrapped level-table column reattachment rule, the caster
+     "Spells per Day `<slot>`" column convention with a `needs_context`
+     fallback when the columns can't be recovered, and the Special-cell /
+     `class_features[].name` matching rule. The per-registered-kind
+     prompt-coverage guard runs for both kinds.
+  4. `checks._normalize_special_token` (shared by the Special /
+     `class_features[].name` prefix match) strips a trailing numeric bonus
+     (`+N`, `+NdN`) and folds a trailing plural "s" per word (skipping
+     words ending `ss`/`us`/`is`, so "bonus"/"class" survive), so a Special
+     cell reading "Bonus feat" matches a feature spelled "Bonus Feats",
+     with a regression test.
+  5. `check_class_fields` requires, whenever `fields.spellcasting` is set,
+     that the resolved `level_table` has at least one column matching
+     `/per day|known|points/i` -- the same convention the prompt states. A
+     `@pytest.mark.corpus` standing gate in `server/tests/test_corpus.py`
+     asserts, once all 11 PHB classes exist at the current class schema
+     version, that each owns a `level_table` resolving to a real 20-row
+     `table` record with that column when it casts; it SKIPS (naming this
+     batch and `/extract phb1 --kind class`) until the re-extraction is run.
+  6. `schemas/class.json` and `registry.json`'s `types.class.version` go to
+     schema version 2, with a draft-2020-12 `allOf`/`if`/`then`
+     conditional: when `fields.class_type` is `"base"`, `class_skills`,
+     `skill_points`, `alignment` (a plain string, no longer nullable),
+     non-empty `description_sections`, and `weapon_and_armor_proficiency`
+     become required. `prestige`/`npc`-typed class records are unaffected
+     and `prestige_class.json` stays at version 1.
+     `schemas/examples/class.json` gains `fields.abbreviation` and bumps to
+     `schema_version: 2`.
+  7. `queue reset --hard` resets a segment's `tier` via
+     `ladder.starting_tier(segment.kind_hint)` rather than unconditionally
+     to haiku, so hard-resetting the 11 class segments for the post-merge
+     re-extraction leaves them on sonnet instead of demoting them.
+  8. The fixture DB stays valid under class schema v2 (a
+     `description_sections` entry, `schema_version: 2`, a "Spells per Day
+     1st" column/cell on the level table) and gains a real `classes` toc
+     chapter/section pair so the web tree's Classes branch has a fixture to
+     open; `web/e2e/tree.spec.ts` expands Classes -> "Chapter 4: Classes"
+     and opens that record.
+  9. Full gate suite green: ruff, ruff format, mypy, pytest, and web
+     lint/typecheck/vitest/Playwright.
+- **How to observe:** `uv run owlsperch segment phb1 --force` then
+  `uv run owlsperch queue prompt <class seg_id>` -- the rendered prompt
+  carries the bleed/column/Special rules and the segment text starts at the
+  class's own printed heading. After the post-merge recovery
+  (`uv run owlsperch queue reset <the 11 class seg_ids> --hard`, then
+  `/extract phb1 --kind class`, `validate`, `build-db`),
+  `server/tests/test_corpus.py::test_all_eleven_phb1_classes_are_extracted_and_validated`
+  runs instead of skipping.
+- **Not in scope (post-merge, separate step):** re-extracting the PHB class
+  records themselves. Nothing under `$OWLSPERCH_DATA` is touched by this
+  batch.
+- **Touches:** `pipeline/owlsperch/segment/runner.py`,
+  `pipeline/owlsperch/queue/` (`prompt.py`, `runner.py`),
+  `pipeline/owlsperch/validate/checks.py`,
+  `pipeline/owlsperch/fixture_db.py`, `schemas/class.json`,
+  `schemas/registry.json`, `schemas/examples/class.json`,
+  `web/e2e/tree.spec.ts`, tests, `CLAUDE.md`, batch doc.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical

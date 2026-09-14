@@ -400,6 +400,28 @@ def test_prompt_contains_class_abbreviation_table(tmp_path: Path) -> None:
     assert "prestige class" in text.lower()
 
 
+def test_class_prompt_contains_bleed_rule_and_spell_column_convention(tmp_path: Path) -> None:
+    """B10c-mand3 Part 2 (judge findings 1 and 3): a rendered `class` prompt
+    must tell the subagent how to handle column bleed (a Special token
+    bled in from a neighbouring class's own Special column) and must state
+    the "Spells per Day <slot>" column-naming convention the validator
+    (`check_class_fields`'s `_SPELL_COLUMN_RE`) looks for."""
+    segment = _segment(kind_hint="class", heading="Bard")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "bleed" in text.lower()
+    assert "Bonus Feat" in text  # the judge's own concrete example
+    assert "Spells per Day" in text
+    assert "needs_context" in text
+
+
 def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
     segment = _segment()
     manifest_path = _write_manifest(tmp_path)
