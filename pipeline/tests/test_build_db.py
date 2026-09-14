@@ -1136,7 +1136,7 @@ def _valid_class_record(*, book_id: str = "book") -> dict[str, Any]:
             "class_features": [
                 {"name": "Rage", "level": 1, "text_md": "You rage."},
                 {"name": "Uncanny Dodge", "level": 2, "text_md": "You dodge."},
-                {"name": "Trap Sense", "level": 3, "text_md": ""},
+                {"name": "Trap Sense", "level": 3, "text_md": "Your senses grow wary of traps."},
             ],
             "description_sections": [{"heading": "Adventures", "text_md": "..."}],
             "weapon_and_armor_proficiency": "Simple weapons only.",
@@ -1147,7 +1147,7 @@ def _valid_class_record(*, book_id: str = "book") -> dict[str, Any]:
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "sonnet",
             "model": "claude-sonnet-test",

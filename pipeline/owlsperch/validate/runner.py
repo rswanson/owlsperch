@@ -628,7 +628,15 @@ def find_bump_candidates(
     meaning the only thing standing between this record and the current
     schema is the version number itself. Read-only: doesn't write anything;
     `run_validate` applies the actual bump for every `bumped=True` result.
+
+    Builds a real `ValidationContext` (B10c-mand4 criterion 10 -- fixing a
+    bug where this used to pass none at all, which meant every
+    class/prestige_class candidate's `level_table` cross-reference could
+    never resolve and so could never be bumped) so a class/prestige_class
+    record's `level_table`/`spellcasting.spell_list` cross-record checks
+    resolve the same way they would under a real `owlsperch validate` run.
     """
+    context = build_validation_context(data_dir)
     results: list[BumpResult] = []
     for path in _record_files_for(data_dir, book_id):
         type_dir = path.parent.name
@@ -662,7 +670,9 @@ def find_bump_candidates(
         segment = _resolve_segment_for_record(data_dir, record)
         candidate = dict(record)
         candidate["schema_version"] = info.version
-        errors = validate_record(candidate, type_dir=type_dir, compiled=compiled, segment=segment)
+        errors = validate_record(
+            candidate, type_dir=type_dir, compiled=compiled, segment=segment, context=context
+        )
 
         results.append(
             BumpResult(

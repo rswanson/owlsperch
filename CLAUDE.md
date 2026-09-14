@@ -405,32 +405,67 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   to a real `table` record cross-linked both ways; that table's row
   count/Level column matches `max_level`; its Base-Attack-Bonus and save
   columns match the class's own declared progressions (normalizing every
-  dash glyph and stray space in a cell before comparing); every
-  Special-column entry (split on commas, parentheticals like `(Ex)`
-  stripped) matches a `class_features[].name` by prefix, and vice versa
-  every feature's `level` appears in the table -- EXCEPT `class_features
-  [].text_md` may be the empty string, so a Special entry the book prints
-  with no description of its own (e.g. PHB's Barbarian "Bonus Feat") is
-  recorded rather than forcing an endless escalation; `class_skills[]
-  .skill` (trailing parentheticals stripped) must be a name from the
-  committed `schemas/skills.json` list; `spellcasting.spell_list`, when
-  present, must match a real `levels[].class` value from the book's own
-  spell records -- but is skipped entirely (not failed) when the book has
-  no spell records loaded yet, since that's simply not extracted yet, not
-  wrong. Batch B10c-mand3 (Part 3): `_normalize_special_token` (shared by
-  the Special/`class_features[].name` prefix match above) now also strips
-  a trailing numeric bonus (`+N`, `+NdN`) and folds a trailing plural "s"
+  dash glyph and stray space in a cell before comparing); every DISTINCT
+  Special-column entry (B10c-mand4: `_split_special_cell` splits a cell on
+  commas OUTSIDE parentheses only, so `"Wild shape (Huge elemental,
+  2/day), Venom immunity"` yields two tokens, not three -- a stray
+  unbalanced `)` clamps depth at 0 rather than swallowing the rest of the
+  cell) matches a `class_features[].name` by prefix, checked ONCE per
+  normalized token across the WHOLE level table rather than once per row
+  -- a repeated progression ("1st favored enemy"/"2nd favored enemy"/...,
+  "Inspire courage +2"/"+3"/"+4") is one required `class_features` entry,
+  not one per level/row it appears at, and the error this produces still
+  names the level/token of that token's first appearance in the table.
+  Every feature's `level` appears in the table; `class_features[].text_md`
+  must be non-empty (both `class.json`/`prestige_class.json`'s own
+  `minLength: 1` and this check reject `""`/missing/whitespace-only --
+  B10c-mand4, reversing the earlier "may be empty" exception: a Special
+  entry the book prints with no description of its own still gets a
+  `class_features` entry, whose `text_md` is that Special cell's own
+  printed wording, never an invented description); two `class_features`
+  entries whose names normalize to the same thing (e.g. "Bonus Feat"/
+  "Bonus Feats", "Inspire Courage"/"Inspire Courage +2") is also an error,
+  one per duplicated name; and when `fields.spellcasting` is set, some
+  `class_features` entry's normalized name must equal
+  `_normalize_special_token("Spells")` -- a caster with no printed
+  `Spells` class feature recorded at all now fails validation instead of
+  silently passing. `class_skills[].skill` (trailing parentheticals
+  stripped) must be a name from the committed `schemas/skills.json` list;
+  `spellcasting.spell_list`, when present, must match a real
+  `levels[].class` value from the book's own spell records -- but is
+  skipped entirely (not failed) when the book has no spell records loaded
+  yet, since that's simply not extracted yet, not wrong. Batch B10c-mand3
+  (Part 3): `_normalize_special_token` (shared by the Special/
+  `class_features[].name` prefix match above) strips every parenthetical,
+  a trailing numeric bonus (`+N`, `+NdN`), and folds a trailing plural "s"
   per word (skipping words ending `ss`/`us`/`is`, so "bonus"/"class"
   survive) before the `startswith` comparison -- so a Special cell reading
-  "Bonus feat" now matches a `class_features` entry spelled "Bonus Feats"
-  (the fighter's own printed heading) without the record having to
-  misspell the feature to validate. `check_class_fields` also now requires,
-  whenever `fields.spellcasting` is set, that the resolved `level_table`
-  has at least one column matching `/per day|known|points/i` (checked
-  against the SAME "Spells per Day `<slot>`" naming convention
-  `_KIND_RULES["class"]`/`["prestige_class"]` states in the prompt) --
-  a caster class whose level table has no spells-per-day/known/points
-  column now fails validation instead of silently passing.
+  "Bonus feat" matches a `class_features` entry spelled "Bonus Feats" (the
+  fighter's own printed heading) without the record having to misspell the
+  feature to validate; B10c-mand4 additionally strips a leading ordinal
+  (`2nd `), a trailing distance (`30 ft.`/`30 feet`), and a trailing
+  use-frequency (`2/day`, `1/week`, `3/encounter`), which is what collapses
+  a rising-value progression's per-level Special cells down to the one
+  name its single `class_features` entry describes. `check_class_fields`
+  also requires, whenever `fields.spellcasting` is set, that the resolved
+  `level_table` has at least one column matching `/per day|known|points/i`
+  (checked against the SAME "Spells per Day `<slot>`" naming convention
+  `_KIND_RULES["class"]`/`["prestige_class"]` states in the prompt) -- a
+  caster class whose level table has no spells-per-day/known/points column
+  now fails validation instead of silently passing. `check_table_fields`
+  (B10c-mand4) also checks, per column, that cells with no printed value
+  are all written the SAME way -- either every one blank (`""`) or every
+  one a dash placeholder (`"—"`, `"–"`, `"-"`, `"--"`, or the Unicode minus
+  `"−"`) -- never a mix of both within one column (the real-corpus catch
+  this guards against: PHB table 3-15's rogue Special column writes "no
+  special ability" as both `"—"` and `""`). Bumping `class`/
+  `prestige_class`'s `schema_version` this way (2->3, 1->2) needs the same
+  `--bump-compatible` migration named above; `find_bump_candidates`
+  (`validate/runner.py`) builds a real `build_validation_context(data_dir)`
+  and threads it into its own `validate_record` call (a bug fixed the same
+  batch -- it used to fall back to `NULL_CONTEXT`, so every class/
+  `prestige_class` candidate's `level_table` cross-reference reported "not
+  found" and could never be bumped).
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -853,19 +888,23 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   level-2 section -- so "Grapple Ranks" resolves to category combat and
   "Hauling Gear" to equipment, giving the web tree two populated branches
   for the tree Playwright spec's flow C; plus, since batch B10c, an
-  invented class ("Fixture Mage") with a 3-row level table it owns, two
-  class features (one with an empty `text_md`), and
-  `spellcasting.spell_list: "Wizard"` -- matching one of the `_SPELLS`
-  entries' own `levels[].class` -- so the class Playwright spec's Spells
-  section has a real fixture spell to render; plus, since batch
-  B10c-mand3, a `description_sections` entry and `schema_version: 2` on
-  the class record (class.json's base-class conditional requires both) and
-  a "Spells per Day 1st" column + cell on the level table (the caster
-  spells-per-day/known/points column check), and a fourth toc chapter/
-  section pair ("Chapter 4: Classes" / "Fixture Mage", both category
-  `classes`, pdf page 5) so the class record resolves to a real `classes`
-  toc category instead of `uncategorized`, giving the web tree's Classes
-  branch a fixture to open) into `<dir>` and builds
+  invented class ("Fixture Mage") with a 3-row level table it owns, class
+  features, and `spellcasting.spell_list: "Wizard"` -- matching one of the
+  `_SPELLS` entries' own `levels[].class` -- so the class Playwright
+  spec's Spells section has a real fixture spell to render; plus, since
+  batch B10c-mand3, a `description_sections` entry on the class record
+  (class.json's base-class conditional requires it) and a "Spells per Day
+  1st" column + cell on the level table (the caster spells-per-day/known/
+  points column check), and a fourth toc chapter/section pair ("Chapter 4:
+  Classes" / "Fixture Mage", both category `classes`, pdf page 5) so the
+  class record resolves to a real `classes` toc category instead of
+  `uncategorized`, giving the web tree's Classes branch a fixture to open;
+  plus, since batch B10c-mand4, a real (non-empty) `text_md` on every
+  class feature and a third feature, `"Spells"` (APPENDED at the end, so
+  `web/e2e/class.spec.ts`'s index-addressed feature ids stay stable),
+  satisfying the new empty-text_md/duplicate-name/required-Spells-feature
+  checks, and `schema_version: 3` (the class schema's `text_md`
+  `minLength: 1` bump) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.

@@ -28,13 +28,13 @@
       "schema": "class.json",
       "label": "Class",
       "plural_label": "Classes",
-      "version": 2
+      "version": 3
     },
     "prestige_class": {
       "schema": "prestige_class.json",
       "label": "Prestige class",
       "plural_label": "Prestige classes",
-      "version": 1
+      "version": 2
     }
   }
 }

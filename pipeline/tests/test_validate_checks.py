@@ -10,6 +10,10 @@ from typing import Any
 from owlsperch.validate.checks import (
     NULL_CONTEXT,
     ValidationContext,
+    _bab_progression_cell,
+    _normalize_special_token,
+    _save_progression_cell,
+    _split_special_cell,
     check_class_fields,
     check_envelope_consistency,
     check_feat_fields,
@@ -275,7 +279,7 @@ def _valid_class_record() -> dict[str, Any]:
             "class_features": [
                 {"name": "Rage", "level": 1, "text_md": "You rage."},
                 {"name": "Uncanny Dodge", "level": 2, "text_md": "You dodge uncannily."},
-                {"name": "Trap Sense", "level": 3, "text_md": ""},
+                {"name": "Trap Sense", "level": 3, "text_md": "Your senses grow wary of traps."},
             ],
         },
     }
@@ -397,6 +401,9 @@ def test_check_class_fields_skips_spell_list_check_when_book_has_no_spells_yet()
         "type": "prepared",
         "spell_list": "Anything At All",
     }
+    record["fields"]["class_features"].append(
+        {"name": "Spells", "level": 1, "text_md": "A testclass casts arcane spells."}
+    )
     table = _valid_table_record()
     table["fields"]["columns"].append("Spells per Day 1st")
     for row in table["fields"]["rows"]:
@@ -475,6 +482,9 @@ def test_check_class_fields_caster_with_spell_column_passes() -> None:
         "type": "prepared",
         "spell_list": "Testclass",
     }
+    record["fields"]["class_features"].append(
+        {"name": "Spells", "level": 1, "text_md": "A testclass casts divine spells."}
+    )
     table = _valid_table_record()
     table["fields"]["columns"].append("Spells Known")
     for row in table["fields"]["rows"]:
@@ -487,3 +497,243 @@ def test_check_class_fields_with_null_context_reports_unresolvable_table() -> No
     record = _valid_class_record()
     errors = check_class_fields(record, NULL_CONTEXT)
     assert any("not found" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 1: parenthesis-aware Special-cell splitting.
+# ---------------------------------------------------------------------------
+
+
+def test_split_special_cell_does_not_split_inside_parentheses() -> None:
+    cell = "Wild shape (Huge elemental, 2/day), Venom immunity"
+    assert _split_special_cell(cell) == [
+        "Wild shape (Huge elemental, 2/day)",
+        "Venom immunity",
+    ]
+
+
+def test_split_special_cell_clamps_depth_on_stray_close_paren() -> None:
+    """An unbalanced stray ')' must not swallow the rest of the cell --
+    depth clamps at 0 instead of going negative."""
+    cell = "Sneak attack), Uncanny dodge"
+    assert _split_special_cell(cell) == ["Sneak attack)", "Uncanny dodge"]
+
+
+def test_check_class_fields_paren_aware_special_split_matches_both_features() -> None:
+    """Regression: on main, splitting this cell on every comma (including
+    the one inside the parenthetical) produces a bogus third token
+    ('2/day)') that raises a spurious 'no matching class_features entry'."""
+    table = _valid_table_record()
+    table["fields"]["rows"][0][5] = "Wild shape (Huge elemental, 2/day), Venom immunity"
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["class_features"] = [
+        {"name": "Wild Shape", "level": 1, "text_md": "You wild shape."},
+        {"name": "Venom Immunity", "level": 1, "text_md": "You are immune to venom."},
+        {"name": "Uncanny Dodge", "level": 2, "text_md": "You dodge uncannily."},
+        {"name": "Trap Sense", "level": 3, "text_md": "You sense traps."},
+    ]
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 2: ordinal/distance/frequency stripping in
+# _normalize_special_token.
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_special_token_strips_ordinal_distance_and_frequency() -> None:
+    assert _normalize_special_token("2nd favored enemy") == "favored enemy"
+    assert _normalize_special_token("slow fall 30 ft.") == "slow fall"
+    assert _normalize_special_token("Wild shape (Huge elemental, 2/day)") == "wild shape"
+    assert _normalize_special_token("Rage 1/day") == "rage"
+
+
+def test_normalize_special_token_keeps_existing_dice_frequency_and_plural_behavior() -> None:
+    assert _normalize_special_token("Sneak attack +1d6") == _normalize_special_token("Sneak Attack")
+    assert _normalize_special_token("Damage reduction 1/—").startswith(
+        _normalize_special_token("Damage Reduction (Ex)")
+    )
+    assert _normalize_special_token("Bonus feat") == _normalize_special_token("Bonus Feats")
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 3: Special/class_features matching runs once per
+# DISTINCT normalized token across the whole table, not once per row.
+# ---------------------------------------------------------------------------
+
+
+def _favored_enemy_table_and_record(
+    *, include_feature: bool
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    columns = ["Level", "Base Attack Bonus", "Fort Save", "Ref Save", "Will Save", "Special"]
+    rows = []
+    for level in range(1, 11):
+        if level == 1:
+            special = "1st favored enemy"
+        elif level == 5:
+            special = "2nd favored enemy"
+        elif level == 10:
+            special = "3rd favored enemy"
+        else:
+            special = "-"
+        rows.append(
+            [
+                str(level),
+                _bab_progression_cell("good", level),
+                _save_progression_cell("poor", level),
+                _save_progression_cell("poor", level),
+                _save_progression_cell("poor", level),
+                special,
+            ]
+        )
+    table: dict[str, Any] = {
+        "id": "table:phb1:table-y-the-testranger",
+        "type": "table",
+        "name": "Table Y: The Testranger",
+        "book_id": "phb1",
+        "pages": [1],
+        "fields": {"columns": columns, "rows": rows},
+    }
+    class_features = (
+        [{"name": "Favored Enemy", "level": 1, "text_md": "You gain favored enemies."}]
+        if include_feature
+        else []
+    )
+    record: dict[str, Any] = {
+        "id": "class:phb1:testranger",
+        "type": "class",
+        "name": "Testranger",
+        "book_id": "phb1",
+        "tables": [table["id"]],
+        "fields": {
+            "hit_die": "d8",
+            "bab_progression": "good",
+            "save_progressions": {"fort": "poor", "ref": "poor", "will": "poor"},
+            "max_level": 10,
+            "class_skills": [{"skill": "Climb", "key_ability": "Str"}],
+            "level_table": table["id"],
+            "class_features": class_features,
+        },
+    }
+    return table, record
+
+
+def test_check_class_fields_distinct_token_progression_validates_clean() -> None:
+    table, record = _favored_enemy_table_and_record(include_feature=True)
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert errors == []
+
+
+def test_check_class_fields_distinct_token_unmatched_reports_exactly_one_error() -> None:
+    table, record = _favored_enemy_table_and_record(include_feature=False)
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    matching = [e for e in errors if "favored enemy" in e.lower()]
+    assert len(matching) == 1
+    assert "level 1" in matching[0]
+    assert "1st favored enemy" in matching[0]
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 4: an empty/missing/whitespace-only text_md is an
+# error.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_flags_whitespace_only_text_md() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["class_features"][0]["text_md"] = "   "
+    errors = check_class_fields(record, _default_context())
+    assert any("Rage" in e and "empty text_md" in e for e in errors)
+
+
+def test_check_class_fields_flags_missing_text_md_key() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    del record["fields"]["class_features"][1]["text_md"]
+    errors = check_class_fields(record, _default_context())
+    assert any("Uncanny Dodge" in e and "empty text_md" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 5: two class_features entries that normalize to the
+# same name is an error.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_flags_duplicate_normalized_feature_names() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["class_features"].append(
+        {"name": "Rage (Su)", "level": 2, "text_md": "More rage."}
+    )
+    errors = check_class_fields(record, _default_context())
+    assert any("duplicate" in e.lower() and "rage" in e.lower() for e in errors)
+
+
+def test_check_class_fields_passes_with_all_distinct_feature_names() -> None:
+    assert check_class_fields(_valid_class_record(), _default_context()) == []
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 6: a caster (spellcasting set) must carry a `Spells`
+# class_features entry.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_flags_caster_without_spells_feature() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["spellcasting"] = {
+        "kind": "arcane",
+        "ability": "Int",
+        "type": "prepared",
+        "spell_list": "Testclass",
+    }
+    table = _valid_table_record()
+    table["fields"]["columns"].append("Spells per Day 1st")
+    for row in table["fields"]["rows"]:
+        row.append("1")
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert any("no 'Spells' entry" in e for e in errors)
+
+
+def test_check_class_fields_caster_with_spells_feature_passes() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["spellcasting"] = {
+        "kind": "arcane",
+        "ability": "Int",
+        "type": "prepared",
+        "spell_list": "Testclass",
+    }
+    record["fields"]["class_features"].append(
+        {"name": "Spells", "level": 1, "text_md": "A testclass casts arcane spells."}
+    )
+    table = _valid_table_record()
+    table["fields"]["columns"].append("Spells per Day 1st")
+    for row in table["fields"]["rows"]:
+        row.append("1")
+    errors = check_class_fields(record, _context({table["id"]: table}))
+    assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 7: check_table_fields flags a column that mixes
+# blank ("") and dash ("—") empty-cell styles.
+# ---------------------------------------------------------------------------
+
+
+def test_check_table_fields_passes_when_empty_cells_all_blank() -> None:
+    fields = {"columns": ["A", "Special"], "rows": [["1", ""], ["2", ""], ["3", "Foo"]]}
+    assert check_table_fields({"fields": fields}) == []
+
+
+def test_check_table_fields_passes_when_empty_cells_all_dash() -> None:
+    fields = {"columns": ["A", "Special"], "rows": [["1", "—"], ["2", "—"], ["3", "Foo"]]}
+    assert check_table_fields({"fields": fields}) == []
+
+
+def test_check_table_fields_flags_mixed_empty_cell_styles() -> None:
+    fields = {"columns": ["A", "Special"], "rows": [["1", "—"], ["2", ""], ["3", "Foo"]]}
+    errors = check_table_fields({"fields": fields})
+    matching = [e for e in errors if "mixes" in e.lower()]
+    assert len(matching) == 1
+    assert "1" in matching[0]
+    assert "Special" in matching[0]

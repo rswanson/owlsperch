@@ -1166,3 +1166,132 @@ def test_validate_never_discovers_a_record_under_superseded_dir(tmp_path: Path) 
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["status"] == "pending"
     assert segment.get("records", []) == []
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand4 criterion 10: `find_bump_candidates` must build and pass a
+# real `ValidationContext` (via `build_validation_context`), not the
+# default `NULL_CONTEXT` -- otherwise every class/prestige_class record's
+# `level_table` cross-reference can never resolve and `--bump-compatible`
+# can never bump one.
+# ---------------------------------------------------------------------------
+
+
+def _valid_class_table_record(*, book_id: str = "book") -> dict[str, Any]:
+    return {
+        "id": f"table:{book_id}:table-x-the-testclass",
+        "type": "table",
+        "name": "Table X: The Testclass",
+        "slug": "table-x-the-testclass",
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [2],
+        "citation": "Test Book p. 2",
+        "text_md": "",
+        "fields": {
+            "caption": "Table X: The Testclass",
+            "columns": [
+                "Level",
+                "Base Attack Bonus",
+                "Fort Save",
+                "Ref Save",
+                "Will Save",
+                "Special",
+            ],
+            "rows": [
+                ["1st", "+1", "+2", "+0", "+0", "Rage 1/day"],
+                ["2nd", "+2", "+3", "+0", "+0", "Uncanny dodge"],
+                ["3rd", "+3", "+3", "+1", "+1", "Trap sense +1"],
+            ],
+            "parent_record": f"class:{book_id}:testclass",
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": "book-p0002-01",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def _valid_class_record_for_bump(
+    *, book_id: str = "book", schema_version: int = 1
+) -> dict[str, Any]:
+    return {
+        "id": f"class:{book_id}:testclass",
+        "type": "class",
+        "name": "Testclass",
+        "slug": "testclass",
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [2, 3],
+        "citation": "Test Book pp. 2-3",
+        "text_md": "Testclass overview.",
+        "fields": {
+            "hit_die": "d12",
+            "class_type": "base",
+            "max_level": 3,
+            "alignment": "Any",
+            "bab_progression": "good",
+            "save_progressions": {"fort": "good", "ref": "poor", "will": "poor"},
+            "class_skills": [{"skill": "Climb", "key_ability": "Str"}],
+            "skill_points": {"base": 4, "ability": "Int"},
+            "level_table": f"table:{book_id}:table-x-the-testclass",
+            "class_features": [
+                {"name": "Rage", "level": 1, "text_md": "You rage."},
+                {"name": "Uncanny Dodge", "level": 2, "text_md": "You dodge uncannily."},
+                {"name": "Trap Sense", "level": 3, "text_md": "You sense traps."},
+            ],
+            "description_sections": [{"heading": "Adventures", "text_md": "..."}],
+            "weapon_and_armor_proficiency": "Simple weapons only.",
+            "source_pages": {"start": 2, "end": 3},
+        },
+        "tables": [f"table:{book_id}:table-x-the-testclass"],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": schema_version,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": "book-p0002-01",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def test_bump_compatible_bumps_stale_class_record_with_resolvable_level_table(
+    tmp_path: Path,
+) -> None:
+    """Regression: on main, `find_bump_candidates` calls `validate_record`
+    with no `context=`, so it falls back to `NULL_CONTEXT` and every class
+    record's `level_table` cross-reference reports 'not found' -- the
+    record is therefore never reported as bumped even though it is
+    otherwise perfectly valid under the current schema."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0002-01", [2, 3])
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _valid_class_table_record())
+    record_path = _write_record(
+        data_dir,
+        "book",
+        "class",
+        "testclass",
+        _valid_class_record_for_bump(schema_version=1),
+    )
+
+    exit_code, output = _run(data_dir, bump_compatible=True)
+
+    rel_path = record_path.relative_to(data_dir).as_posix()
+    assert "level_table" not in output
+    assert f"BUMPED {rel_path}: schema_version 1 -> 3" in output
+    assert exit_code == 0
+
+    bumped = json.loads(record_path.read_text())
+    assert bumped["schema_version"] == 3

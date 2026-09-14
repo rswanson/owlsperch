@@ -126,10 +126,26 @@ def check_rules_section_fields(record: dict[str, Any]) -> list[str]:
     return []
 
 
+#: Characters that, alone or repeated, stand in for "no printed value" in a
+#: table cell: a plain hyphen, an en/em dash, or the Unicode minus sign
+#: (B10c-mand4 criterion 7). A cell classifies as this "dash" style only
+#: when its stripped text consists ENTIRELY of these characters (so "—"
+#: and "--" both count, but "2/—" -- a real value using a dash as part of
+#: it, not as the whole cell -- does not).
+_DASH_PLACEHOLDER_CHARS = frozenset("—–-−")
+
+
 def check_table_fields(record: dict[str, Any]) -> list[str]:
     """Table-specific consistency check from spec 4.5: a table has equal-
     length rows -- `columns` is a non-empty list, and every entry of `rows`
-    is a list whose length equals `len(columns)`."""
+    is a list whose length equals `len(columns)`. B10c-mand4 criterion 7
+    adds a per-column empty-cell-consistency check: within one column,
+    cells with no printed value must all be written the SAME way -- either
+    every one blank (`""`) or every one a dash placeholder (`"—"`, `"–"`,
+    `"-"`, `"--"`, or the Unicode minus `"−"`), never a mix of both in the
+    same column (the real-corpus catch this guards against: PHB table
+    3-15's rogue Special column writes the same "no special ability"
+    entry as both `"—"` and `""` within one column)."""
     errors: list[str] = []
     fields = record.get("fields")
     if not isinstance(fields, dict):
@@ -146,11 +162,33 @@ def check_table_fields(record: dict[str, Any]) -> list[str]:
         return errors
 
     expected = len(columns)
+    valid_rows: list[tuple[int, list[Any]]] = []
     for i, row in enumerate(rows):
         if not isinstance(row, list) or len(row) != expected:
             actual = len(row) if isinstance(row, list) else "not a list"
             errors.append(
                 f"row {i} has {actual} cell(s), expected {expected} (columns has {expected})"
+            )
+        else:
+            valid_rows.append((i, row))
+
+    for col_idx in range(expected):
+        blank_rows: list[int] = []
+        dash_rows: list[int] = []
+        for row_idx, row in valid_rows:
+            cell = row[col_idx]
+            if not isinstance(cell, str):
+                continue
+            stripped = cell.strip()
+            if stripped == "":
+                blank_rows.append(row_idx)
+            elif all(ch in _DASH_PLACEHOLDER_CHARS for ch in stripped):
+                dash_rows.append(row_idx)
+        if blank_rows and dash_rows:
+            header = columns[col_idx] if isinstance(columns[col_idx], str) else columns[col_idx]
+            errors.append(
+                f"column {col_idx} ({header!r}) mixes empty-cell styles: blank cells at "
+                f"row(s) {blank_rows[:5]}, dash cells at row(s) {dash_rows[:5]}"
             )
 
     return errors
@@ -303,6 +341,26 @@ _PAREN_RE = re.compile(r"\([^)]*\)")
 #: down to the same form as its `class_features[].name` ("Sneak Attack").
 _TRAILING_BONUS_RE = re.compile(r"\+\d+(?:d\d+)?\s*$", re.IGNORECASE)
 
+#: A leading ordinal on a Special-cell token, e.g. "2nd " in "2nd favored
+#: enemy" -- a repeated progression's printed rank, not part of the
+#: feature's own name. Stripped by `_normalize_special_token` (B10c-mand4
+#: criterion 2) so "1st favored enemy"/"2nd favored enemy"/... all
+#: normalize down to the same "favored enemy" a single class_features
+#: entry can match once.
+_LEADING_ORDINAL_RE = re.compile(r"^\d+(?:st|nd|rd|th)\s+", re.IGNORECASE)
+
+#: A trailing use-frequency on a Special-cell token, e.g. "2/day", "1/week",
+#: "3/encounter" -- stripped (B10c-mand4 criterion 2) so "Rage 1/day"
+#: normalizes down to "rage".
+_TRAILING_FREQUENCY_RE = re.compile(
+    r"\d+/(?:day|week|month|year|encounter|round|hour|rest)\s*$", re.IGNORECASE
+)
+
+#: A trailing distance on a Special-cell token, e.g. "30 ft.", "30 ft",
+#: "30 feet" -- stripped (B10c-mand4 criterion 2) so "Slow fall 30 ft."
+#: normalizes down to "slow fall".
+_TRAILING_DISTANCE_RE = re.compile(r"\d+\s*(?:ft\.?|feet)\.?\s*$", re.IGNORECASE)
+
 
 def _fold_trailing_plural(word: str) -> str:
     """Strip a trailing plural "s" from `word`, except when it ends in
@@ -318,11 +376,19 @@ def _fold_trailing_plural(word: str) -> str:
 
 def _normalize_special_token(token: str) -> str:
     """Lowercase, drop every parenthetical group (`(Ex)`, `(Su)`, ...),
-    strip a trailing numeric bonus (`+N`, `+NdN`), fold a trailing plural
-    "s" per word (`_fold_trailing_plural`), and collapse whitespace -- the
-    shared comparison form for both a Special cell's own comma-separated
-    tokens and a `class_features[].name`."""
+    strip a leading ordinal (`2nd `), a trailing use-frequency (`2/day`), a
+    trailing distance (`30 ft.`), a trailing numeric bonus (`+N`, `+NdN`),
+    fold a trailing plural "s" per word (`_fold_trailing_plural`), and
+    collapse whitespace -- the shared comparison form for both a Special
+    cell's own comma-separated tokens and a `class_features[].name`
+    (B10c-mand3 Part 3a; ordinal/distance/frequency stripping added by
+    B10c-mand4 criterion 2 so a repeated progression -- "1st favored
+    enemy"/"2nd favored enemy"/..., "Inspire courage +2"/"+3"/"+4" -- all
+    collapse to the one name a single class_features entry describes)."""
     stripped = _PAREN_RE.sub("", token)
+    stripped = _LEADING_ORDINAL_RE.sub("", stripped)
+    stripped = _TRAILING_FREQUENCY_RE.sub("", stripped)
+    stripped = _TRAILING_DISTANCE_RE.sub("", stripped)
     stripped = _TRAILING_BONUS_RE.sub("", stripped)
     collapsed = re.sub(r"\s+", " ", stripped).strip().lower()
     if not collapsed:
@@ -333,9 +399,30 @@ def _normalize_special_token(token: str) -> str:
 def _split_special_cell(cell: str) -> list[str]:
     """A Special-column cell's own comma-separated tokens, with empty
     entries and a bare em/en-dash/hyphen placeholder ("no special ability
-    this level") dropped."""
-    tokens = [t.strip() for t in cell.split(",")]
-    return [t for t in tokens if t and t not in ("—", "–", "-", "--")]
+    this level") dropped. Splits only on commas OUTSIDE parentheses
+    (B10c-mand4 criterion 1), so a token like "Wild shape (Huge elemental,
+    2/day)" survives as one token instead of being torn in two at the
+    comma inside its own parenthetical. A stray, unbalanced ')' clamps
+    depth at 0 rather than going negative, so it can't swallow the rest of
+    the cell as "inside parentheses"."""
+    tokens: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in cell:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            tokens.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    tokens.append("".join(current))
+    stripped_tokens = [t.strip() for t in tokens]
+    return [t for t in stripped_tokens if t and t not in ("—", "–", "-", "--")]
 
 
 _SKILLS_CACHE: list[str] | None = None
@@ -561,15 +648,23 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
                 )
 
     class_features = fields.get("class_features")
-    feature_entries: list[tuple[str, Any]] = []
+    feature_entries: list[tuple[str, Any, dict[str, Any]]] = []
     if isinstance(class_features, list):
         feature_entries = [
-            (f["name"], f.get("level"))
+            (f["name"], f.get("level"), f)
             for f in class_features
             if isinstance(f, dict) and isinstance(f.get("name"), str)
         ]
 
+    # B10c-mand4 criterion 3: match once per DISTINCT normalized Special
+    # token across the whole table, not once per row -- a repeated
+    # progression ("1st favored enemy", "2nd favored enemy", ...) is one
+    # feature, not one error (and one required class_features entry) per
+    # level it appears at. `seen_tokens` keeps the first (level, raw token)
+    # a given normalized token was seen at, in table order, so the error
+    # message still names that first occurrence.
     if special_idx is not None:
+        seen_tokens: dict[str, tuple[int, str]] = {}
         for row in rows:
             level_cell = _cell(row, level_idx)
             special_cell = _cell(row, special_idx)
@@ -578,22 +673,67 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
                 continue
             for token in _split_special_cell(special_cell):
                 normalized_token = _normalize_special_token(token)
-                matched = any(
-                    normalized_token.startswith(_normalize_special_token(feature_name))
-                    for feature_name, _feature_level in feature_entries
-                )
-                if not matched:
-                    errors.append(
-                        f"{name}: level {level} Special entry {token!r} has no matching "
-                        "class_features entry"
-                    )
+                if normalized_token not in seen_tokens:
+                    seen_tokens[normalized_token] = (level, token)
 
-    for feature_name, feature_level in feature_entries:
+        # A feature name that normalizes to the empty string (e.g. a
+        # stray "(Ex)") is skipped here -- `"anything".startswith("")` is
+        # always true and would make every distinct token match vacuously.
+        normalized_feature_names = [
+            _normalize_special_token(feature_name) for feature_name, _level, _f in feature_entries
+        ]
+        for normalized_token, (level, token) in seen_tokens.items():
+            matched = any(
+                normalized_feature_name and normalized_token.startswith(normalized_feature_name)
+                for normalized_feature_name in normalized_feature_names
+            )
+            if not matched:
+                errors.append(
+                    f"{name}: level {level} Special entry {token!r} has no matching "
+                    "class_features entry"
+                )
+
+    for feature_name, feature_level, _feature in feature_entries:
         if isinstance(feature_level, int) and feature_level not in parsed_level_set:
             errors.append(
                 f"{name}: class_features {feature_name!r} level {feature_level} is not in "
                 "the level table"
             )
+
+    # B10c-mand4 criterion 4: a class_features entry with no real
+    # description is the padding the judgement flagged (an entry
+    # duplicated per level with an empty body instead of one real entry
+    # describing the whole progression) -- write nothing rather than an
+    # empty string.
+    for feature_name, _feature_level, feature in feature_entries:
+        text_md = feature.get("text_md")
+        if not isinstance(text_md, str) or not text_md.strip():
+            errors.append(f"{name}: class_features {feature_name!r} has an empty text_md")
+
+    # B10c-mand4 criterion 5: two entries whose names normalize to the same
+    # thing are the other half of that padding -- one feature, split across
+    # several near-duplicate entries (e.g. "Inspire Courage"/"Inspire
+    # Courage +2"/"+3"/"+4", or "Bonus Feat" repeated per level).
+    normalized_name_counts: dict[str, int] = {}
+    for feature_name, _feature_level, _feature in feature_entries:
+        normalized_name = _normalize_special_token(feature_name)
+        normalized_name_counts[normalized_name] = normalized_name_counts.get(normalized_name, 0) + 1
+    for normalized_name, count in normalized_name_counts.items():
+        if count > 1:
+            errors.append(f"{name}: class_features has duplicate feature name {normalized_name!r}")
+
+    # B10c-mand4 criterion 6: a caster must carry its printed `Spells`
+    # class feature as a class_features entry of its own, not silently
+    # omit it (the wizard/bard/sorcerer records the judgement flagged all
+    # have `spellcasting` set but no `Spells` entry at all).
+    if isinstance(spellcasting, dict):
+        spells_normalized = _normalize_special_token("Spells")
+        has_spells_feature = any(
+            _normalize_special_token(feature_name) == spells_normalized
+            for feature_name, _feature_level, _feature in feature_entries
+        )
+        if not has_spells_feature:
+            errors.append(f"{name}: spellcasting is set but class_features has no 'Spells' entry")
 
     return errors
 

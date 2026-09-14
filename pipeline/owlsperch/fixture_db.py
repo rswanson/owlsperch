@@ -422,7 +422,16 @@ _CLASS: dict[str, Any] = {
                 "level": 1,
                 "text_md": "A fixture mage forms a bond with a single test fixture.",
             },
-            {"name": "Bonus Feat", "level": 3, "text_md": ""},
+            {
+                "name": "Bonus Feat",
+                "level": 3,
+                "text_md": "At 3rd level, a fixture mage gains a bonus test feat.",
+            },
+            {
+                "name": "Spells",
+                "level": 1,
+                "text_md": "A fixture mage casts arcane spells drawn from the wizard spell list.",
+            },
         ],
         "description_sections": [
             {
@@ -440,7 +449,7 @@ _CLASS: dict[str, Any] = {
     "variant_of": None,
     "applied_overrides": [],
     "macro_eligible": False,
-    "schema_version": 2,
+    "schema_version": 3,
     "extraction": {
         "tier": "sonnet",
         "model": "fixture",
