@@ -184,3 +184,65 @@ def test_load_skills_returns_the_committed_skill_list() -> None:
     assert "Knowledge" in skills
     assert len(skills) == 36
     assert len(set(skills)) == len(skills)  # no duplicates
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand3 Part 4: a base class (`class_type: "base"`) requires
+# class_skills/skill_points/alignment/description_sections/
+# weapon_and_armor_proficiency (a class.json `allOf`/`if`/`then`
+# conditional); any other class_type does not.
+# ---------------------------------------------------------------------------
+
+
+def _minimal_class_fields(**overrides: object) -> dict:
+    fields: dict = {
+        "hit_die": "d6",
+        "class_type": "base",
+        "max_level": 3,
+        "bab_progression": "poor",
+        "save_progressions": {"fort": "poor", "ref": "poor", "will": "good"},
+        "level_table": "table:example:table-1-1-the-testclass",
+        "class_features": [{"name": "A Feature", "level": 1, "text_md": ""}],
+        "source_pages": {"start": 1, "end": 2},
+    }
+    fields.update(overrides)
+    return fields
+
+
+def test_base_class_requires_the_new_fields() -> None:
+    schemas_dir = _repo_schemas_dir()
+    registry = load_registry(schemas_dir)
+    validator = Draft202012Validator(registry.load_type_schema("class"))
+
+    errors = sorted(validator.iter_errors(_minimal_class_fields()), key=str)
+    assert errors, "a base class missing class_skills/skill_points/alignment/... must fail"
+
+
+def test_base_class_passes_with_the_new_fields_present() -> None:
+    schemas_dir = _repo_schemas_dir()
+    registry = load_registry(schemas_dir)
+    validator = Draft202012Validator(registry.load_type_schema("class"))
+
+    fields = _minimal_class_fields(
+        class_skills=[{"skill": "Climb", "key_ability": "Str"}],
+        skill_points={"base": 2, "ability": "Int"},
+        alignment="Any",
+        description_sections=[{"heading": "Adventures", "text_md": "..."}],
+        weapon_and_armor_proficiency="Simple weapons only.",
+    )
+    errors = sorted(validator.iter_errors(fields), key=str)
+    assert not errors, errors
+
+
+def test_non_base_class_type_does_not_require_the_new_fields() -> None:
+    """The `if`/`then` branch keys off `class_type == "base"`; a `class`
+    record whose own `class_type` is "prestige" or "npc" is unaffected
+    (this is about the shared `class.json` conditional, not the separate
+    `prestige_class.json` schema, which B10c-mand3 leaves untouched at
+    version 1 -- its own `class_type` is never "base" in practice)."""
+    schemas_dir = _repo_schemas_dir()
+    registry = load_registry(schemas_dir)
+    validator = Draft202012Validator(registry.load_type_schema("class"))
+
+    errors = sorted(validator.iter_errors(_minimal_class_fields(class_type="prestige")), key=str)
+    assert not errors, errors
