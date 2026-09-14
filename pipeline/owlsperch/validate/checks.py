@@ -253,6 +253,14 @@ def _parse_level_cell(cell: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+#: A level_table column header naming a caster's spells-per-day/known/
+#: points progression (B10c-mand3 Part 3b) -- matched against `_KIND_RULES
+#: ["class"]`'s prompt convention of naming such columns
+#: "Spells per Day <slot>" (or a single "Spells per Day"); see
+#: `check_class_fields`.
+_SPELL_COLUMN_RE = re.compile(r"per day|known|points", re.IGNORECASE)
+
+
 def _find_column(columns: list[Any], keyword: str) -> int | None:
     """Index of the first column whose header contains `keyword`
     case-insensitively, or `None` if no column matches."""
@@ -290,13 +298,36 @@ def _save_progression_cell(progression: str, level: int) -> str:
 
 _PAREN_RE = re.compile(r"\([^)]*\)")
 
+#: A trailing numeric bonus on a Special-cell token, e.g. "+1", "+1d6" --
+#: stripped by `_normalize_special_token` so "Sneak Attack +1d6" compares
+#: down to the same form as its `class_features[].name` ("Sneak Attack").
+_TRAILING_BONUS_RE = re.compile(r"\+\d+(?:d\d+)?\s*$", re.IGNORECASE)
+
+
+def _fold_trailing_plural(word: str) -> str:
+    """Strip a trailing plural "s" from `word`, except when it ends in
+    "ss", "us", or "is" (so "bonus", "class", "this" survive unfolded).
+    Used by `_normalize_special_token` (B10c-mand3 Part 3a) to make
+    Special-cell/`class_features[].name` matching plural-insensitive: the
+    fighter's printed feature heading is "Bonus Feats:" but its own
+    Special cell reads "Bonus feat"."""
+    if word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
 
 def _normalize_special_token(token: str) -> str:
-    """Lowercase, drop every parenthetical group (`(Ex)`, `(Su)`, ...), and
-    collapse whitespace -- the shared comparison form for both a Special
-    cell's own comma-separated tokens and a `class_features[].name`."""
+    """Lowercase, drop every parenthetical group (`(Ex)`, `(Su)`, ...),
+    strip a trailing numeric bonus (`+N`, `+NdN`), fold a trailing plural
+    "s" per word (`_fold_trailing_plural`), and collapse whitespace -- the
+    shared comparison form for both a Special cell's own comma-separated
+    tokens and a `class_features[].name`."""
     stripped = _PAREN_RE.sub("", token)
-    return re.sub(r"\s+", " ", stripped).strip().lower()
+    stripped = _TRAILING_BONUS_RE.sub("", stripped)
+    collapsed = re.sub(r"\s+", " ", stripped).strip().lower()
+    if not collapsed:
+        return collapsed
+    return " ".join(_fold_trailing_plural(word) for word in collapsed.split(" "))
 
 
 def _split_special_cell(cell: str) -> list[str]:
@@ -441,6 +472,14 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
     if not isinstance(columns, list) or not isinstance(rows, list):
         errors.append(f"{name}: level_table {level_table_id!r} has malformed columns/rows")
         return errors
+
+    if isinstance(spellcasting, dict) and not any(
+        isinstance(c, str) and _SPELL_COLUMN_RE.search(c) for c in columns
+    ):
+        errors.append(
+            f"{name}: spellcasting is set but level_table {level_table_id!r} has no "
+            f"spells-per-day/known column (columns: {columns!r})"
+        )
 
     level_idx = _find_column(columns, "level")
     bab_idx = _find_column(columns, "attack")
