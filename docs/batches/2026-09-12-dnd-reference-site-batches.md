@@ -1023,7 +1023,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `web/e2e/tree.spec.ts`, tests, `CLAUDE.md`, batch doc.
 
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
-- **Status:** in-progress
+- **Status:** merged
 - **User-visible outcome:** duplicate records collapse to one canonical
   entry; detail pages show applied overrides and "other printings".
 - **Acceptance criteria:**

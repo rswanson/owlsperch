@@ -954,14 +954,23 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   1`), records are grouped by `(type, slug)` and the highest `books.
   published` wins (ties broken by `book_id` then `id`, a real total order
   so a build is deterministic even when `published` is equal or missing)
-  -- the rest get `canonical = 0, variant_of = <winner id>`. Because an
-  override in step (1) is matched against one specific row, but steps
-  (2)/(3) run afterward and can demote that exact row to a variant of a
-  *different*, same-slug canonical winner, `_merge_overrides_to_winners`
-  runs once all three steps have settled `variant_of`: it copies every
-  demoted record's own `applied_overrides` onto its ultimate winner
-  (following `variant_of` to the end, since an RC winner can itself later
-  lose to latest-wins), de-duplicated, order preserved -- otherwise the
+  -- the rest get `canonical = 0, variant_of = <winner id>`. Because step
+  (2) can demote a record to an RC winner that step (3) then demotes
+  again (that RC winner sharing a `(type, slug)`, but not a normalized
+  topic, with a later-published book -- so it was never grouped with the
+  RC record in step (2) and stayed eligible for step (3)), a naive
+  `variant_of` write would leave a 2-hop chain on disk; after all three
+  passes settle `canonical`/`variant_of`, `_flatten_variant_chains`
+  (via the shared `_root_of` walk, cycle- and dangling-pointer-safe)
+  rewrites every non-root `variant_of` pointer to the ROOT of its chain,
+  so the stored graph is always exactly one hop deep and no reader has to
+  walk it. Because an override in step (1) is matched against one
+  specific row, but steps (2)/(3) run afterward and can demote that exact
+  row to a variant of a *different*, same-slug canonical winner,
+  `_merge_overrides_to_winners` runs once `_flatten_variant_chains` has
+  settled every `variant_of` pointer: it copies every demoted record's
+  own `applied_overrides` onto its ultimate winner (via that same
+  `_root_of` walk), de-duplicated, order preserved -- otherwise the
   override would sit unreachably on a `canonical = 0` row sharing the
   winner's own `(type, slug)`, which `/records/{type}/{slug}` never falls
   through to (its `canonical = 1` query for that slug always succeeds
@@ -1074,9 +1083,18 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   same-type+slug row by `published` at request time) with objects resolved
   from the `variant_of` column build-db's precedence pass now fills:
   `{id, book_id, book_title, citation, published}` for every record whose
-  `variant_of` points at this one, ordered by `published` DESC then
-  `book_id` ASC (SQLite already sorts a NULL `published` last in DESC
-  order). `applied_overrides` is resolved the same way, from the stored id
+  `variant_of` points at this one, DIRECTLY OR TRANSITIVELY -- `app.py`'s
+  `_resolve_variants` walks the closure with a recursive CTE
+  (`WITH RECURSIVE chain(id) AS (...)`, `UNION` rather than `UNION ALL` so
+  a cycle in the stored data still terminates) over `records.variant_of`
+  (indexed by `records_variant_of_idx`) instead of a single-hop equality
+  query -- defence in depth, since `build_db.precedence
+  ._flatten_variant_chains` already keeps every stored `variant_of` at
+  most one hop from its root and a plain equality query would normally
+  suffice, but this is robust to any data, including a hand-edited or
+  pre-B11 database -- ordered by `published` DESC then `book_id` ASC
+  (SQLite already sorts a NULL `published` last in DESC order).
+  `applied_overrides` is resolved the same way, from the stored id
   list to `{id, name, type, book_id, book_title, citation, target_page,
   replacement_text}` objects in stored order, skipping an id with no
   matching row rather than raising -- the same defensive shape
