@@ -3,7 +3,7 @@
   "$id": "https://owlsperch.dev/schemas/class.json",
   "title": "Class fields",
   "description": "The `fields` object of a base-class record, per spec 4.6 and batch B10c.",
-  "version": 2,
+  "version": 3,
   "type": "object",
   "properties": {
     "hit_die": {
@@ -104,7 +104,8 @@
           "level": { "type": "integer", "minimum": 1 },
           "text_md": {
             "type": "string",
-            "description": "May be the empty string when the book prints no description for a Special-column entry."
+            "minLength": 1,
+            "description": "Never the empty string: a Special-column entry the book leaves undescribed still gets a class_features entry, whose text_md is the Special cell's own printed wording for it."
           }
         },
         "required": ["name", "level", "text_md"],

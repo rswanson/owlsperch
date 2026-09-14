@@ -156,9 +156,10 @@ def test_write_fixture_data_derives_categories_for_both_rules_sections(tmp_path:
 def test_fixture_class_owns_its_level_table_and_matches_a_real_spell_list(tmp_path: Path) -> None:
     """Batch B10c, design decision D13: the fixture class validates cleanly
     (proving the class validators are satisfiable), owns a 3-row level
-    table, has two class features, and its `spellcasting.spell_list` points
-    at a class name the fixture spells actually use -- so the web Spells
-    section has something real to render."""
+    table, has three class features (including its required `Spells`
+    entry, B10c-mand4 criterion 6), and its `spellcasting.spell_list`
+    points at a class name the fixture spells actually use -- so the web
+    Spells section has something real to render."""
     data_dir = tmp_path / "data"
     result = write_fixture_data(data_dir)
     assert result.skipped_invalid == 0, result.skipped
@@ -172,7 +173,7 @@ def test_fixture_class_owns_its_level_table_and_matches_a_real_spell_list(tmp_pa
         assert class_row is not None
         record = json.loads(class_row["json"])
         assert record["fields"]["spellcasting"]["spell_list"] == "Wizard"
-        assert len(record["fields"]["class_features"]) == 2
+        assert len(record["fields"]["class_features"]) == 3
         assert record["tables"] == ["table:fixture-book:table-1-the-fixture-mage"]
 
         table_row = conn.execute(

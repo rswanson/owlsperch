@@ -447,7 +447,7 @@ def _write_superseded_fixture(tmp_path: Path) -> Path:
         "variant_of": None,
         "applied_overrides": [],
         "macro_eligible": False,
-        "schema_version": 2,
+        "schema_version": 3,
         "extraction": {
             "tier": "sonnet",
             "model": "m",

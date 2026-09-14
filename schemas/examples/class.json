@@ -37,12 +37,17 @@
       {
         "name": "Umbral Step",
         "level": 2,
-        "text_md": ""
+        "text_md": "A sable adept can step through an adjacent patch of shadow to emerge from any other shadow within 30 feet."
       },
       {
         "name": "Eclipse Mastery",
         "level": 3,
         "text_md": "Once per day, a sable adept can call down a brief eclipse, granting concealment to every ally within 30 feet for 1 round."
+      },
+      {
+        "name": "Spells",
+        "level": 1,
+        "text_md": "A sable adept casts arcane spells drawn from the sable adept spell list."
       }
     ],
     "description_sections": [
@@ -59,7 +64,7 @@
   "variant_of": null,
   "applied_overrides": [],
   "macro_eligible": false,
-  "schema_version": 2,
+  "schema_version": 3,
   "extraction": {
     "tier": "sonnet",
     "model": "claude-sonnet-5",

@@ -202,7 +202,7 @@ def _minimal_class_fields(**overrides: object) -> dict[str, object]:
         "bab_progression": "poor",
         "save_progressions": {"fort": "poor", "ref": "poor", "will": "good"},
         "level_table": "table:example:table-1-1-the-testclass",
-        "class_features": [{"name": "A Feature", "level": 1, "text_md": ""}],
+        "class_features": [{"name": "A Feature", "level": 1, "text_md": "You have a feature."}],
         "source_pages": {"start": 1, "end": 2},
     }
     fields.update(overrides)

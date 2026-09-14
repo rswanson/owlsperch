@@ -34,7 +34,7 @@
       {
         "name": "Unyielding",
         "level": 2,
-        "text_md": ""
+        "text_md": "An iron warden cannot be moved from his square against his will while standing his ground."
       },
       {
         "name": "Fortress Bound",
@@ -56,7 +56,7 @@
   "variant_of": null,
   "applied_overrides": [],
   "macro_eligible": false,
-  "schema_version": 1,
+  "schema_version": 2,
   "extraction": {
     "tier": "sonnet",
     "model": "claude-sonnet-5",
