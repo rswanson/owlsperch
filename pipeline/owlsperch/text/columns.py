@@ -122,6 +122,65 @@ Algorithm (per page):
     for "1d2" with footnote marker 3) are not un-merged here -- out of
     scope.
 
+2b. **Reassemble a table `pdftotext` fragmented into several groups plus
+    orphan rows.** Sometimes step 2's clique detection does not produce one
+    table group per printed table but several: a wide class-level table
+    (e.g. PHB Table 3-6: The Cleric) can arrive from poppler as multiple
+    per-column block clusters -- one clique of column blocks per short run
+    of rows -- separated by rows that instead arrive as one block *per
+    cell* (every column's cell for that row its own single-line block).
+    Step 2's `TABLE_CANDIDATE_MIN_LINES` (>= 2 non-blank lines) correctly
+    excludes those single-line fragments from clique detection -- a
+    one-line block is ambiguous with a heading on its own -- but left
+    there, a fragmented table like this yields several small `TableGroup`s
+    plus a pile of loose one-cell blocks that reading order then scatters
+    as prose.
+
+    This step runs immediately after step 2's clique detection, before any
+    of its leftover blocks reach step 2a's single-block-table detection --
+    so a block this step absorbs is claimed once, never separately
+    considered there and never emitted twice. It alternates two moves to a
+    joint fixpoint:
+
+    - **Merge.** Two step-2 table-group candidates merge when their
+      x-extents overlap by at least `TABLE_MERGE_X_OVERLAP_FRACTION` (80%)
+      of the narrower one's x span, and the vertical gap between them is
+      at most `TABLE_MERGE_GAP_HEIGHT_FACTOR` (2.0) times the larger of
+      their own median non-blank line heights -- i.e. they read as one
+      table with an ordinary row pitch between them, not two unrelated
+      tables that merely share a column layout.
+    - **Absorb.** A leftover block -- not prose-like, not label:value-like
+      (the same exclusions steps 1a/1b apply to real table columns), and
+      *not* required to meet `TABLE_CANDIDATE_MIN_LINES` -- joins a group
+      when its x-extent lies entirely inside the group's own x span and
+      its y-center falls within one of the group's own median non-blank
+      line heights of the group's y span. A single-line orphan row
+      fragment is exactly what this looks for.
+
+    Merging concatenates member BLOCKS, never already-built rows:
+    rebuilding from blocks with `_build_table_group` (the same function
+    step 2 already uses) is what keeps a merged group's rows correctly
+    re-bucketed and column-sorted, rather than stitching two groups' row
+    lists together with each one's cells numbered against its own,
+    independent column layout. Alternation to a fixpoint matters: on PHB
+    p.32, the gap between the 4th per-column-cluster group and the 5th is
+    too wide to merge on its own, and only closes once the 15th- and
+    16th-level orphan rows sitting in that gap are absorbed into the 4th
+    group first -- a single merge-then-absorb pass would stop with two
+    groups instead of one. Every individual merge or absorption is
+    checked against a guard before being accepted: rebuilding the
+    candidate with `_build_table_group` and counting rows with at least 2
+    cells must not come out lower than the sum for the pieces going in; a
+    step that would is rejected and the pass moves on to try a different
+    pair or block, rather than aborting the whole reassembly.
+
+    This step never removes the phantom ", Bonus Feat" / ", BF" errata
+    tokens PHB class tables print in their Special column -- those are
+    baked into the source PDF's own text (even `pdftotext -layout` prints
+    them, and poppler's bbox output carries no font signal to tell them
+    apart from a real feature reference), so distinguishing them stays the
+    extraction prompt's job, not this step's.
+
 3. **Split the page into runs at wide blocks and table groups.** The *text
    area* width is the span from the minimum `xMin` to the maximum `xMax`
    across all non-vertical blocks. Any remaining (non-table) block whose
@@ -259,6 +318,16 @@ TABLE_CELL_MAX_MEDIAN_WORDS = 4
 #: split only if at least this fraction of the gappy rows land in it (see
 #: step 2a).
 TABLE_GAP_CLUSTER_FRACTION = 0.60
+
+#: Two vertically adjacent table-group candidates merge (step 2b) when
+#: their x-extents overlap by at least this fraction of the narrower one's
+#: x span.
+TABLE_MERGE_X_OVERLAP_FRACTION = 0.80
+
+#: ...and the vertical gap between them is at most this multiple of the
+#: larger of the two candidates' median non-blank line heights (see step
+#: 2b).
+TABLE_MERGE_GAP_HEIGHT_FACTOR = 2.0
 
 
 def is_vertical_block(block: Block) -> bool:
@@ -728,9 +797,129 @@ def _connected_components(nodes: list[int], adjacency: list[set[int]]) -> list[s
     return components
 
 
+def _group_extent(blocks: list[Block]) -> tuple[float, float, float, float]:
+    """(x_min, x_max, y_min, y_max) spanned by `blocks` together."""
+    return (
+        min(b.x_min for b in blocks),
+        max(b.x_max for b in blocks),
+        min(b.y_min for b in blocks),
+        max(b.y_max for b in blocks),
+    )
+
+
+def _group_median_line_height(blocks: list[Block]) -> float:
+    heights = [line.height for b in blocks for line in b.lines if line.text.strip()]
+    return _median(heights, default=1.0)
+
+
+def _qualifying_row_count(blocks: list[Block]) -> int:
+    """How many of `_build_table_group(blocks)`'s rows have at least 2
+    cells -- the measure step 2b's merge/absorb guard must not decrease
+    (see module docstring, step 2b)."""
+    return sum(1 for row in _build_table_group(blocks).rows if len(row.cells) >= 2)
+
+
+def _groups_can_merge(a: list[Block], b: list[Block]) -> bool:
+    """Whether table-group candidates `a` and `b` are vertically adjacent
+    parts of the same printed table (see module docstring, step 2b): their
+    x-extents overlap by at least `TABLE_MERGE_X_OVERLAP_FRACTION` of the
+    narrower one's x span, and (with `a` above `b`) the vertical gap
+    between them is at most `TABLE_MERGE_GAP_HEIGHT_FACTOR` times the
+    larger of their own median non-blank line heights."""
+    a_x_min, a_x_max, _, a_y_max = _group_extent(a)
+    b_x_min, b_x_max, b_y_min, _ = _group_extent(b)
+    overlap = min(a_x_max, b_x_max) - max(a_x_min, b_x_min)
+    narrower = min(a_x_max - a_x_min, b_x_max - b_x_min)
+    if narrower <= 0 or overlap / narrower < TABLE_MERGE_X_OVERLAP_FRACTION:
+        return False
+    gap = b_y_min - a_y_max
+    if gap < 0:
+        return False
+    threshold = max(_group_median_line_height(a), _group_median_line_height(b))
+    return gap <= TABLE_MERGE_GAP_HEIGHT_FACTOR * threshold
+
+
+def _merge_adjacent_groups(groups: list[list[Block]]) -> list[list[Block]] | None:
+    """Try to merge one vertically adjacent pair of `groups` (step 2b,
+    part A); return the new list of groups with that pair concatenated, or
+    `None` if no pair both qualifies (`_groups_can_merge`) and passes the
+    row-count guard."""
+    ordered = sorted(groups, key=lambda g: _group_extent(g)[2])
+    for i in range(len(ordered) - 1):
+        a, b = ordered[i], ordered[i + 1]
+        if not _groups_can_merge(a, b):
+            continue
+        before = _qualifying_row_count(a) + _qualifying_row_count(b)
+        merged = a + b
+        if _qualifying_row_count(merged) < before:
+            continue
+        rest = [g for k, g in enumerate(ordered) if k != i and k != i + 1]
+        return [merged, *rest]
+    return None
+
+
+def _block_fits_group(block: Block, group: list[Block]) -> bool:
+    """Whether `block` is an orphan single-cell fragment belonging inside
+    `group` (step 2b, part B): not prose-like or label:value-like (the
+    same exclusions steps 1a/1b apply to real table columns), its
+    x-extent entirely inside the group's own x span, and its y-center
+    within one of the group's own median non-blank line heights of the
+    group's y span. Deliberately does not require
+    `_has_min_lines_for_table_candidacy` -- a single-line orphan row
+    fragment is exactly what this looks for."""
+    if _is_prose_like_block(block) or _is_label_value_block(block):
+        return False
+    x_min, x_max, y_min, y_max = _group_extent(group)
+    if block.x_min < x_min or block.x_max > x_max:
+        return False
+    height = _group_median_line_height(group)
+    y_center = (block.y_min + block.y_max) / 2
+    return y_min - height <= y_center <= y_max + height
+
+
+def _absorb_orphan_blocks(
+    groups: list[list[Block]], pool: list[Block]
+) -> tuple[list[list[Block]], list[Block]] | None:
+    """Try to absorb one leftover block from `pool` into one of `groups`
+    (step 2b, part B); return the updated `(groups, pool)`, or `None` if
+    no block both fits (`_block_fits_group`) and passes the row-count
+    guard."""
+    for gi, group in enumerate(groups):
+        for bi, block in enumerate(pool):
+            if not _block_fits_group(block, group):
+                continue
+            before = _qualifying_row_count(group) + _qualifying_row_count([block])
+            if _qualifying_row_count([*group, block]) < before:
+                continue
+            new_groups = [*groups[:gi], [*group, block], *groups[gi + 1 :]]
+            new_pool = [*pool[:bi], *pool[bi + 1 :]]
+            return new_groups, new_pool
+    return None
+
+
+def _reassemble_table_groups(
+    groups: list[list[Block]], pool: list[Block]
+) -> tuple[list[list[Block]], list[Block]]:
+    """Alternate merging vertically adjacent table-group candidates and
+    absorbing orphan single-cell blocks into them to a joint fixpoint (see
+    module docstring, step 2b) -- a single merge-then-absorb pass is not
+    enough, since absorbing an orphan row can be exactly what brings a gap
+    down under the merge threshold."""
+    while True:
+        merged = _merge_adjacent_groups(groups)
+        if merged is not None:
+            groups = merged
+            continue
+        absorbed = _absorb_orphan_blocks(groups, pool)
+        if absorbed is not None:
+            groups, pool = absorbed
+            continue
+        return groups, pool
+
+
 def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
     """Split `blocks` into (table groups, remaining non-table blocks) per
-    steps 1a/2 of the module docstring."""
+    steps 1a/2/2b of the module docstring."""
     n = len(blocks)
     candidate_indices = [
         i
@@ -748,7 +937,7 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
                 adjacency[j].add(i)
 
     claimed: set[int] = set()
-    table_groups: list[TableGroup] = []
+    groups: list[list[Block]] = []
     for component in _connected_components(candidate_indices, adjacency):
         if len(component) < TABLE_MIN_BLOCKS:
             continue
@@ -757,10 +946,12 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
             available = clique - claimed
             if len(available) >= TABLE_MIN_BLOCKS:
                 claimed |= available
-                table_groups.append(_build_table_group([blocks[k] for k in sorted(available)]))
+                groups.append([blocks[k] for k in sorted(available)])
 
-    remaining = [blocks[i] for i in range(n) if i not in claimed]
-    return table_groups, remaining
+    pool = [blocks[i] for i in range(n) if i not in claimed]
+    groups, pool = _reassemble_table_groups(groups, pool)
+    table_groups = [_build_table_group(g) for g in groups]
+    return table_groups, pool
 
 
 def _run_median_word_height(blocks: list[Block]) -> float:

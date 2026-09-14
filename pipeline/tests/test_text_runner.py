@@ -647,3 +647,96 @@ def test_phb_page_120_corpus() -> None:
         text = (data_dir / "text" / book_id / "p0120.txt").read_text()
         assert "CHAPTER 7:" not in text
         assert text.index("Longbow, Composite") < text.index("Longspear:")
+
+
+@pytest.mark.corpus
+def test_phb_page_32_cleric_table_reassembles_corpus() -> None:
+    """Regression for B10c-mand7: PHB p.32's "Table 3-6: The Cleric" is a
+    class-level table `pdftotext` fragments into several per-column table
+    groups plus orphan single-cell blocks for the 4th/8th/12th/15th/16th/
+    20th level rows (see `owlsperch.text.columns`'s module docstring, step
+    2b). Before that step existed, those level rows came out as lone,
+    tab-less lines; after it, every level row is part of the one
+    reassembled table group, so each one's line has every column,
+    tab-joined."""
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+
+    entries = load_manifest(default_manifest_path())
+    book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        exit_code = run_text(
+            book_id,
+            pdf_dir=pdf_dir,
+            data_dir=data_dir,
+            page_range=(31, 32),
+        )
+        assert exit_code == 0
+        text = (data_dir / "text" / book_id / "p0032.txt").read_text()
+        lines = text.splitlines()
+
+        # Every level row -- including the ones `pdftotext` used to split
+        # off as orphan single-cell blocks -- now has its Level cell
+        # tab-joined with the rest of its row, evidence it landed inside
+        # the one reassembled table group rather than as a lone fragment.
+        ordinals = [
+            "1st",
+            "2nd",
+            "3rd",
+            "4th",
+            "5th",
+            "6th",
+            "7th",
+            "8th",
+            "9th",
+            "10th",
+            "11th",
+            "12th",
+            "13th",
+            "14th",
+            "15th",
+            "16th",
+            "17th",
+            "18th",
+            "19th",
+            "20th",
+        ]
+        row_lines = {
+            ordinal: next((line for line in lines if line.startswith(f"{ordinal}\t")), None)
+            for ordinal in ordinals
+        }
+        missing = [ordinal for ordinal, line in row_lines.items() if line is None]
+        assert not missing, (missing, lines)
+
+        # Every level row is a FULL class-table row, not just the Level
+        # cell plus a couple of others: at least 20 of the table's lines
+        # (the 20 level rows) have at least 10 tab-separated cells.
+        wide_rows = [line for line in lines if len(line.split("\t")) >= 10]
+        assert len(wide_rows) >= 20, (len(wide_rows), lines)
+
+        # The 20th-level row -- one of the ones `pdftotext` used to split
+        # off as a lone orphan block -- has its Level/BAB/Fort/Ref/Will
+        # cells intact and in order after reassembly.
+        row_20th = row_lines["20th"]
+        assert row_20th is not None
+        assert row_20th.split("\t")[:5] == ["20th", "+15/+10/+5", "+12", "+6", "+12"], row_20th
+
+        # The table's footnote -- sitting directly below it, at a similar
+        # x-position and line pitch to the table's own rows -- must start
+        # its own line rather than getting tab-joined into a table row by
+        # the reassembly pass (it is prose, not a table row: `_is_prose_
+        # like_block`/`_is_label_value_block` must keep it excluded).
+        footnote_text = "In addition to the stated number of spells per day"
+        footnote_lines = [line for line in lines if footnote_text in line]
+        assert len(footnote_lines) == 1, footnote_lines
+        assert "\t" not in footnote_lines[0], footnote_lines[0]
