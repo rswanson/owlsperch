@@ -48,6 +48,15 @@ def _parse_pages(value: str) -> tuple[int, int]:
     return (first, last)
 
 
+def _parse_kinds(value: str) -> frozenset[str]:
+    """Comma-separated `--kinds` values, as a `frozenset[str]`. Whether the
+    named kinds are actually selectable (only class/prestige_class are) is
+    validated by `owlsperch.segment.runner.run_segment` itself, not here --
+    that's where a bad value can be reported with the command's own exit
+    code (1) rather than argparse's."""
+    return frozenset(part.strip() for part in value.split(",") if part.strip())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="owlsperch", description="D&D 3.5e reference-data pipeline."
@@ -91,6 +100,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="A-B",
         help="Limit segmentation to PDF page range A-B (1-based, inclusive).",
+    )
+    segment_parser.add_argument(
+        "--kinds",
+        type=_parse_kinds,
+        default=None,
+        metavar="KIND[,KIND]",
+        help=(
+            "Re-run only the toc-driven pass for these kind_hints (only "
+            "class/prestige_class are accepted) instead of full "
+            "segmentation -- e.g. --kinds class or --kinds class,"
+            "prestige_class."
+        ),
     )
 
     validate_parser = subparsers.add_parser(
@@ -338,7 +359,9 @@ def main(argv: list[str] | None = None) -> int:
         # ManifestError (raised by load_manifest before any per-book work
         # starts) can actually reach this handler.
         try:
-            return run_segment(args.book_id, force=args.force, page_range=args.pages)
+            return run_segment(
+                args.book_id, force=args.force, page_range=args.pages, kinds=args.kinds
+            )
         except ManifestError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
