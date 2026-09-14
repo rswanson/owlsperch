@@ -634,3 +634,217 @@ def test_phb1_real_corpus_spell_segments() -> None:
         # Total real-page coverage still holds (acceptance criterion 5).
         covered = {page for seg in segments for page in seg["pages"]}
         assert covered == set(range(page_range[0], page_range[1] + 1))
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c: toc-driven class/prestige_class segments (design decisions
+# D1-D3).
+# ---------------------------------------------------------------------------
+
+
+def _write_toc(data_dir: Path, book_id: str, entries: list[dict[str, Any]]) -> None:
+    toc_dir = data_dir / "toc"
+    toc_dir.mkdir(parents=True, exist_ok=True)
+    toc = {
+        "book_id": book_id,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "contents_pages": [0],
+        "entries": entries,
+    }
+    (toc_dir / f"{book_id}.json").write_text(json.dumps(toc))
+
+
+def _classes_toc_entries() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "Chapter 3: Classes",
+            "level": 1,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 4,
+            "path": ["Chapter 3: Classes"],
+            "category": "classes",
+        },
+        {
+            # No "Hit Die: dN" marker anywhere on its own page -- must NOT
+            # become a class segment (design decision D1).
+            "title": "The Classes",
+            "level": 2,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 1,
+            "path": ["Chapter 3: Classes", "The Classes"],
+            "category": "classes",
+        },
+        {
+            "title": "Barbarian",
+            "level": 2,
+            "printed_page": 2,
+            "pdf_page_start": 2,
+            "pdf_page_end": 2,
+            "path": ["Chapter 3: Classes", "Barbarian"],
+            "category": "classes",
+        },
+        {
+            "title": "Bard",
+            "level": 2,
+            "printed_page": 3,
+            "pdf_page_start": 3,
+            "pdf_page_end": 4,
+            "path": ["Chapter 3: Classes", "Bard"],
+            "category": "classes",
+        },
+    ]
+
+
+def _write_classes_book(data_dir: Path, book_id: str = "book") -> None:
+    _write_book(
+        data_dir,
+        book_id,
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("BARBARIAN"),
+                _para(
+                    "Hit Die: d12. A barbarian is a fierce warrior, savage and strong in "
+                    "battle here.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para("BARD"),
+                _para(
+                    "Hit Die: d6. Bards are trained in music and magic together for adventuring.",
+                    line_count=3,
+                ),
+            ],
+            4: [
+                _para(
+                    "Bards continue channeling their magic across the land for a while "
+                    "longer here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(data_dir, book_id, _classes_toc_entries())
+
+
+def test_class_segments_are_discovered_from_toc_and_hit_die_marker(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_classes_book(data_dir)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    class_segments = _by_kind(segments, "class")
+    # Exactly Barbarian and Bard -- "The Classes" (no Hit Die marker) must
+    # not become a class segment even though it's under the same
+    # toc-resolved "classes" category (design decision D1).
+    assert {s["heading"] for s in class_segments} == {"Barbarian", "Bard"}
+
+    by_heading = {s["heading"]: s for s in class_segments}
+    barbarian = by_heading["Barbarian"]
+    bard = by_heading["Bard"]
+
+    assert barbarian["seg_id"] == "book-class-p0002"
+    assert barbarian["tier"] == "sonnet"  # starting_tier("class")
+    # D2: span extended one page past pdf_page_end (2) -> page 3 included,
+    # where Bard's own table/heading text lives in the real corpus case.
+    assert barbarian["pages"] == [2, 3]
+
+    assert bard["seg_id"] == "book-class-p0003"
+    assert bard["tier"] == "sonnet"
+    # Bard's own pdf_page_end (4) is already the book's last page, so the
+    # +1 extension is capped there, not pushed past the end of the book.
+    assert bard["pages"] == [3, 4]
+
+
+def test_class_span_supersedes_fragment_segments_but_not_unrelated_ones(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_classes_book(data_dir)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+
+    front_matter = segments["book-p0001-01"]
+    assert front_matter["pages"] == [1]
+    assert front_matter["superseded_by"] is None  # outside every class span
+
+    barbarian_fragment = next(
+        s
+        for s in segments.values()
+        if s["kind_hint"] == "rules_section" and s["pages"] == [2] and s["heading"] == "BARBARIAN"
+    )
+    assert barbarian_fragment["superseded_by"] == "book-class-p0002"
+
+    bard_fragment = next(
+        s
+        for s in segments.values()
+        if s["kind_hint"] == "rules_section" and s["pages"] == [3, 4] and s["heading"] == "BARD"
+    )
+    assert bard_fragment["superseded_by"] == "book-class-p0003"
+
+    # The class segments themselves are never superseded by each other.
+    assert segments["book-class-p0002"]["superseded_by"] is None
+    assert segments["book-class-p0003"]["superseded_by"] is None
+
+
+def test_class_segmentation_is_additive_and_idempotent(tmp_path: Path) -> None:
+    """A plain (non `--force`) rerun both leaves every existing segment's
+    bookkeeping alone and doesn't re-stamp/duplicate anything (design
+    decision D3: this is deliberately what makes a bare `owlsperch segment
+    <book_id>` do the whole class-segmentation job on the real corpus)."""
+    data_dir = tmp_path / "data"
+    _write_classes_book(data_dir)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+    first_pass = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+
+    # Simulate extraction bookkeeping already accumulated on a fragment
+    # segment before this batch's class pass ever ran.
+    seg_dir = data_dir / "segments" / "book"
+    fragment_path = next(
+        p
+        for p in seg_dir.glob("*.json")
+        if json.loads(p.read_text())["seg_id"]
+        == next(
+            s["seg_id"]
+            for s in first_pass.values()
+            if s["kind_hint"] == "rules_section" and s["pages"] == [2]
+        )
+    )
+    fragment = json.loads(fragment_path.read_text())
+    fragment["records"] = ["records/book/rules_section/barbarian-fluff.json"]
+    fragment["outcome"] = "validated"
+    fragment_path.write_text(json.dumps(fragment))
+
+    summary = segment_book(_entry("book"), data_dir=data_dir)
+    assert summary.superseded == 0  # already stamped -- nothing new to mark
+
+    second_pass = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+    assert second_pass.keys() == first_pass.keys()
+    stamped_fragment = second_pass[fragment["seg_id"]]
+    assert stamped_fragment["superseded_by"] == "book-class-p0002"
+    # The extraction bookkeeping added above must survive untouched.
+    assert stamped_fragment["records"] == ["records/book/rules_section/barbarian-fluff.json"]
+    assert stamped_fragment["outcome"] == "validated"
+
+
+def test_no_toc_means_no_class_segments(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {1: [_para("Front matter body text goes on for a good while here.", line_count=3)]},
+    )
+    # Deliberately no toc/book.json written.
+
+    summary = segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    assert _by_kind(segments, "class") == []
+    assert _by_kind(segments, "prestige_class") == []
+    assert "no toc" in summary.class_note
+    assert "no toc" in summary.render()

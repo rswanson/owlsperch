@@ -120,6 +120,19 @@ def load_categories(schemas_dir: Path | None = None) -> list[Category]:
     return sorted(categories, key=lambda c: c.order)
 
 
+def load_skills(schemas_dir: Path | None = None) -> list[str]:
+    """Load `schemas/skills.json`'s `skills` list (batch B10c): the
+    committed, game-term list of every 3.5e skill name, used by
+    `owlsperch.validate.checks`'s class-skill validator to catch a
+    misspelled or invented skill name."""
+    schemas_dir = schemas_dir if schemas_dir is not None else default_schemas_dir()
+    raw = _load_json(schemas_dir / "skills.json", what="skills file")
+    skills = raw.get("skills", [])
+    if not isinstance(skills, list) or not all(isinstance(s, str) for s in skills):
+        raise SchemaError("skills.json 'skills' must be an array of strings")
+    return skills
+
+
 def load_registry(schemas_dir: Path | None = None) -> Registry:
     """Load `registry.json` and `envelope.json` from `schemas_dir` (default:
     `default_schemas_dir()`)."""

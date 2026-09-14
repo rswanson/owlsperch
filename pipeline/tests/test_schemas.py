@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from owlsperch.schemas import SchemaError, default_schemas_dir, load_registry
+from owlsperch.schemas import SchemaError, default_schemas_dir, load_registry, load_skills
 
 _REQUIRED_X_UI_KEYS = {"label", "filterable", "sortable", "group", "order"}
 
@@ -87,9 +87,10 @@ def test_every_type_schema_field_has_complete_x_ui() -> None:
 
 
 #: Files under `schemas/` that aren't JSON Schema type/envelope files and so
-#: carry no top-level `version`: `registry.json` (the type index) and
-#: `categories.json` (batch B10b's plain rules-taxonomy data file, D8).
-_NON_SCHEMA_FILES = {"registry.json", "categories.json"}
+#: carry no top-level `version`: `registry.json` (the type index),
+#: `categories.json` (batch B10b's plain rules-taxonomy data file, D8), and
+#: `skills.json` (batch B10c's plain skill-name list, D9).
+_NON_SCHEMA_FILES = {"registry.json", "categories.json", "skills.json"}
 
 
 def test_every_schema_has_a_top_level_integer_version() -> None:
@@ -170,3 +171,16 @@ def test_every_examples_file_has_a_slug_and_id_consistent_with_its_name() -> Non
 
         expected_id = f"{record['type']}:{record['book_id']}:{slug}"
         assert record["id"] == expected_id, f"{path}: id {record['id']!r} != {expected_id!r}"
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c, design decision D9: load_skills.
+# ---------------------------------------------------------------------------
+
+
+def test_load_skills_returns_the_committed_skill_list() -> None:
+    skills = load_skills(_repo_schemas_dir())
+    assert "Climb" in skills
+    assert "Knowledge" in skills
+    assert len(skills) == 36
+    assert len(set(skills)) == len(skills)  # no duplicates

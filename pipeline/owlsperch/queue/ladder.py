@@ -55,6 +55,20 @@ TIER_MODELS: dict[str, str] = {
     "opus": "claude-opus-5",
 }
 
+#: Batch B10c: a `kind_hint` that starts higher than `TIERS[0]` (haiku) on
+#: the ladder, because a class/prestige_class extraction (a level table plus
+#: several structured sub-objects) is reliably too complex for haiku to get
+#: right on a first attempt -- see `starting_tier`.
+STARTING_TIERS: dict[str, str] = {"class": "sonnet", "prestige_class": "sonnet"}
+
+
+def starting_tier(kind: str) -> str:
+    """The tier a freshly-written segment of `kind` starts on:
+    `STARTING_TIERS.get(kind, TIERS[0])` -- every kind not listed in
+    `STARTING_TIERS` still starts at the bottom of the ladder (haiku)."""
+    return STARTING_TIERS.get(kind, TIERS[0])
+
+
 #: How long a segment may sit `in_progress` before the next `queue next`
 #: resets it back to `pending` (spec 4.5).
 STALE_AFTER = timedelta(minutes=60)

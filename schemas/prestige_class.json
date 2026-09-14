@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/prestige_class.json",
+  "title": "Prestige class fields",
+  "description": "The `fields` object of a prestige-class record, per spec 4.6 and batch B10c.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "hit_die": {
+      "type": "string",
+      "enum": ["d4", "d6", "d8", "d10", "d12"],
+      "x-ui": { "label": "Hit die", "filterable": true, "sortable": false, "group": "core", "order": 1 }
+    },
+    "class_type": {
+      "type": "string",
+      "enum": ["base", "prestige", "npc"],
+      "x-ui": { "label": "Class type", "filterable": true, "sortable": false, "group": "classification", "order": 2 }
+    },
+    "max_level": {
+      "type": "integer",
+      "minimum": 1,
+      "x-ui": { "label": "Max level", "filterable": false, "sortable": false, "group": "core", "order": 3 }
+    },
+    "alignment": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "e.g. \"Any nonlawful\" or \"Any\".",
+      "x-ui": { "label": "Alignment", "filterable": false, "sortable": false, "group": "core", "order": 4 }
+    },
+    "abbreviation": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Abbreviation", "filterable": false, "sortable": false, "group": "core", "order": 5 }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string" },
+          "text": { "type": "string" }
+        },
+        "required": ["kind", "text"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "description": "e.g. {\"kind\": \"base attack bonus\", \"text\": \"+5\"}.",
+      "x-ui": { "label": "Requirements", "filterable": false, "sortable": false, "group": "classification", "order": 6 }
+    },
+    "class_skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "skill": { "type": "string" },
+          "key_ability": { "type": "string" }
+        },
+        "required": ["skill", "key_ability"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "x-ui": { "label": "Class skills", "filterable": false, "sortable": false, "group": "skills", "order": 7 }
+    },
+    "skill_points": {
+      "type": "object",
+      "properties": {
+        "base": { "type": "integer" },
+        "ability": { "type": "string" },
+        "first_level_multiplier": { "type": "integer" }
+      },
+      "required": ["base", "ability"],
+      "additionalProperties": false,
+      "x-ui": { "label": "Skill points", "filterable": false, "sortable": false, "group": "skills", "order": 8 }
+    },
+    "bab_progression": {
+      "type": "string",
+      "enum": ["good", "average", "poor"],
+      "x-ui": { "label": "Base attack bonus progression", "filterable": true, "sortable": false, "group": "combat", "order": 9 }
+    },
+    "save_progressions": {
+      "type": "object",
+      "properties": {
+        "fort": { "type": "string", "enum": ["good", "poor"] },
+        "ref": { "type": "string", "enum": ["good", "poor"] },
+        "will": { "type": "string", "enum": ["good", "poor"] }
+      },
+      "required": ["fort", "ref", "will"],
+      "additionalProperties": false,
+      "x-ui": { "label": "Save progressions", "filterable": false, "sortable": false, "group": "combat", "order": 10 }
+    },
+    "spellcasting": {
+      "type": "object",
+      "description": "Omitted entirely for a non-caster -- never null.",
+      "properties": {
+        "kind": { "type": "string", "enum": ["arcane", "divine", "psionic"] },
+        "ability": { "type": "string" },
+        "type": { "type": "string", "enum": ["prepared", "spontaneous", "points"] },
+        "spell_list": {
+          "type": "string",
+          "description": "The class name exactly as spell records spell it in levels[].class."
+        }
+      },
+      "required": ["kind", "ability", "type", "spell_list"],
+      "additionalProperties": false,
+      "x-ui": { "label": "Spellcasting", "filterable": true, "sortable": false, "group": "spellcasting", "order": 11 }
+    },
+    "level_table": {
+      "type": "string",
+      "description": "The id of the owned `table` record holding this class's level progression table.",
+      "x-ui": { "label": "Level table", "filterable": false, "sortable": false, "group": "core", "order": 12 }
+    },
+    "class_features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "level": { "type": "integer", "minimum": 1 },
+          "text_md": {
+            "type": "string",
+            "description": "May be the empty string when the book prints no description for a Special-column entry."
+          }
+        },
+        "required": ["name", "level", "text_md"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "x-ui": { "label": "Class features", "filterable": false, "sortable": false, "group": "features", "order": 13 }
+    },
+    "description_sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "heading": { "type": "string" },
+          "text_md": { "type": "string" }
+        },
+        "required": ["heading", "text_md"],
+        "additionalProperties": false
+      },
+      "default": [],
+      "x-ui": { "label": "Description sections", "filterable": false, "sortable": false, "group": "description", "order": 14 }
+    },
+    "weapon_and_armor_proficiency": {
+      "type": ["string", "null"],
+      "default": null,
+      "x-ui": { "label": "Weapon and armor proficiency", "filterable": false, "sortable": false, "group": "core", "order": 15 }
+    },
+    "source_pages": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "integer" },
+        "end": { "type": "integer" }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "The pdf page span of the class's whole entry -- used by build-db to supersede the class chapter fragments it replaces.",
+      "x-ui": { "label": "Source pages", "filterable": false, "sortable": false, "group": "meta", "order": 16 }
+    }
+  },
+  "required": [
+    "hit_die",
+    "class_type",
+    "max_level",
+    "requirements",
+    "bab_progression",
+    "save_progressions",
+    "level_table",
+    "class_features",
+    "source_pages"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "id": "class:example:sable-adept",
+  "type": "class",
+  "name": "Sable Adept",
+  "slug": "sable-adept",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [1, 2],
+  "citation": "Example pp. 1-2",
+  "text_md": "Sable adepts are wandering scholars who bind minor shadows to their service through quiet, exacting ritual, trading raw power for patience and precision.",
+  "fields": {
+    "hit_die": "d6",
+    "class_type": "base",
+    "max_level": 3,
+    "alignment": "Any nonlawful",
+    "class_skills": [
+      { "skill": "Knowledge (arcana)", "key_ability": "Int" },
+      { "skill": "Spellcraft", "key_ability": "Int" }
+    ],
+    "skill_points": { "base": 2, "ability": "Int" },
+    "bab_progression": "poor",
+    "save_progressions": { "fort": "poor", "ref": "poor", "will": "good" },
+    "spellcasting": {
+      "kind": "arcane",
+      "ability": "Int",
+      "type": "prepared",
+      "spell_list": "Sable Adept"
+    },
+    "level_table": "table:example:table-1-1-the-sable-adept",
+    "class_features": [
+      {
+        "name": "Shadow Binding",
+        "level": 1,
+        "text_md": "A sable adept can bind a single shadow servant to obey her spoken commands for up to 1 hour per class level."
+      },
+      {
+        "name": "Umbral Step",
+        "level": 2,
+        "text_md": ""
+      },
+      {
+        "name": "Eclipse Mastery",
+        "level": 3,
+        "text_md": "Once per day, a sable adept can call down a brief eclipse, granting concealment to every ally within 30 feet for 1 round."
+      }
+    ],
+    "description_sections": [
+      {
+        "heading": "Adventures",
+        "text_md": "Sable adepts adventure to expand their private catalog of shadow-lore, rarely for gold or glory."
+      }
+    ],
+    "weapon_and_armor_proficiency": "A sable adept is proficient with all simple weapons, but not with any armor or shields.",
+    "source_pages": { "start": 1, "end": 2 }
+  },
+  "tables": ["table:example:table-1-1-the-sable-adept"],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-5",
+    "segment_id": "example-class-p0001",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

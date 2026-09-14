@@ -687,3 +687,64 @@ def test_select_and_mark_succeeds_once_lock_is_released(tmp_path: Path) -> None:
     )
 
     assert len(selected) == 1
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c: a superseded segment is never selected, stale-reset, or
+# lazily escalated.
+# ---------------------------------------------------------------------------
+
+
+def test_superseded_segment_is_never_selected(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    segment = _segment("book-p0010-01")
+    segment.superseded_by = "book-class-p0002"
+    _write_segment(data_dir, segment)
+
+    selected = select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, kind="spell", manifest_path=manifest_path
+    )
+
+    assert selected == []
+    on_disk = _read_segment(data_dir, "book", "book-p0010-01")
+    assert on_disk["status"] == "pending"  # untouched, not marked in_progress
+
+
+def test_superseded_segment_is_never_stale_reset(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    stale_since = (datetime.now(UTC) - timedelta(minutes=90)).isoformat()
+    segment = _segment("book-p0010-01", status="in_progress")
+    segment.in_progress_since = stale_since
+    segment.superseded_by = "book-class-p0002"
+    _write_segment(data_dir, segment)
+
+    select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, kind="spell", manifest_path=manifest_path
+    )
+
+    on_disk = _read_segment(data_dir, "book", "book-p0010-01")
+    # A superseded segment is frozen -- even a >60-minute-stale in_progress
+    # one is left exactly as it was, not reset back to pending.
+    assert on_disk["status"] == "in_progress"
+    assert on_disk["in_progress_since"] == stale_since
+
+
+def test_superseded_segment_is_never_lazily_escalated(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    segment = _segment(
+        "book-p0010-01",
+        tier="haiku",
+        attempts=[{"tier": "haiku", "timestamp": "2026-01-01T00:00:00+00:00", "errors": ["x"]}],
+    )
+    segment.superseded_by = "book-class-p0002"
+    _write_segment(data_dir, segment)
+
+    select_and_mark(
+        "book", data_dir=data_dir, tier="haiku", limit=5, kind="spell", manifest_path=manifest_path
+    )
+
+    on_disk = _read_segment(data_dir, "book", "book-p0010-01")
+    assert on_disk["tier"] == "haiku"  # never escalated to sonnet

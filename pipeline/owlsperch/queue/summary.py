@@ -84,6 +84,10 @@ class QueueSummary:
     #: Segments currently sitting in `human/<book_id>/` (opus exhausted, or
     #: a `proposed_type`).
     human: int = 0
+    #: Batch B10c: segments whose `superseded_by` is set (a class span
+    #: swallowed them) -- never selectable, never counted as `pending`
+    #: below, but still worth reporting so a wave can be planned honestly.
+    superseded: int = 0
 
     def render(self) -> str:
         def _line(label: str, counts: dict[str, int]) -> str:
@@ -105,6 +109,7 @@ class QueueSummary:
             *[tier_line.render() for tier_line in self.ladder],
             f"  needs_context_retries: {self.needs_context_retries}",
             f"  human: {self.human}",
+            f"  superseded: {self.superseded}",
         ]
         return "\n".join(lines)
 
@@ -121,6 +126,7 @@ class QueueSummary:
             "ladder": [tier_line.to_json() for tier_line in self.ladder],
             "needs_context_retries": self.needs_context_retries,
             "human": self.human,
+            "superseded": self.superseded,
         }
 
 
@@ -149,7 +155,11 @@ def compute_summary(book_id: str, *, data_dir: Path) -> QueueSummary:
         if isinstance(a, dict) and attempt_kind_of(a) == "needs_context"
     )
 
-    pending = [s for s in segments if s.status == "pending"]
+    # Batch B10c: a segment a class span has superseded is neither pending
+    # work nor selectable -- exclude it from the pending breakdown, and
+    # report how many there are separately.
+    pending = [s for s in segments if s.status == "pending" and s.superseded_by is None]
+    superseded = sum(1 for s in segments if s.superseded_by is not None)
 
     return QueueSummary(
         book_id=book_id,
@@ -163,4 +173,5 @@ def compute_summary(book_id: str, *, data_dir: Path) -> QueueSummary:
         ladder=ladder,
         needs_context_retries=needs_context_retries,
         human=len(human_segments),
+        superseded=superseded,
     )

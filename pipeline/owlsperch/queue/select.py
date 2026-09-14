@@ -153,6 +153,14 @@ def _reset_stale_and_heal(
 
     for path in sorted(seg_dir.glob(f"{book_id}-*.json")):
         segment = Segment.model_validate_json(path.read_text())
+
+        if segment.superseded_by is not None:
+            # Batch B10c: a superseded segment (its pages are now owned by a
+            # class/prestige_class record instead) is frozen -- never
+            # stale-reset, never lazily escalated, never selected.
+            segments.append((path, segment))
+            continue
+
         changed = False
 
         if is_stale(segment, now):
@@ -190,7 +198,9 @@ def _lowest_pending_tier(segments: list[tuple[Path, Segment]], kinds: set[str]) 
     pending_tiers = {
         segment.tier
         for _, segment in segments
-        if segment.status == "pending" and segment.kind_hint in kinds
+        if segment.status == "pending"
+        and segment.kind_hint in kinds
+        and segment.superseded_by is None
     }
     for candidate in TIERS:
         if candidate in pending_tiers:
@@ -279,6 +289,7 @@ def select_and_mark(
                 segment.status != "pending"
                 or segment.tier != resolved_tier
                 or segment.kind_hint not in kinds
+                or segment.superseded_by is not None
             ):
                 continue
 

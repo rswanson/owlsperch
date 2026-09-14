@@ -23,6 +23,18 @@
       "label": "Table",
       "plural_label": "Tables",
       "version": 1
+    },
+    "class": {
+      "schema": "class.json",
+      "label": "Class",
+      "plural_label": "Classes",
+      "version": 1
+    },
+    "prestige_class": {
+      "schema": "prestige_class.json",
+      "label": "Prestige class",
+      "plural_label": "Prestige classes",
+      "version": 1
     }
   }
 }

@@ -1005,10 +1005,21 @@ def _prompt_coverage_failures(kind: str, text: str, registry: Registry) -> list[
     elif f"## Extraction rules for `{kind}`" not in text:
         failures.append(f"{kind}: '## Extraction rules for `{kind}`' heading is not rendered")
 
-    mentioned_types = {t for t in registry.types if t != kind and f"`{t}`" in text}
+    # A registered type's name can coincide with an unrelated field name of
+    # THIS SAME kind (batch B10c: spell's own `levels[].class` sub-property
+    # is literally "class", the same string as the new `class` record
+    # type) -- when the kind's own schema render is what put `` `class` ``
+    # in the text, that is not a cross-type reference at all, so exclude
+    # any type name already grounded by this kind's own fields/envelope
+    # before deciding what counts as "mentioned".
     grounded = (
         type_props | envelope_props | _REPLY_CONTRACT_KEYS | _JSON_LITERALS | set(registry.types)
     )
+    mentioned_types = {
+        t
+        for t in registry.types
+        if t != kind and f"`{t}`" in text and t not in type_props and t not in envelope_props
+    }
 
     for other in sorted(mentioned_types):
         other_props = _schema_property_names(registry.load_type_schema(other))

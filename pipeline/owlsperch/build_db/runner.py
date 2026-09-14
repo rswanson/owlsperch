@@ -70,6 +70,24 @@ under `records/<book_id>/<type>/*.json`:
 Every record is `canonical = 1` and `macro_eligible = 0` in this batch --
 precedence (B11) and macro eligibility (B22) are future work.
 
+8. (Batch B10c, design decision D11) A second pass, after every record is
+   loaded: for every `class`/`prestige_class` record, `fields.source_pages`
+   (falling back to `min(pages)..max(pages)` when absent) gives its whole
+   entry's pdf page span. Every `rules_section`/`table` record of the SAME
+   book whose OWN pages fall entirely inside that span is a fragment the
+   class record replaces -- it's set `canonical = 0`, `superseded_by =
+   <class record id>` (a `records` column derived at build time, like
+   `toc_category`; no record file is ever touched). The one exception: a
+   `table` record OWNED by some class (its id is in that class's own
+   `tables` array, or its own `fields.parent_record` names a class/
+   prestige_class record) is NEVER superseded this way -- otherwise a
+   class's own progression table would disappear from its own page. A
+   record already superseded by an earlier class in the same pass is left
+   alone (first class wins; spans aren't expected to overlap in practice).
+   `run_build_db` prints how many records were superseded as one
+   informational line -- this is expected, not a problem, so it's never a
+   WARNING.
+
 The whole build writes to a temp file in the same directory as the final
 `db/owlsperch.sqlite` and only then atomically renames it into place
 (`os.replace`), so a server reading the DB mid-build never sees a
@@ -92,6 +110,7 @@ from owlsperch.manifest import ManifestEntry, default_manifest_path, load_manife
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import entry_for_page, load_toc
 from owlsperch.toc.parser import Toc
+from owlsperch.validate.checks import ValidationContext
 from owlsperch.validate.loader import (
     CompiledSchemas,
     LoadError,
@@ -100,7 +119,7 @@ from owlsperch.validate.loader import (
     load_json,
     load_segment,
 )
-from owlsperch.validate.runner import validate_record
+from owlsperch.validate.runner import build_validation_context, validate_record
 
 #: The `toc_category` every record gets when it can't be resolved to a real
 #: one (no toc file for its book, no `pages`, or a page before the toc's
@@ -151,11 +170,17 @@ CREATE TABLE records (
     toc_category TEXT NOT NULL DEFAULT 'uncategorized',
     toc_chapter TEXT,
     toc_section TEXT,
-    toc_path TEXT
+    toc_path TEXT,
+    -- Batch B10c, design decision D11: the id of the class/prestige_class
+    -- record whose page span swallows this one, or NULL. Derived at build
+    -- time in the same spirit as toc_category -- no record file is ever
+    -- written to.
+    superseded_by TEXT
 );
 CREATE INDEX records_type_slug_idx ON records (type, slug);
 CREATE INDEX records_book_id_idx ON records (book_id);
 CREATE INDEX records_toc_category_idx ON records (toc_category);
+CREATE INDEX records_superseded_by_idx ON records (superseded_by);
 
 CREATE TABLE record_fields (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,6 +319,11 @@ class BuildResult:
     #: `run_build_db` prints one WARNING per entry, naming
     #: `owlsperch toc <book_id> --force`.
     toc_missing_books: list[str] = field(default_factory=list)
+    #: Batch B10c, design decision D11: how many `rules_section`/`table`
+    #: records got `canonical = 0`/`superseded_by` set because a class/
+    #: prestige_class record's page span swallows them. Expected, not a
+    #: problem -- `run_build_db` prints it as information, never a WARNING.
+    superseded: int = 0
 
     def render(self) -> str:
         lines = ["Records loaded by type:"]
@@ -305,6 +335,7 @@ class BuildResult:
         total = sum(self.counts_by_type.values())
         lines.append(f"  total: {total}")
         lines.append(f"Skipped (invalid): {self.skipped_invalid}")
+        lines.append(f"Superseded (class/prestige_class span): {self.superseded}")
         lines.append(f"Books: {self.books}")
         lines.append(f"DB: {self.db_path}")
         return "\n".join(lines)
@@ -435,6 +466,7 @@ def _load_records(
     data_dir: Path,
     compiled: CompiledSchemas,
     result: BuildResult,
+    context: ValidationContext,
 ) -> None:
     toc_cache: dict[str, Toc | None] = {}
 
@@ -469,7 +501,9 @@ def _load_records(
                 segment_id = seg_id_raw if isinstance(seg_id_raw, str) else None
 
             segment = load_segment(data_dir, book_id, segment_id) if segment_id else None
-            errors = validate_record(record, type_dir=type_dir, compiled=compiled, segment=segment)
+            errors = validate_record(
+                record, type_dir=type_dir, compiled=compiled, segment=segment, context=context
+            )
             if errors:
                 result.skipped_invalid += 1
                 result.skipped.append(SkippedRecord(path=rel_path, error=errors[0]))
@@ -502,6 +536,99 @@ def _load_records(
             result.counts_by_type[type_dir] = result.counts_by_type.get(type_dir, 0) + 1
 
 
+def _apply_superseding(conn: sqlite3.Connection) -> int:
+    """Design decision D11's superseding pass, run once after every record
+    is loaded: for every `class`/`prestige_class` record, mark
+    `canonical = 0`/`superseded_by = <that record's id>` on every
+    `rules_section`/`table` record of the SAME book whose own `pages` fall
+    entirely inside that class's page span (`fields.source_pages`, or
+    `min(pages)..max(pages)` when absent) -- EXCEPT a `table` record the
+    class itself owns (its id in the class's own `tables` array, or its own
+    `fields.parent_record` naming a class/prestige_class record of this
+    book), which must never disappear from its own class's page. A record
+    already superseded by an earlier class is left alone. Returns how many
+    records were newly superseded."""
+    class_rows = conn.execute(
+        "SELECT id, book_id, json FROM records WHERE type IN ('class', 'prestige_class')"
+    ).fetchall()
+
+    # Every class/prestige_class id per book, and every table id any class
+    # in that book already claims via its own `tables` array -- computed up
+    # front so the "owned table" exclusion checks against ALL classes in
+    # the book, not just whichever one is being processed right now.
+    class_ids_by_book: dict[str, set[str]] = {}
+    owned_table_ids_by_book: dict[str, set[str]] = {}
+    for class_id, book_id, class_json in class_rows:
+        class_ids_by_book.setdefault(book_id, set()).add(class_id)
+        class_record = json.loads(class_json)
+        owned = class_record.get("tables")
+        if isinstance(owned, list):
+            owned_table_ids_by_book.setdefault(book_id, set()).update(
+                t for t in owned if isinstance(t, str)
+            )
+
+    superseded = 0
+    for class_id, book_id, class_json in class_rows:
+        class_record = json.loads(class_json)
+        class_fields = class_record.get("fields")
+        source_pages = class_fields.get("source_pages") if isinstance(class_fields, dict) else None
+        if (
+            isinstance(source_pages, dict)
+            and isinstance(source_pages.get("start"), int)
+            and isinstance(source_pages.get("end"), int)
+        ):
+            start, end = source_pages["start"], source_pages["end"]
+        else:
+            pages = class_record.get("pages")
+            numeric_pages = (
+                [p for p in pages if isinstance(p, int)] if isinstance(pages, list) else []
+            )
+            if not numeric_pages:
+                continue
+            start, end = min(numeric_pages), max(numeric_pages)
+
+        owned_table_ids = owned_table_ids_by_book.get(book_id, set())
+        class_ids = class_ids_by_book.get(book_id, set())
+
+        candidates = conn.execute(
+            "SELECT id, type, json FROM records WHERE book_id = ? AND type IN "
+            "('rules_section', 'table') AND superseded_by IS NULL AND id != ?",
+            (book_id, class_id),
+        ).fetchall()
+        for candidate_id, candidate_type, candidate_json in candidates:
+            if candidate_id in owned_table_ids:
+                continue
+            candidate = json.loads(candidate_json)
+            if candidate_type == "table":
+                candidate_fields = candidate.get("fields")
+                parent = (
+                    candidate_fields.get("parent_record")
+                    if isinstance(candidate_fields, dict)
+                    else None
+                )
+                if parent in class_ids:
+                    continue
+
+            candidate_pages = candidate.get("pages")
+            numeric_candidate_pages = (
+                [p for p in candidate_pages if isinstance(p, int)]
+                if isinstance(candidate_pages, list)
+                else []
+            )
+            if not numeric_candidate_pages or not all(
+                start <= p <= end for p in numeric_candidate_pages
+            ):
+                continue
+
+            conn.execute(
+                "UPDATE records SET canonical = 0, superseded_by = ? WHERE id = ?",
+                (class_id, candidate_id),
+            )
+            superseded += 1
+
+    return superseded
+
+
 def build_db(
     *,
     data_dir: Path | None = None,
@@ -521,13 +648,17 @@ def build_db(
     if tmp_path.exists():
         tmp_path.unlink()
 
+    context = build_validation_context(data_dir)
     result = BuildResult(books=len(entries), db_path=db_path)
     try:
         conn = sqlite3.connect(tmp_path)
         try:
             conn.executescript(_SCHEMA_SQL)
             _load_books(conn, entries)
-            _load_records(conn, data_dir=data_dir, compiled=compiled, result=result)
+            _load_records(
+                conn, data_dir=data_dir, compiled=compiled, result=result, context=context
+            )
+            result.superseded = _apply_superseding(conn)
             conn.execute(
                 "INSERT INTO names_fts (rowid, name, aliases, record_id) "
                 "SELECT rowid, name, aliases, record_id FROM records"

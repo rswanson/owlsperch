@@ -74,3 +74,25 @@ def test_phb1_override_dict_is_small_and_documented() -> None:
     # phb1 override dict small and justified"). Not a hard cap -- just a
     # tripwire so a future PR notices before the dict grows unbounded.
     assert len(BOOK_OVERRIDES.get("phb1", {})) <= 5
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c, design decision D10: "Prestige Class(es)" resolves to the
+# dedicated "prestige-classes" category, tried BEFORE the generic "Classes"
+# pattern.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_chapter_category_prestige_classes() -> None:
+    assert resolve_chapter_category("book", "Chapter 5: Prestige Classes") == "prestige-classes"
+    assert resolve_chapter_category("book", "Prestige Class") == "prestige-classes"
+
+
+def test_resolve_section_category_prestige_classes_not_shadowed_by_generic_classes() -> None:
+    # A section literally titled "Prestige Classes" must not fall through to
+    # the generic "Classes" pattern just because "Classes" is a substring.
+    assert resolve_section_category("book", "Prestige Classes", None) == "prestige-classes"
+
+
+def test_resolve_section_category_prestige_class_section_inherits_chapter() -> None:
+    assert resolve_section_category("book", "Iron Warden", "prestige-classes") == "prestige-classes"

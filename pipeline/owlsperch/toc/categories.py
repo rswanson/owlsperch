@@ -47,7 +47,12 @@ GENERIC_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "character-creation",
     ),
     (re.compile(r"Races?|Racial", re.IGNORECASE), "races"),
-    (re.compile(r"Classes|Class Descriptions|Prestige Class", re.IGNORECASE), "classes"),
+    # Prestige Class(es) must be tried BEFORE the generic "Classes" pattern
+    # below, or a prestige-class chapter/section would resolve to "classes"
+    # instead of the dedicated "prestige-classes" category (batch B10c,
+    # design decision D10).
+    (re.compile(r"Prestige Class(?:es)?", re.IGNORECASE), "prestige-classes"),
+    (re.compile(r"Classes|Class Descriptions", re.IGNORECASE), "classes"),
     (re.compile(r"Skills?", re.IGNORECASE), "skills"),
     (re.compile(r"Feats?", re.IGNORECASE), "feats"),
     (

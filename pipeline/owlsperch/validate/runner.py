@@ -70,7 +70,10 @@ from owlsperch.queue.ladder import record_failure
 from owlsperch.segment.runner import Segment
 from owlsperch.text.runner import default_data_dir
 from owlsperch.validate.checks import (
+    NULL_CONTEXT,
+    TYPE_CONTEXT_CHECKS,
     TYPE_FIELD_CHECKS,
+    ValidationContext,
     check_envelope_consistency,
     check_pages_within_segment,
 )
@@ -246,12 +249,59 @@ def _write_back_fail(
             record_file.unlink()
 
 
+def build_validation_context(data_dir: Path) -> ValidationContext:
+    """The disk-backed `ValidationContext` (design decision D9):
+    `record_by_id` parses `"<type>:<book_id>:<slug>"` into
+    `data_dir/records/<book_id>/<type>/<slug>.json` and loads it if present;
+    `spell_list_classes` scans `records/<book_id>/spell/*.json` once per
+    `book_id` and memoizes every distinct `levels[].class` value found.
+    Built once per run by `run_validate` and by `owlsperch.build_db.runner`
+    (both know `data_dir`) and threaded through `validate_record` from
+    there -- `checks.py` itself stays I/O-free."""
+    spell_classes_cache: dict[str, set[str]] = {}
+
+    def record_by_id(record_id: str) -> dict[str, Any] | None:
+        parts = record_id.split(":", 2)
+        if len(parts) != 3:
+            return None
+        type_name, book_id, slug = parts
+        path = data_dir / "records" / book_id / type_name / f"{slug}.json"
+        if not path.is_file():
+            return None
+        try:
+            return load_json(path)
+        except LoadError:
+            return None
+
+    def spell_list_classes(book_id: str) -> set[str]:
+        if book_id not in spell_classes_cache:
+            classes: set[str] = set()
+            spell_dir = data_dir / "records" / book_id / "spell"
+            if spell_dir.is_dir():
+                for path in spell_dir.glob("*.json"):
+                    try:
+                        record = load_json(path)
+                    except LoadError:
+                        continue
+                    fields = record.get("fields")
+                    levels = fields.get("levels") if isinstance(fields, dict) else None
+                    if isinstance(levels, list):
+                        for item in levels:
+                            if isinstance(item, dict) and isinstance(item.get("class"), str):
+                                classes.add(item["class"])
+            spell_classes_cache[book_id] = classes
+        return spell_classes_cache[book_id]
+
+    return ValidationContext(record_by_id=record_by_id, spell_list_classes=spell_list_classes)
+
+
 def validate_record(
     record: dict[str, Any],
     *,
     type_dir: str,
     compiled: CompiledSchemas,
     segment: dict[str, Any] | None,
+    context: ValidationContext = NULL_CONTEXT,
 ) -> list[str]:
     """Pure validation of one already-loaded record: JSON Schema conformance
     (envelope + type fields), envelope/type-specific consistency checks, and
@@ -263,7 +313,10 @@ def validate_record(
 
     `segment` is the already-resolved originating segment (or `None` if it
     couldn't be found/resolved), matching what `check_pages_within_segment`
-    expects.
+    expects. `context` (batch B10c, design decision D9) is `NULL_CONTEXT` by
+    default -- every cross-record class/prestige_class check then degrades
+    to "can't resolve" rather than crashing; a real caller passes one built
+    by `build_validation_context`.
     """
     errors = _schema_errors(compiled.envelope_validator(), record, prefix="envelope")
 
@@ -284,11 +337,21 @@ def validate_record(
     if field_check is not None:
         errors.extend(field_check(record))
 
+    context_check = TYPE_CONTEXT_CHECKS.get(type_dir)
+    if context_check is not None:
+        errors.extend(context_check(record, context))
+
     errors.extend(check_pages_within_segment(record, segment))
     return errors
 
 
-def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchemas) -> RecordResult:
+def validate_record_file(
+    path: Path,
+    *,
+    data_dir: Path,
+    compiled: CompiledSchemas,
+    context: ValidationContext | None = None,
+) -> RecordResult:
     rel_path = path.relative_to(data_dir).as_posix()
     type_dir = path.parent.name
 
@@ -309,7 +372,10 @@ def validate_record_file(path: Path, *, data_dir: Path, compiled: CompiledSchema
     if book_id is not None and segment_id is not None:
         segment = load_segment(data_dir, book_id, segment_id)
 
-    errors = validate_record(record, type_dir=type_dir, compiled=compiled, segment=segment)
+    resolved_context = context if context is not None else build_validation_context(data_dir)
+    errors = validate_record(
+        record, type_dir=type_dir, compiled=compiled, segment=segment, context=resolved_context
+    )
     status = "FAIL" if errors else "PASS"
 
     if book_id is not None and segment_id is not None and segment is not None:
@@ -480,8 +546,10 @@ def run_validate(
         return 0
 
     files = _record_files_for(data_dir, book_id)
+    context = build_validation_context(data_dir)
     record_results = [
-        validate_record_file(path, data_dir=data_dir, compiled=compiled) for path in files
+        validate_record_file(path, data_dir=data_dir, compiled=compiled, context=context)
+        for path in files
     ]
     failed = sum(1 for r in record_results if r.status == "FAIL")
 
