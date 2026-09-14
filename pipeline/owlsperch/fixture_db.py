@@ -399,6 +399,7 @@ _CLASS: dict[str, Any] = {
     "fields": {
         "hit_die": "d4",
         "class_type": "base",
+        "abbreviation": "FxM",
         "max_level": 3,
         "alignment": "Any",
         "class_skills": [

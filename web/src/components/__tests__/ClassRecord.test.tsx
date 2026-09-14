@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import type { BrowseItem, RecordDetail } from "../../api";
-import { ClassRecord, groupSpellsByLevel, levelForClass } from "../ClassRecord";
+import { ClassRecord, featureAnchorId, groupSpellsByLevel, levelForClass } from "../ClassRecord";
 
 function makeRecord(overrides: Partial<RecordDetail> = {}): RecordDetail {
   return {
@@ -19,6 +19,7 @@ function makeRecord(overrides: Partial<RecordDetail> = {}): RecordDetail {
     fields: {
       hit_die: "d12",
       class_type: "base",
+      abbreviation: "Brb",
       max_level: 20,
       alignment: "Any nonlawful",
       bab_progression: "good",
@@ -118,6 +119,8 @@ describe("ClassRecord", () => {
   it("renders header facts, description sections, class skills, and proficiency", () => {
     renderClassRecord(makeRecord());
 
+    expect(screen.getByText("Base")).toBeInTheDocument();
+    expect(screen.getByText("Brb")).toBeInTheDocument();
     expect(screen.getByText("d12")).toBeInTheDocument();
     expect(screen.getByText("Any nonlawful")).toBeInTheDocument();
     expect(screen.getByText("good")).toBeInTheDocument();
@@ -148,6 +151,20 @@ describe("ClassRecord", () => {
     expect(screen.getByRole("heading", { name: /Rage/ })).toBeInTheDocument();
     expect(screen.getByText("You rage.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Bonus Feat/ })).toBeInTheDocument();
+  });
+
+  it("gives every class feature its own deep-linkable anchor id", () => {
+    renderClassRecord(makeRecord());
+
+    const rageHeading = screen.getByRole("heading", { name: /Rage/ });
+    const rageContainer = rageHeading.closest(".class-feature")!;
+    expect(rageContainer).toHaveAttribute("id", featureAnchorId("Rage", 0));
+
+    const bonusFeatHeading = screen.getByRole("heading", { name: /Bonus Feat/ });
+    const bonusFeatContainer = bonusFeatHeading.closest(".class-feature")!;
+    expect(bonusFeatContainer).toHaveAttribute("id", featureAnchorId("Bonus Feat", 1));
+
+    expect(rageContainer.id).not.toEqual(bonusFeatContainer.id);
   });
 
   it("renders nothing for the Spells section when spellcasting is absent", () => {

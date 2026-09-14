@@ -81,6 +81,25 @@ export function groupSpellsByLevel(
     }));
 }
 
+const CLASS_TYPE_LABELS: Record<string, string> = {
+  base: "Base",
+  prestige: "Prestige",
+  npc: "NPC",
+};
+
+/** Slugifies a class feature's name into an HTML `id` for deep-linking
+ * (criterion 7: "class features (anchor per feature, level badge)"),
+ * following `FacetSidebar.tsx`'s `slugifyFacetValue` convention. The
+ * feature's index is appended so two features that happen to share a name
+ * still get distinct anchors. */
+export function featureAnchorId(name: string, index: number): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `feature-${slug || "feature"}-${index}`;
+}
+
 function SpellsSection({ spellcasting }: { spellcasting: ClassFields["spellcasting"] }) {
   const [groups, setGroups] = useState<{ level: number; spells: BrowseItem[] }[] | null>(null);
 
@@ -136,6 +155,12 @@ export function ClassRecord({ record }: ClassRecordProps) {
   return (
     <div className="class-record">
       <dl className="class-facts">
+        {fields.class_type && (
+          <div className="class-fact">
+            <dt>Type</dt>
+            <dd>{CLASS_TYPE_LABELS[fields.class_type] ?? fields.class_type}</dd>
+          </div>
+        )}
         {fields.hit_die && (
           <div className="class-fact">
             <dt>Hit Die</dt>
@@ -172,6 +197,12 @@ export function ClassRecord({ record }: ClassRecordProps) {
                 ? ` (×${fields.skill_points.first_level_multiplier} at 1st level)`
                 : ""}
             </dd>
+          </div>
+        )}
+        {fields.abbreviation && (
+          <div className="class-fact">
+            <dt>Abbreviation</dt>
+            <dd>{fields.abbreviation}</dd>
           </div>
         )}
         {fields.requirements && fields.requirements.length > 0 && (
@@ -236,7 +267,7 @@ export function ClassRecord({ record }: ClassRecordProps) {
         <section className="class-features">
           <h2>Class Features</h2>
           {fields.class_features.map((feature, i) => (
-            <div className="class-feature" key={i}>
+            <div className="class-feature" key={i} id={featureAnchorId(feature.name, i)}>
               <h3>
                 {feature.name} <span className="class-feature-level">(Level {feature.level})</span>
               </h3>

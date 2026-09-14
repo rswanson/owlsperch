@@ -20,6 +20,16 @@ test("nav to Classes, open the fixture class, see its table/features/spells", as
   await expect(page).toHaveURL(/\/r\/class\/fixture-mage$/);
   await expect(page.getByRole("heading", { level: 1, name: "Fixture Mage" })).toBeVisible();
 
+  // Header facts include class_type and the book's abbreviation, not just
+  // the generic "Class" type badge (acceptance criterion 7).
+  const facts = page.locator(".class-facts");
+  await expect(facts.getByText("Base", { exact: true })).toBeVisible();
+  await expect(facts.getByText("FxM", { exact: true })).toBeVisible();
+
+  // Each class feature has its own deep-linkable anchor id.
+  await expect(page.locator("#feature-arcane-bond-0")).toContainText("Arcane Bond");
+  await expect(page.locator("#feature-bonus-feat-1")).toContainText("Bonus Feat");
+
   // The progression table renders as a real HTML table.
   const table = page.locator(".class-progression table");
   await expect(table).toBeVisible();

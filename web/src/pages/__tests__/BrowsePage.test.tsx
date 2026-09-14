@@ -258,6 +258,26 @@ const TREE_FACETS_RESPONSE: api.FacetsResponse = {
   ],
 };
 
+const EMPTY_BROWSE = (type: string): api.BrowseResponse => ({
+  type,
+  total: 0,
+  page: 1,
+  page_size: 200,
+  items: [],
+});
+
+/** The tree view (acceptance criterion 6) also fetches `class`/
+ * `prestige_class` to populate the `classes` category branch whenever the
+ * page's own type is `rules_section`. Most tree tests don't care about
+ * that merge, so this stubs those two types to an empty page and lets
+ * `response` answer for `rules_section` itself -- keeping every existing
+ * assertion about `rules_section`-only content unchanged. */
+function mockTreeBrowse(response: api.BrowseResponse) {
+  return vi.spyOn(api, "browseRecords").mockImplementation((type) =>
+    Promise.resolve(type === "rules_section" ? response : EMPTY_BROWSE(type)),
+  );
+}
+
 describe("BrowsePage tree view", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -265,7 +285,7 @@ describe("BrowsePage tree view", () => {
 
   it("defaults to tree view for rules_section with no ?view= param", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    vi.spyOn(api, "browseRecords").mockResolvedValue({
+    mockTreeBrowse({
       type: "rules_section",
       total: 1,
       page: 1,
@@ -285,7 +305,7 @@ describe("BrowsePage tree view", () => {
 
   it("?view=list forces the flat list even for rules_section", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    vi.spyOn(api, "browseRecords").mockResolvedValue({
+    mockTreeBrowse({
       type: "rules_section",
       total: 1,
       page: 1,
@@ -302,7 +322,7 @@ describe("BrowsePage tree view", () => {
 
   it("the view toggle never forwards `view` to the API calls", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    const browseSpy = vi.spyOn(api, "browseRecords").mockResolvedValue({
+    const browseSpy = mockTreeBrowse({
       type: "rules_section",
       total: 1,
       page: 1,
@@ -320,7 +340,7 @@ describe("BrowsePage tree view", () => {
 
   it("clicking List/Tree updates the ?view= query param", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    vi.spyOn(api, "browseRecords").mockResolvedValue({
+    mockTreeBrowse({
       type: "rules_section",
       total: 1,
       page: 1,
@@ -343,7 +363,8 @@ describe("BrowsePage tree view", () => {
 
   it("fetches sequential pages at page_size=200 until every record is loaded", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    const browseSpy = vi.spyOn(api, "browseRecords").mockImplementation((_type, params) => {
+    const browseSpy = vi.spyOn(api, "browseRecords").mockImplementation((type, params) => {
+      if (type !== "rules_section") return Promise.resolve(EMPTY_BROWSE(type));
       const page = Number(params.get("page") ?? "1");
       const item = ruleItem(`item-${page}`, `Item ${page}`, "combat", "Chapter 2: Combat");
       return Promise.resolve({
@@ -366,7 +387,7 @@ describe("BrowsePage tree view", () => {
 
   it("auto-expands the category when exactly one is selected in the URL", async () => {
     vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
-    vi.spyOn(api, "browseRecords").mockResolvedValue({
+    mockTreeBrowse({
       type: "rules_section",
       total: 1,
       page: 1,
@@ -379,5 +400,46 @@ describe("BrowsePage tree view", () => {
 
     const summary = await screen.findByText("Combat", { selector: "summary" });
     expect(summary.closest("details")).toHaveAttribute("open");
+  });
+
+  it("merges class/prestige_class records into the classes category (acceptance criterion 6)", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue(RULES_SCHEMAS);
+    const browseSpy = vi.spyOn(api, "browseRecords").mockImplementation((type) => {
+      if (type === "class") {
+        return Promise.resolve({
+          type: "class",
+          total: 1,
+          page: 1,
+          page_size: 200,
+          items: [
+            {
+              id: "class:phb1:barbarian",
+              type: "class",
+              name: "Barbarian",
+              slug: "barbarian",
+              book_id: "phb1",
+              citation: "PHB p. 25",
+              facets: {},
+              toc: { category: "classes", category_label: "Classes", chapter: null, section: null },
+              page: 25,
+            },
+          ],
+        });
+      }
+      if (type === "prestige_class") return Promise.resolve(EMPTY_BROWSE(type));
+      // The rules_section fragment that used to live in the classes chapter
+      // is now non-canonical (superseded) and so never comes back from
+      // `/records/rules_section` -- this test models that by returning no
+      // rules_section items at all, and asserts the branch is still
+      // populated, by the class record instead.
+      return Promise.resolve(EMPTY_BROWSE(type));
+    });
+    vi.spyOn(api, "getFacets").mockResolvedValue(TREE_FACETS_RESPONSE);
+
+    renderBrowsePage("/browse/rules_section");
+
+    expect(await screen.findByText("Barbarian")).toBeInTheDocument();
+    expect(browseSpy.mock.calls.some((call) => call[0] === "class")).toBe(true);
+    expect(browseSpy.mock.calls.some((call) => call[0] === "prestige_class")).toBe(true);
   });
 });

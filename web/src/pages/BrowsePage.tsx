@@ -27,6 +27,20 @@ const RESERVED_PARAMS = new Set(["sort", "page", "page_size", "view"]);
 const TREE_PAGE_SIZE = 200;
 const MAX_TREE_ITEMS = 2000;
 
+/** Batch B10c (acceptance criterion 6): the `classes` tree category is
+ * populated from `class`/`prestige_class` records, not `rules_section`
+ * fragments -- superseding makes the old in-span fragments non-canonical,
+ * so `/browse/rules_section?view=tree` must also pull these two types in
+ * to keep that branch populated. Fetched unfiltered (the rules_section
+ * page's filter params are rules_section-specific fields the class
+ * endpoints don't recognize) and merged into the one tree, which groups
+ * purely off each item's own `toc.category` -- so a `class` item lands in
+ * the `classes` branch alongside whatever `rules_section` items remain
+ * there. */
+const TREE_MERGE_TYPES: Record<string, string[]> = {
+  rules_section: ["class", "prestige_class"],
+};
+
 /** A `kind` discriminant lets `BrowsePage`'s fetch effect branch on the
  * result's actual shape (list results carry `page`/`page_size`; tree
  * results don't paginate) without TypeScript widening a plain `"page" in
@@ -60,11 +74,11 @@ async function fetchList(
   };
 }
 
-async function fetchAllForTree(
+async function fetchAllPages(
   type: string,
   filters: URLSearchParams,
   signal: AbortSignal,
-): Promise<TreeFetchResult> {
+): Promise<{ items: BrowseItem[]; total: number }> {
   const items: BrowseItem[] = [];
   let total = 0;
   let page = 1;
@@ -80,6 +94,21 @@ async function fetchAllForTree(
     }
     page += 1;
   }
+  return { items, total };
+}
+
+async function fetchAllForTree(
+  type: string,
+  filters: URLSearchParams,
+  signal: AbortSignal,
+): Promise<TreeFetchResult> {
+  const primary = await fetchAllPages(type, filters, signal);
+  const mergeTypes = TREE_MERGE_TYPES[type] ?? [];
+  const merged = await Promise.all(
+    mergeTypes.map((mergeType) => fetchAllPages(mergeType, new URLSearchParams(), signal)),
+  );
+  const items = [...primary.items, ...merged.flatMap((m) => m.items)];
+  const total = primary.total + merged.reduce((sum, m) => sum + m.total, 0);
   return { kind: "tree", items, total };
 }
 
