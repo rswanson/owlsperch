@@ -338,10 +338,111 @@ def _resolve_tables(conn: sqlite3.Connection, table_ids: list[Any]) -> list[dict
 
 _RECORD_DETAIL_SELECT = (
     "SELECT r.id, r.json, r.toc_category, r.toc_chapter, r.toc_section, r.toc_path, "
-    "r.superseded_by, b.published, COALESCE(b.short_title, b.title) AS book_title FROM records r "
+    "r.superseded_by, r.canonical, r.variant_of, r.applied_overrides, "
+    "b.published, COALESCE(b.short_title, b.title) AS book_title FROM records r "
     "LEFT JOIN books b ON b.book_id = r.book_id "
     "WHERE r.type = ? AND r.slug = ? AND r.canonical = ?"
 )
+
+
+def _resolve_variants(conn: sqlite3.Connection, record_id: str) -> list[dict[str, Any]]:
+    """Batch B11, design decision D19: every OTHER printing of `record_id`
+    -- records whose `variant_of` column points at it, directly OR
+    transitively -- as `{id, book_id, book_title, citation, published}`,
+    ordered by `published` DESC then `book_id` ASC (SQLite sorts NULL
+    `published` last in DESC order already, matching the "no date" case).
+    `build_db.precedence._flatten_variant_chains` keeps every stored
+    `variant_of` at most one hop from its root, so a plain equality query
+    would normally suffice; this walks the recursive closure anyway as
+    defence in depth against a chain the pipeline no longer writes (a
+    hand-edited or pre-B11 database, say). The recursive CTE walks
+    `records.variant_of` (indexed by `records_variant_of_idx`) outward
+    from `record_id`; `UNION` (not `UNION ALL`) de-dupes visited ids, so a
+    cycle in the stored data still terminates instead of looping forever,
+    and `WHERE r.id <> ?` excludes the seed itself in case some row's
+    `variant_of` ever pointed at its own id."""
+    rows = conn.execute(
+        "WITH RECURSIVE chain(id) AS ("
+        "SELECT id FROM records WHERE variant_of = ? "
+        "UNION "
+        "SELECT r.id FROM records r JOIN chain c ON r.variant_of = c.id"
+        ") "
+        "SELECT r.id, r.book_id, r.json, b.published, "
+        "COALESCE(b.short_title, b.title) AS book_title "
+        "FROM chain "
+        "JOIN records r ON r.id = chain.id "
+        "LEFT JOIN books b ON b.book_id = r.book_id "
+        "WHERE r.id <> ? "
+        "ORDER BY b.published DESC, r.book_id ASC, r.id ASC",
+        (record_id, record_id),
+    ).fetchall()
+    variants = []
+    for row in rows:
+        record = json.loads(row["json"])
+        variants.append(
+            {
+                "id": row["id"],
+                "book_id": row["book_id"],
+                "book_title": row["book_title"],
+                "citation": record.get("citation"),
+                "published": row["published"],
+            }
+        )
+    return variants
+
+
+def _resolve_applied_overrides(
+    conn: sqlite3.Connection, override_ids: list[Any]
+) -> list[dict[str, Any]]:
+    """Batch B11, design decision D19: a record's stored `applied_overrides`
+    id list resolved to one object per id, IN STORED ORDER: `{id, name,
+    type, book_id, book_title, citation, target_page, replacement_text}`.
+    An id with no matching record row is skipped (never raise) -- like
+    `_resolve_tables`, malformed stored data degrades gracefully rather
+    than failing the whole record."""
+    ids = [i for i in override_ids if isinstance(i, str)]
+    if not ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows_by_id: dict[str, sqlite3.Row] = {}
+    for row in conn.execute(
+        "SELECT r.id, r.name, r.type, r.book_id, r.json, "
+        "COALESCE(b.short_title, b.title) AS book_title "
+        "FROM records r LEFT JOIN books b ON b.book_id = r.book_id "
+        f"WHERE r.id IN ({placeholders})",
+        ids,
+    ):
+        rows_by_id[row["id"]] = row
+
+    resolved: list[dict[str, Any]] = []
+    for override_id in ids:
+        row = rows_by_id.get(override_id)
+        if row is None:
+            continue
+        record = json.loads(row["json"])
+        fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+        resolved.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "type": row["type"],
+                "book_id": row["book_id"],
+                "book_title": row["book_title"],
+                "citation": record.get("citation"),
+                "target_page": fields.get("target_page"),
+                "replacement_text": fields.get("replacement_text"),
+            }
+        )
+    return resolved
+
+
+def _applied_overrides_column(row: sqlite3.Row) -> list[Any]:
+    try:
+        value = json.loads(row["applied_overrides"])
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return value if isinstance(value, list) else []
 
 
 def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[str, Any] | None:
@@ -349,16 +450,22 @@ def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[
     if not rows:
         # Batch B10c, design decision D12: a record a class/prestige_class
         # span superseded (canonical = 0) still resolves by direct URL --
-        # only search/browse/facets stay canonical-only. Since a
-        # superseded record was never a duplicate-across-books situation to
-        # begin with (`build_db`'s superseding pass runs per book), there's
-        # no variants/published tie-break to do here.
+        # only search/browse/facets stay canonical-only. Batch B11: a
+        # record demoted by precedence (a variant whose own slug differs
+        # from its winner's -- the Rules Compendium case) ALSO lands here,
+        # and must still resolve `variant_of`/`applied_overrides` fully,
+        # not the pre-B11 empty shape.
         superseded_rows = list(conn.execute(_RECORD_DETAIL_SELECT, (type_name, slug, 0)))
         if not superseded_rows:
             return None
         row = superseded_rows[0]
         winner: dict[str, Any] = json.loads(row["json"])
-        winner["variants"] = []
+        winner["canonical"] = bool(row["canonical"])
+        winner["variant_of"] = row["variant_of"]
+        winner["variants"] = _resolve_variants(conn, row["id"])
+        winner["applied_overrides"] = _resolve_applied_overrides(
+            conn, _applied_overrides_column(row)
+        )
         winner["links"] = []
         winner["referenced_by"] = []
         winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])
@@ -374,14 +481,19 @@ def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[
         }
         return winner
 
-    # Spec 4.5/4.7 step 5: before precedence collapses duplicates (B11),
-    # more than one canonical record can share type+slug across books --
-    # pick the one from the latest-published book, list the rest as variants.
+    # Spec 4.5/4.7 step 5: precedence (B11) collapses same-type+slug
+    # duplicates across books at build time, so this normally finds exactly
+    # one row; kept as a harmless safety net for more than one canonical
+    # row still sharing type+slug -- pick the latest-published, same as
+    # before B11.
     rows.sort(key=lambda row: row["published"] or "", reverse=True)
     row = rows[0]
 
     winner = json.loads(row["json"])
-    winner["variants"] = [r["id"] for r in rows[1:]]
+    winner["canonical"] = bool(row["canonical"])
+    winner["variant_of"] = row["variant_of"]
+    winner["variants"] = _resolve_variants(conn, row["id"])
+    winner["applied_overrides"] = _resolve_applied_overrides(conn, _applied_overrides_column(row))
     winner["links"] = []
     winner["referenced_by"] = []
     winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])

@@ -35,7 +35,34 @@ _MANIFEST: dict[str, Any] = {
             "edition": "3.5",
             "kind": "rulebook",
             "published": "2001-01",
-        }
+        },
+        {
+            # Batch B11, design decision D21: a second book, published
+            # later, that also prints "Ice Storm" -- so `fixture-book-2`'s
+            # printing wins latest-wins and `fixture-book`'s becomes the
+            # variant, and `fixture-errata`'s entry below has a real,
+            # later-book target to override.
+            "book_id": "fixture-book-2",
+            "title": "Fixture Book II",
+            "short_title": "FB2",
+            "file": "fixture-book-2.pdf",
+            "edition": "3.5",
+            "kind": "supplement",
+            "published": "2005-01",
+        },
+        {
+            # Batch B11, design decision D21: an errata booklet for
+            # `fixture-book-2`, so `/r/spell/ice-storm` has a real
+            # "Overrides applied" section to render.
+            "book_id": "fixture-errata",
+            "title": "Fixture Book II Errata",
+            "short_title": "FB2E",
+            "file": "fixture-errata.pdf",
+            "edition": "3.5",
+            "kind": "errata",
+            "applies_to": "fixture-book-2",
+            "published": "2006-01",
+        },
     ]
 }
 
@@ -381,6 +408,58 @@ _SEGMENT_5: dict[str, Any] = {
     "created_at": "2026-01-01T00:00:00+00:00",
 }
 
+#: (batch B11, design decision D21) A sixth segment -- `fixture-book`'s own
+#: printing of "Ice Storm", the older of the two duplicate printings.
+_SEGMENT_ICE_STORM_FB: dict[str, Any] = {
+    "seg_id": "fixture-book-p0006-01",
+    "book_id": "fixture-book",
+    "pages": [6],
+    "printed_pages": [6],
+    "kind_hint": "spell",
+    "heading": "Ice Storm",
+    "text": "Ice Storm\n\nEvocation [Cold] Level: Sor/Wiz 4.",
+    "status": "pending",
+    "tier": "haiku",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
+#: (batch B11, design decision D21) `fixture-book-2`'s own printing of "Ice
+#: Storm" -- published later, so this is the one latest-wins keeps
+#: canonical.
+_SEGMENT_ICE_STORM_FB2: dict[str, Any] = {
+    "seg_id": "fixture-book-2-p0001-01",
+    "book_id": "fixture-book-2",
+    "pages": [1],
+    "printed_pages": [1],
+    "kind_hint": "spell",
+    "heading": "Ice Storm",
+    "text": "Ice Storm\n\nEvocation [Cold] Level: Sor/Wiz 4.",
+    "status": "pending",
+    "tier": "haiku",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
+#: (batch B11, design decision D21) `fixture-errata`'s one entry, targeting
+#: `fixture-book-2`'s "Ice Storm" by name.
+_SEGMENT_ERRATA: dict[str, Any] = {
+    "seg_id": "fixture-errata-p0001-01",
+    "book_id": "fixture-errata",
+    "pages": [1],
+    "printed_pages": [],
+    "kind_hint": "errata_entry",
+    "heading": "Ice Storm",
+    "text": (
+        "Ice Storm Fixture Book II, page 1 Change the area to read as "
+        "follows: a 20-foot-radius, 20-foot-high cylinder."
+    ),
+    "status": "pending",
+    "tier": "sonnet",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
 #: (batch B10c, design decision D13) An invented base class -- never copied
 #: from any real book. `spellcasting.spell_list` deliberately points at
 #: "Wizard", the same class name `_SPELLS`' Fireball/Summon Monster III/
@@ -501,6 +580,120 @@ _CLASS_TABLE: dict[str, Any] = {
     },
 }
 
+#: (batch B11, design decision D21) `fixture-book`'s printing of "Ice
+#: Storm" -- the older duplicate, demoted to a variant by latest-wins once
+#: `fixture-book-2`'s later printing (below) exists.
+_ICE_STORM_FB: dict[str, Any] = {
+    "id": "spell:fixture-book:ice-storm",
+    "type": "spell",
+    "name": "Ice Storm",
+    "slug": "ice-storm",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [6],
+    "citation": "FB p. 6",
+    "text_md": "A **hail of ice pellets** pounds down in a cylindrical area.",
+    "fields": {
+        "school": "Evocation",
+        "subschool": None,
+        "descriptors": ["Cold"],
+        "levels": [{"class": "Sorcerer", "level": 4}, {"class": "Wizard", "level": 4}],
+        "components": ["V", "S"],
+        "casting_time": "1 standard action",
+        "range": "Long (400 ft. + 40 ft./level)",
+        "target_effect_area": "Cylinder (20-ft. radius, 40 ft. high)",
+        "duration": "1 full round",
+        "saving_throw": "None",
+        "spell_resistance": "No",
+        "costs": {"material": None, "focus": None, "xp": None},
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 3,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-p0006-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (batch B11, design decision D21) `fixture-book-2`'s printing of "Ice
+#: Storm" -- published later, so this is the one that stays canonical;
+#: `fixture-errata`'s entry below targets this printing.
+_ICE_STORM_FB2: dict[str, Any] = {
+    "id": "spell:fixture-book-2:ice-storm",
+    "type": "spell",
+    "name": "Ice Storm",
+    "slug": "ice-storm",
+    "aliases": [],
+    "book_id": "fixture-book-2",
+    "pages": [1],
+    "citation": "FB2 p. 1",
+    "text_md": "A **hail of ice pellets** pounds down in a cylindrical area.",
+    "fields": {
+        "school": "Evocation",
+        "subschool": None,
+        "descriptors": ["Cold"],
+        "levels": [{"class": "Sorcerer", "level": 4}, {"class": "Wizard", "level": 4}],
+        "components": ["V", "S"],
+        "casting_time": "1 standard action",
+        "range": "Long (400 ft. + 40 ft./level)",
+        "target_effect_area": "Cylinder (20-ft. radius, 40 ft. high)",
+        "duration": "1 full round",
+        "saving_throw": "None",
+        "spell_resistance": "No",
+        "costs": {"material": None, "focus": None, "xp": None},
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 3,
+    "extraction": {
+        "tier": "haiku",
+        "model": "fixture",
+        "segment_id": "fixture-book-2-p0001-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
+#: (batch B11, design decision D21) `fixture-errata`'s one entry, applied
+#: to `fixture-book-2`'s "Ice Storm" by name match.
+_ICE_STORM_ERRATA: dict[str, Any] = {
+    "id": "errata_entry:fixture-errata:ice-storm-p-1",
+    "type": "errata_entry",
+    "name": "Ice Storm (p. 1)",
+    "slug": "ice-storm-p-1",
+    "aliases": [],
+    "book_id": "fixture-errata",
+    "pages": [1],
+    "citation": "Fixture Book II Errata pdf p. 1",
+    "text_md": ("Change the area to read as follows: a 20-foot-radius, 20-foot-high cylinder."),
+    "fields": {
+        "target_book": "fixture-book-2",
+        "target_page": 1,
+        "target_name": "Ice Storm",
+        "replacement_text": "A 20-foot-radius, 20-foot-high cylinder.",
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "sonnet",
+        "model": "fixture",
+        "segment_id": "fixture-errata-p0001-01",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
 #: (batch B10b) `toc/fixture-book.json` (design decision D16): three
 #: chapters -- Magic (pdf 1-2), Combat (pdf 3-3), Equipment (pdf 4-4) -- each
 #: with one level-2 section. "Grapple Ranks" (combat, p.3) and "Hauling
@@ -602,9 +795,20 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
     manifest_path = data_dir / "manifest.yaml"
     manifest_path.write_text(yaml.safe_dump(_MANIFEST))
 
-    seg_dir = data_dir / "segments" / "fixture-book"
-    seg_dir.mkdir(parents=True, exist_ok=True)
-    for segment in (_SEGMENT, _SEGMENT_2, _SEGMENT_3, _SEGMENT_4, _SEGMENT_5):
+    all_segments = (
+        _SEGMENT,
+        _SEGMENT_2,
+        _SEGMENT_3,
+        _SEGMENT_4,
+        _SEGMENT_5,
+        # Batch B11, design decision D21.
+        _SEGMENT_ICE_STORM_FB,
+        _SEGMENT_ICE_STORM_FB2,
+        _SEGMENT_ERRATA,
+    )
+    for segment in all_segments:
+        seg_dir = data_dir / "segments" / segment["book_id"]
+        seg_dir.mkdir(parents=True, exist_ok=True)
         (seg_dir / f"{segment['seg_id']}.json").write_text(json.dumps(segment, indent=2))
 
     records_dir = data_dir / "records" / "fixture-book" / "spell"
@@ -612,8 +816,20 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
     for spell in _SPELLS:
         (records_dir / f"{spell['slug']}.json").write_text(json.dumps(spell, indent=2))
 
-    for record in (_FEAT, _RULES_SECTION, _TABLE, _HAULING_GEAR, _CLASS, _CLASS_TABLE):
-        type_dir = data_dir / "records" / "fixture-book" / record["type"]
+    all_records = (
+        _FEAT,
+        _RULES_SECTION,
+        _TABLE,
+        _HAULING_GEAR,
+        _CLASS,
+        _CLASS_TABLE,
+        # Batch B11, design decision D21.
+        _ICE_STORM_FB,
+        _ICE_STORM_FB2,
+        _ICE_STORM_ERRATA,
+    )
+    for record in all_records:
+        type_dir = data_dir / "records" / record["book_id"] / record["type"]
         type_dir.mkdir(parents=True, exist_ok=True)
         (type_dir / f"{record['slug']}.json").write_text(json.dumps(record, indent=2))
 

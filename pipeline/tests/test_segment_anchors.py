@@ -208,3 +208,80 @@ def test_table_caption_en_dash_variant() -> None:
     paragraphs = [_para("Table 3–1: Simple Weapons"), _para("row", kind="table")]
     triggers = find_triggers(paragraphs, body_median=10.0)
     assert triggers[0].kind == "table"
+
+
+# --- Batch B11: errata_entry/update_entry anchors -------------------------
+
+
+def test_errata_anchor_requires_entry_kind() -> None:
+    paragraphs = [
+        _para("Glibness Player's Handbook, page 236 Change the spell to read as follows."),
+    ]
+    assert find_triggers(paragraphs, body_median=10.0) == []
+    triggers = find_triggers(paragraphs, body_median=10.0, entry_kind="errata_entry")
+    assert len(triggers) == 1
+    assert triggers[0].kind == "errata_entry"
+    assert triggers[0].start == 0
+
+
+def test_errata_anchor_one_per_paragraph() -> None:
+    paragraphs = [
+        _para("Errata Rule: Primary Sources take precedence over other material."),
+        _para("Glibness Player's Handbook, page 236 In second paragraph, change to X."),
+        _para("A Thousand Faces Player's Handbook, page 37 Replace alter self with disguise self."),
+        _para("In Conclusion . . . that is all the errata for this printing."),
+    ]
+    triggers = find_triggers(paragraphs, body_median=10.0, entry_kind="errata_entry")
+    assert [t.start for t in triggers] == [1, 2]
+    assert [t.kind for t in triggers] == ["errata_entry", "errata_entry"]
+
+
+def test_update_entry_kind_used_for_update_books() -> None:
+    paragraphs = [_para("Overrun Player's Handbook, page 148 Change -1 to +1.")]
+    triggers = find_triggers(paragraphs, body_median=10.0, entry_kind="update_entry")
+    assert [t.kind for t in triggers] == ["update_entry"]
+
+
+def test_no_errata_anchor_for_ordinary_rulebook_paragraph_with_page_reference() -> None:
+    # Criterion 7: every other book kind is unaffected -- a rulebook
+    # sentence mentioning "..., page 44" must never produce an errata
+    # anchor when entry_kind is None (the manifest-level gate).
+    paragraphs = [
+        _para("For more on grappling see the Player's Handbook, page 44 for full rules."),
+    ]
+    assert find_triggers(paragraphs, body_median=10.0) == []
+
+
+def test_errata_heading_prefix_too_long_is_not_an_anchor() -> None:
+    long_prefix = " ".join(f"word{i}" for i in range(13))
+    paragraphs = [_para(f"{long_prefix}, page 12 some body text follows here.")]
+    assert find_triggers(paragraphs, body_median=10.0, entry_kind="errata_entry") == []
+
+
+def test_errata_heading_common_suffix_stripped() -> None:
+    from owlsperch.segment.anchors import strip_common_heading_suffix
+
+    headings = [
+        "Glibness Player's Handbook",
+        "A Thousand Faces Player's Handbook",
+        "Overrun Player's Handbook",
+    ]
+    assert strip_common_heading_suffix(headings) == [
+        "Glibness",
+        "A Thousand Faces",
+        "Overrun",
+    ]
+
+
+def test_errata_heading_no_qualifying_suffix_left_alone() -> None:
+    from owlsperch.segment.anchors import strip_common_heading_suffix
+
+    headings = ["Alpha One", "Beta Two", "Gamma Three"]
+    assert strip_common_heading_suffix(headings) == headings
+
+
+def test_errata_heading_fewer_than_three_headings_left_alone() -> None:
+    from owlsperch.segment.anchors import strip_common_heading_suffix
+
+    headings = ["Glibness Player's Handbook", "Overrun Player's Handbook"]
+    assert strip_common_heading_suffix(headings) == headings

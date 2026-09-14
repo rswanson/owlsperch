@@ -18,12 +18,15 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
     result = write_fixture_data(data_dir)
 
     assert result.skipped_invalid == 0
+    # Batch B11 adds a duplicate "Ice Storm" printing across fixture-book/
+    # fixture-book-2, plus one errata_entry in fixture-errata.
     assert result.counts_by_type == {
-        "spell": 3,
+        "spell": 5,
         "feat": 1,
         "rules_section": 2,
         "table": 2,
         "class": 1,
+        "errata_entry": 1,
     }
     assert default_db_path(data_dir).is_file()
 
@@ -86,7 +89,7 @@ def test_run_fixture_db_returns_zero_and_prints_summary(tmp_path: Path) -> None:
     out = io.StringIO()
     exit_code = run_fixture_db(data_dir, out=out)
     assert exit_code == 0
-    assert "spell: 3" in out.getvalue()
+    assert "spell: 5" in out.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +123,11 @@ def test_write_fixture_data_writes_hauling_gear_rules_section(tmp_path: Path) ->
     assert path.is_file()
     record = json.loads(path.read_text())
     assert record["pages"] == [4]
-    # The toc file is written BEFORE build_db runs, so this must never warn.
-    assert result.toc_missing_books == []
+    # The toc file is written BEFORE build_db runs, so fixture-book must
+    # never warn. Batch B11's fixture-book-2 has no toc file of its own
+    # (it's a supplement, not exempt like the errata/update books), so it
+    # DOES warn -- that's the expected, correct D17 behavior, not a bug.
+    assert result.toc_missing_books == ["fixture-book-2"]
 
 
 def test_write_fixture_data_derives_categories_for_both_rules_sections(tmp_path: Path) -> None:

@@ -194,6 +194,63 @@ def check_table_fields(record: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _check_override_entry_fields(record: dict[str, Any]) -> list[str]:
+    """Shared errata_entry/update_entry consistency checks (batch B11,
+    design decision D4): `target_book`/`target_name`/`replacement_text` are
+    non-empty strings, `target_page` (if present) is a positive integer,
+    and `name` is exactly `"<target_name> (p. <target_page>)"` when
+    `target_page` is present, else plain `"<target_name>"` -- this is what
+    lets two entries in the same book that happen to share a bare target
+    name (e.g. two unrelated "Overrun" corrections) get distinct slugs/ids
+    instead of one silently overwriting the other."""
+    errors: list[str] = []
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return ["fields is missing or not an object"]
+
+    target_book = fields.get("target_book")
+    if not isinstance(target_book, str) or not target_book.strip():
+        errors.append("target_book must be a non-empty string")
+
+    target_name = fields.get("target_name")
+    if not isinstance(target_name, str) or not target_name.strip():
+        errors.append("target_name must be a non-empty string")
+
+    replacement_text = fields.get("replacement_text")
+    if not isinstance(replacement_text, str) or not replacement_text.strip():
+        errors.append("replacement_text must be a non-empty string")
+
+    target_page = fields.get("target_page")
+    has_valid_page = (
+        target_page is not None
+        and not isinstance(target_page, bool)
+        and isinstance(target_page, int)
+        and target_page >= 1
+    )
+    if target_page is not None and not has_valid_page:
+        errors.append("target_page must be a positive integer when present")
+
+    if isinstance(target_name, str) and target_name.strip():
+        expected_name = f"{target_name} (p. {target_page})" if has_valid_page else target_name
+        name = record.get("name")
+        if name != expected_name:
+            errors.append(f"name {name!r} does not match expected {expected_name!r}")
+
+    return errors
+
+
+def check_errata_entry_fields(record: dict[str, Any]) -> list[str]:
+    """errata_entry-specific consistency checks (batch B11, design decision
+    D4). See `_check_override_entry_fields`."""
+    return _check_override_entry_fields(record)
+
+
+def check_update_entry_fields(record: dict[str, Any]) -> list[str]:
+    """update_entry-specific consistency checks (batch B11, design decision
+    D4). See `_check_override_entry_fields`."""
+    return _check_override_entry_fields(record)
+
+
 def check_pages_within_segment(record: dict[str, Any], segment: dict[str, Any] | None) -> list[str]:
     """Every page a record cites must be within its originating segment's
     page span (spec 4.5). A missing segment is its own failure -- there's
@@ -223,6 +280,8 @@ TYPE_FIELD_CHECKS: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "feat": check_feat_fields,
     "rules_section": check_rules_section_fields,
     "table": check_table_fields,
+    "errata_entry": check_errata_entry_fields,
+    "update_entry": check_update_entry_fields,
 }
 
 

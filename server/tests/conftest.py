@@ -41,6 +41,16 @@ def _write_manifest(tmp_path: Path) -> Path:
                 "kind": "rulebook",
                 "published": "2010-05",
             },
+            {
+                "book_id": "book-a-errata",
+                "title": "Book A Errata",
+                "short_title": "BAE",
+                "file": "book-a-errata.pdf",
+                "edition": "3.5",
+                "kind": "errata",
+                "applies_to": "book-a",
+                "published": "2002-01",
+            },
         ]
     }
     path = tmp_path / "manifest.yaml"
@@ -200,6 +210,48 @@ def _table_record(
     }
 
 
+def _errata_entry_record(
+    *,
+    book_id: str,
+    slug: str,
+    target_book: str,
+    target_name: str,
+    target_page: int | None,
+    replacement_text: str,
+    seg_id: str,
+) -> dict[str, Any]:
+    name = f"{target_name} (p. {target_page})" if target_page is not None else target_name
+    return {
+        "id": f"errata_entry:{book_id}:{slug}",
+        "type": "errata_entry",
+        "name": name,
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [1],
+        "citation": f"{book_id} pdf p. 1",
+        "text_md": f"Change the wording of {target_name} as follows: {replacement_text}",
+        "fields": {
+            "target_book": target_book,
+            "target_page": target_page,
+            "target_name": target_name,
+            "replacement_text": replacement_text,
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
 def _write_toc(data_dir: Path, book_id: str) -> None:
     """A minimal `toc/<book_id>.json` (batch B10b, design decision D17):
     one chapter spanning every page this fixture's records use, so every
@@ -250,6 +302,11 @@ def built_data_dir(tmp_path: Path) -> Path:
     - `toc/book-a.json` (B10b) -- every book-a record resolves to category
       "magic"/chapter "Chapter 1: Magic"; `book-b` has no toc file, so its
       records resolve to "uncategorized"/null (see `_write_toc`).
+    - `spell:book-a:ember-spark` and `errata_entry:book-a-errata:ember-spark`
+      (B11) -- the errata entry targets "Ember Spark" by name, so
+      `/records/spell/ember-spark`'s `applied_overrides` resolves to one
+      object. A dedicated spell, not Fireball/Acid Fog, so this fixture's
+      existing exact-name search/stats assertions are unaffected.
     """
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
@@ -257,6 +314,7 @@ def built_data_dir(tmp_path: Path) -> Path:
 
     _write_segment(data_dir, "book-a", "book-a-p0001-01", [1])
     _write_segment(data_dir, "book-b", "book-b-p0001-01", [1])
+    _write_segment(data_dir, "book-a-errata", "book-a-errata-p0001-01", [1])
 
     _write_record(
         data_dir,
@@ -352,6 +410,39 @@ def built_data_dir(tmp_path: Path) -> Path:
             tables=["table:book-a:does-not-exist-yet"],
         ),
         type_dir="rules_section",
+    )
+
+    # A dedicated spell just for the applied_overrides test below -- kept
+    # separate from Fireball/Acid Fog/Test Spell N so this fixture's
+    # existing search/stats assertions (which query by exact name) are
+    # unaffected by the errata entry's own record also being named
+    # "Ember Spark".
+    _write_record(
+        data_dir,
+        "book-a",
+        "ember-spark",
+        _spell_record(
+            book_id="book-a",
+            slug="ember-spark",
+            name="Ember Spark",
+            seg_id="book-a-p0001-01",
+            pages=[1],
+        ),
+    )
+    _write_record(
+        data_dir,
+        "book-a-errata",
+        "ember-spark",
+        _errata_entry_record(
+            book_id="book-a-errata",
+            slug="ember-spark",
+            target_book="book-a",
+            target_name="Ember Spark",
+            target_page=None,
+            replacement_text="Deals fire damage in a slightly bigger burst.",
+            seg_id="book-a-errata-p0001-01",
+        ),
+        type_dir="errata_entry",
     )
 
     build_db(data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_REPO_SCHEMAS_DIR)

@@ -489,6 +489,76 @@ _KIND_RULES: dict[str, list[str]] = {
         "whole progression inside that one entry's own `text_md` instead of",
         "duplicating the entry per level.",
     ],
+    "errata_entry": [
+        "This segment is one paragraph of an errata booklet: it names an",
+        "entity, gives its `<Book>, page N` target reference, then explains",
+        'the correction. `target_book` is the "Applies to book ID" value',
+        'shown above under "## Book", copied VERBATIM -- never the printed',
+        "book title, and never this errata booklet's own book ID.",
+        "",
+        '`target_page` is the number after "page" in the target reference',
+        'line (e.g. "..., page 236" gives `target_page: 236`). `target_name`',
+        "is the entry's own heading words before that reference, with the",
+        "target book's printed title already stripped off for you (shown",
+        "above as this segment's own Heading) -- use it as `target_name`",
+        "as-is.",
+        "",
+        "`replacement_text` is the LITERAL new wording the entry gives you to",
+        'use -- the text after a "read as follows:" / "as follows:" / "with',
+        'the following text:" marker. Worked example: "Change the second',
+        "paragraph to read as follows: If a magical effect is used against",
+        'you..." gives `replacement_text: "If a magical effect is used',
+        'against you..."`. When the entry gives no such literal wording (e.g.',
+        '"Change -1 to +1; change -5 to +5."), `replacement_text` falls back',
+        "to the entry's full body verbatim -- `replacement_text` is never",
+        "empty and never `null`.",
+        "",
+        "`text_md` is always the entry's FULL body verbatim (the rationale",
+        "plus the instructions), as Markdown -- this is a separate field from",
+        "`replacement_text` and is never omitted even when the two happen to",
+        "read the same.",
+        "",
+        '`name` is `"<target_name> (p. <target_page>)"` when `target_page` is',
+        'present, else plain `"<target_name>"` -- `slug`/`id` follow from',
+        "that qualified `name` via the normal slug rule, NOT from",
+        "`target_name` alone. This matters because a single errata booklet",
+        "can correct the same-named entity at two different target pages",
+        '(e.g. two unrelated entries both named "Overrun"): without the',
+        "page qualifier their slugs (and so their `id`s) would collide and",
+        "one record would silently overwrite the other.",
+    ],
+    "update_entry": [
+        "This segment is one paragraph of a 3.5 Update booklet: usually",
+        "`<Name>: <revised statistics>` with NO `<Book>, page N` target",
+        'reference at all. `target_book` is the "Applies to book ID" value',
+        'shown above under "## Book", copied VERBATIM -- never the printed',
+        "book title.",
+        "",
+        "When the entry DOES cite a page (rare for this kind), `target_page`",
+        'is the number after "page" in that reference the same way an',
+        "errata entry's does; when it cites none, OMIT `target_page` entirely",
+        "-- never write it as `null`. `target_name` is the entry's own bare",
+        "heading name, with the target book's printed title already stripped",
+        "off for you (shown above as this segment's own Heading) when one was",
+        "present.",
+        "",
+        "`replacement_text` is the LITERAL new wording the entry gives you to",
+        'use -- the text after a "read as follows:" / "as follows:" / "with',
+        "the following text:\" marker, falling back to the entry's full body",
+        'verbatim when it gives no such literal wording (e.g. "Sable Strike:',
+        'change the bonus from +2 to +4." gives',
+        '`replacement_text: "Change the bonus from +2 to +4."`).',
+        "`replacement_text` is never empty and never `null`.",
+        "",
+        "`text_md` is always the entry's FULL body verbatim, as Markdown --",
+        "a separate field from `replacement_text`, never omitted.",
+        "",
+        '`name` is `"<target_name> (p. <target_page>)"` when `target_page` is',
+        'present, else plain `"<target_name>"` -- `slug`/`id` follow from',
+        "that qualified `name` via the normal slug rule, NOT from",
+        "`target_name` alone, for the same collision reason an errata",
+        "booklet's entries can share a bare name.",
+    ],
 }
 
 
@@ -503,6 +573,15 @@ def _lookup_entry(book_id: str, manifest_path: Path | None) -> ManifestEntry | N
     except ManifestError:
         return None
     return next((e for e in entries if e.book_id == book_id), None)
+
+
+def _applies_to_book_id(entry: ManifestEntry | None) -> str:
+    """Batch B11, design decision D8: the "## Book" section's "Applies to
+    book ID" line -- the book_id an errata/update booklet corrects, or
+    "(none)" for every other book."""
+    if entry is not None and entry.applies_to:
+        return entry.applies_to
+    return "(none)"
 
 
 def _citation_prefix(book_id: str, entry: ManifestEntry | None) -> str:
@@ -898,6 +977,7 @@ def render_prompt(
         "",
         f"- Title: {title}",
         f"- Book ID: {segment.book_id}",
+        f"- Applies to book ID: {_applies_to_book_id(entry)}",
         f"- Printed page(s) for this segment: {_printed_pages_str(segment)}",
         f"- Extraction model for this task: {model}",
         "",

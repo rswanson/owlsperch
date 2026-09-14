@@ -58,8 +58,16 @@ TIER_MODELS: dict[str, str] = {
 #: Batch B10c: a `kind_hint` that starts higher than `TIERS[0]` (haiku) on
 #: the ladder, because a class/prestige_class extraction (a level table plus
 #: several structured sub-objects) is reliably too complex for haiku to get
-#: right on a first attempt -- see `starting_tier`.
-STARTING_TIERS: dict[str, str] = {"class": "sonnet", "prestige_class": "sonnet"}
+#: right on a first attempt -- see `starting_tier`. Batch B11 adds
+#: errata_entry/update_entry: a mis-read `target_name`/`target_page` does
+#: not fail schema validation -- it silently fails to match at build time
+#: and lands in `human/`, which costs more than the cheaper tier saves.
+STARTING_TIERS: dict[str, str] = {
+    "class": "sonnet",
+    "prestige_class": "sonnet",
+    "errata_entry": "sonnet",
+    "update_entry": "sonnet",
+}
 
 
 def starting_tier(kind: str) -> str:

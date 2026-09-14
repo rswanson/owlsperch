@@ -1,0 +1,31 @@
+{
+  "id": "errata_entry:example-errata:sable-strike-p-112",
+  "type": "errata_entry",
+  "name": "Sable Strike (p. 112)",
+  "slug": "sable-strike-p-112",
+  "aliases": [],
+  "book_id": "example-errata",
+  "pages": [
+    1
+  ],
+  "citation": "Example Errata pdf p. 1",
+  "text_md": "In the Benefit entry, the bonus applies only to melee attacks, not ranged ones. Change the second sentence to read as follows: This bonus does not apply to ranged attacks of any kind.",
+  "fields": {
+    "target_book": "fixture-book",
+    "target_page": 112,
+    "target_name": "Sable Strike",
+    "replacement_text": "This bonus does not apply to ranged attacks of any kind."
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-errata-p0001-01",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

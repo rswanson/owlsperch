@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/errata_entry.json",
+  "title": "Errata entry fields",
+  "description": "The `fields` object of an errata entry record, per spec 4.6.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "target_book": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The `book_id` of the book being corrected (e.g. \"phb1\"), NOT the printed title.",
+      "x-ui": { "label": "Target book", "filterable": true, "sortable": false, "group": "target", "order": 1 }
+    },
+    "target_page": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "default": null,
+      "description": "The printed page in the TARGET book (never this entry's own page).",
+      "x-ui": { "label": "Target page", "filterable": false, "sortable": true, "group": "target", "order": 2 }
+    },
+    "target_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The entity name as the entry prints it (e.g. \"Glibness\", \"Overrun\"), unqualified.",
+      "x-ui": { "label": "Target name", "filterable": false, "sortable": false, "group": "target", "order": 3 }
+    },
+    "replacement_text": {
+      "type": "string",
+      "minLength": 1,
+      "x-ui": { "label": "Replacement text", "filterable": false, "sortable": false, "group": "content", "order": 4 }
+    }
+  },
+  "required": ["target_book", "target_name", "replacement_text"],
+  "additionalProperties": false
+}

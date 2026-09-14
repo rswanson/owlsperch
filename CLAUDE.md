@@ -82,7 +82,15 @@ which the *previous* run had just advanced, so re-validating an
 unchanged segment walked the escalation ladder once per run -- is fixed
 by a new `Segment.claim_tier` field (see `pipeline/owlsperch/validate/
 runner.py` below) that anchors the attempt tier to something stable
-across runs instead. CI. Everything else is a
+across runs instead. Batch B11 adds the `errata_entry`/`update_entry`
+record types (an errata or 3.5 Update booklet segments into one entry per
+corrected entity) and a precedence pass inside `build-db`: errata/update
+entries are applied to their targets, a Rules Compendium `rules_section`
+becomes canonical over any other book's matching topic, and among what
+remains the latest `published` book wins -- `build-db` now writes
+`reports/precedence.md` naming every entry and Rules Compendium section it
+couldn't match, and `web/` shows a record's "Other printings" and
+"Overrides applied" (with citations). CI. Everything else is a
 future-batch stub (`check-completeness`, `coverage`, `schema review`,
 `sample`, and `web/`'s own `/tools/*` routes from spec 4.10).
 
@@ -105,8 +113,9 @@ uv run owlsperch segment <book_id|all> [--force] [--pages A-B] [--kinds class[,p
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
 uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json] [--dry-run]
-  # `--kind class`/`--kind prestige_class` resolves to the sonnet tier on
-  # its own (batch B10c: those kinds start above haiku, per
+  # `--kind class`/`--kind prestige_class`/`--kind errata_entry`/
+  # `--kind update_entry` all resolve to the sonnet tier on their own
+  # (batch B10c/B11: those kinds start above haiku, per
   # `owlsperch.queue.ladder.STARTING_TIERS`)
 uv run owlsperch queue prompt <seg_id> [--model M]
 uv run owlsperch queue complete <seg_id> --result <json-file-or-'-'>
@@ -313,6 +322,24 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   produced selectively. Rewriting a class segment file this way (`--force`)
   resets it to `pending` with no claims -- its previously claimed records
   are orphaned on disk unless deleted first (`queue reset --hard`).
+  Batch B11 adds an errata/update anchor, gated entirely on the book's manifest
+  `kind`: `anchors.find_triggers` takes a keyword-only `entry_kind`
+  (`"errata_entry"`/`"update_entry"`, resolved by `segment/runner.py` from
+  the book's own `ManifestEntry.kind` -- `errata`/`update`, else `None`),
+  and produces that anchor ONLY when `entry_kind` isn't `None`, so a
+  rulebook sentence like "(see the Player's Handbook, page 44)" can never
+  create a bogus segment in a normal book. When enabled, every paragraph
+  whose first 120 characters (after whitespace normalization) contain a
+  ", page N" reference, with a non-empty prefix of at most 12 words before
+  the match, is one entry -- the whole booklet segments into one entry per
+  paragraph. These triggers are detected FIRST, before spell/feat/table/
+  stat_block, so an entry body that happens to contain a "Benefit:" cue
+  can't be stolen by the feat anchor. `strip_common_heading_suffix`
+  cleans the raw heading: computed once per book from every anchor's own
+  prefix, it finds the longest trailing word n-gram (1-4 words) common to
+  at least half the entries (minimum 3) and strips it -- turning "Glibness
+  Player's Handbook" into "Glibness" -- leaving a heading alone when fewer
+  than 3 entries exist or no n-gram qualifies.
 
 - `pipeline/owlsperch/supersede.py` (batch B10c-mand2) -- `release_segment_
   claims(segment, *, data_dir)`, the shared helper behind both the
@@ -389,7 +416,20 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   typed `class` record is unaffected, and `prestige_class.json` itself is
   untouched at version 1 (its own `class_type` is never `"base"` in
   practice). `schemas/examples/class.json` gains `fields.abbreviation`
-  and bumps to `schema_version: 2`.
+  and bumps to `schema_version: 2`. Batch B11 adds `errata_entry.json` and
+  `update_entry.json` (byte-identical structure, version 1): `target_book`
+  (the corrected book's `book_id`, never the printed title), `target_page`
+  (nullable, the TARGET book's printed page), `target_name` (the entity
+  name as the entry prints it, unqualified), and `replacement_text` (the
+  literal new wording, or the entry's full body when it gives none) --
+  neither touches `envelope.json` or bumps any existing type's version.
+  `schemas/examples/errata_entry.json`/`update_entry.json` model the
+  mandatory naming rule (see `validate/` below): the record `name` is
+  `"<target_name> (p. <target_page>)"` when a page is present, else the
+  bare `target_name`, so two entries in one errata file that happen to
+  share a bare name (a real occurrence -- PHB's errata corrects "Overrun"
+  twice, at two different pages) get distinct slugs/ids instead of one
+  silently overwriting the other.
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -522,7 +562,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   and threads it into its own `validate_record` call (a bug fixed the same
   batch -- it used to fall back to `NULL_CONTEXT`, so every class/
   `prestige_class` candidate's `level_table` cross-reference reported "not
-  found" and could never be bumped).
+  found" and could never be bumped). Batch B11 adds
+  `check_errata_entry_fields`/`check_update_entry_fields` (both registered
+  in `TYPE_FIELD_CHECKS`): non-empty `target_book`/`target_name`/
+  `replacement_text`, `target_page` either absent/null or a positive
+  integer, and -- the mandatory rule schemas alone can't express -- the
+  record's `name` matches exactly `"<target_name> (p. <target_page>)"`
+  when a page is present, else the bare `target_name`.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -719,11 +765,31 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   writing a fresh segment of any kind -- a class/prestige_class entry (a
   level table plus several structured sub-objects) is reliably too complex
   for haiku on a first attempt, so it starts one rung up; everything else
-  still starts at haiku. A segment with `superseded_by` set is frozen:
-  `select.py`'s stale-reset/lazy-escalation heal pass and its selection
-  filter both skip it outright (never reset, never escalated, never
-  selected), and `summary.py` excludes it from `pending`/`pending_by_kind`/
-  `pending_by_tier` while reporting a separate `superseded` count.
+  still starts at haiku. Batch B11 adds `"errata_entry": "sonnet"` and
+  `"update_entry": "sonnet"` to `STARTING_TIERS` -- a mis-read
+  `target_name`/`target_page` doesn't fail schema validation, it silently
+  fails to match at build time and lands in `human/`, which costs more
+  than the cheaper tier saves. A segment with `superseded_by` set is
+  frozen: `select.py`'s stale-reset/lazy-escalation heal pass and its
+  selection filter both skip it outright (never reset, never escalated,
+  never selected), and `summary.py` excludes it from `pending`/
+  `pending_by_kind`/`pending_by_tier` while reporting a separate
+  `superseded` count. `prompt.py`'s "## Book" section gains an "Applies to
+  book ID" line (the book_id an errata/update booklet corrects, from
+  `ManifestEntry.applies_to`, or "(none)" for every other book), and
+  `_KIND_RULES` gains `"errata_entry"`/`"update_entry"` entries: copy
+  `target_book` from that line verbatim (never the printed title);
+  `target_page` is the number after "page" in the target reference (OMIT
+  the key, never `null`, when the entry cites none -- the usual case for
+  an update booklet entry); `target_name` is the heading words before that
+  reference, with the per-book common suffix already stripped for the
+  subagent; `replacement_text` is the literal wording after a "read as
+  follows:"/"as follows:"/"with the following text:" marker, falling back
+  to the entry's full body when there is none; `text_md` is always the
+  full body, a separate field from `replacement_text` even when they'd
+  read the same; and `name`/`slug`/`id` follow the qualified-naming rule
+  above, called out explicitly since one errata file can correct the same
+  bare name at two different pages.
 
 - `pipeline/owlsperch/toc/` -- the `toc` subcommand (batch B10b): `parser.py`
   scans pdf pages 1-12 of `text/<book_id>/` for a page with >= 3
@@ -852,7 +918,77 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   ever glob `records/<book_id>/*/*.json`, so `$OWLSPERCH_DATA/superseded/
   <book_id>/<type>/<file>.json` -- where `release_segment_claims` moves
   (never deletes) a released record file -- is invisible to both by
-  construction, with no code change needed for that.
+  construction, with no code change needed for that. Batch B11 adds two
+  more `records` columns -- `variant_of TEXT` and `applied_overrides TEXT
+  NOT NULL DEFAULT '[]'` (a JSON array of entry ids) -- and a new pass,
+  `owlsperch.build_db.precedence.apply_precedence`, run once every record
+  is loaded, right after `_apply_superseding` and before the `names_fts`
+  insert. `variant_of`/`applied_overrides` are a SEPARATE axis from
+  `superseded_by`: superseding is "a typed entity in the SAME book
+  swallowed these pages" (a class absorbing its own fragments);
+  `variant_of` is "this is a duplicate PRINTING of the same content,
+  possibly in a different book" (an errata/update override target, a
+  Rules Compendium override, or an older printing latest-wins demoted) --
+  `apply_precedence` never touches `superseded_by`, and a `superseded_by`
+  row is excluded from every precedence step's candidate pool (never a
+  target, a winner, or a variant). The pool for every step is `records
+  WHERE superseded_by IS NULL`; within it: (1) every `errata_entry`/
+  `update_entry` record is matched against same-book candidates of the
+  errata's own `fields.target_book`, NAME first (`slug ==
+  slugify(target_name)`, appending the entry's id to every match's
+  `applied_overrides`), else, if `target_page` is given, PAGE (records
+  whose own `pages` contain it, narrowed to a normalized-name overlap when
+  more than one, or accepted outright when exactly one) -- an entry
+  matching neither is written to `human/<book_id>/overrides/<entry-
+  slug>.json` (a SUBDIRECTORY, deliberately: `queue/summary.py`,
+  `queue/audit.py`, and `queue/complete.py`'s `_record_path_owners` all
+  glob `human/<book_id>/*.json` non-recursively and would otherwise
+  mis-parse a loose override file as a `Segment`) with the candidates it
+  considered, and listed in `reports/precedence.md`; (2) `rules_section`
+  records are grouped by `slugify(fields.topic)` -- a group containing a
+  Rules Compendium (`rules-compendium`) record makes that record (lowest
+  id) canonical over every other-book record in the group
+  (`canonical = 0, variant_of = <RC id>`), and a Rules Compendium section
+  matching no other book is listed in the report as unmatched, staying
+  canonical; (3) among what's left (`variant_of IS NULL AND canonical =
+  1`), records are grouped by `(type, slug)` and the highest `books.
+  published` wins (ties broken by `book_id` then `id`, a real total order
+  so a build is deterministic even when `published` is equal or missing)
+  -- the rest get `canonical = 0, variant_of = <winner id>`. Because an
+  override in step (1) is matched against one specific row, but steps
+  (2)/(3) run afterward and can demote that exact row to a variant of a
+  *different*, same-slug canonical winner, `_merge_overrides_to_winners`
+  runs once all three steps have settled `variant_of`: it copies every
+  demoted record's own `applied_overrides` onto its ultimate winner
+  (following `variant_of` to the end, since an RC winner can itself later
+  lose to latest-wins), de-duplicated, order preserved -- otherwise the
+  override would sit unreachably on a `canonical = 0` row sharing the
+  winner's own `(type, slug)`, which `/records/{type}/{slug}` never falls
+  through to (its `canonical = 1` query for that slug always succeeds
+  first). The demoted row keeps its own `applied_overrides` too, so the
+  D12 direct-URL fallback below still shows exactly what was applied to
+  it. `errata_entry`/`update_entry` records are excluded only from being
+  override TARGETS (step (1)'s `targets_by_book` skips them); they are
+  otherwise ordinary, searchable records and DO take part in step (3)'s
+  latest-wins grouping, so two errata books carrying the same correction
+  (the same `(type, slug)`) collapse to one canonical entry with the older
+  one as its variant -- both are still applied to their target, and both
+  still appear in that target's `applied_overrides` list. `write_precedence_
+  report`/`write_unmatched_overrides` run AFTER `build_db()`'s temp file is
+  atomically renamed into place, so a failed build leaves no stray report
+  or `human/` file behind; `write_unmatched_overrides` also clears each
+  errata/update source book's `human/<book_id>/overrides/*.json` first, so
+  a since-fixed entry doesn't linger. `reports/precedence.md` (written via
+  `owlsperch.fsutil.atomic_write_text`) has a summary line count plus two
+  tables (unmatched overrides with their candidates, unmatched Rules
+  Compendium sections); `BuildResult`/`render()` gain "Overrides applied",
+  "Unmatched overrides", "Rules Compendium overrides", and "Variants"
+  lines, and `run_build_db` prints one WARNING (never a build failure,
+  even under `--strict`) when any override went unmatched, naming the
+  report path. Batch B11 also exempts an `errata`/`update` book's manifest
+  `kind` from the missing-toc `WARNING` (`_load_records` takes a
+  `book_kinds` map from `build_db()`, which already loaded the manifest)
+  -- those booklets have no table of contents by nature.
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be
@@ -933,7 +1069,25 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   since `build_db.runner.flatten_fields` writes no *combined*
   `record_fields` row for a plain dict -- every sub-param for it always
   goes through its own `<parent>.<sub>` key, never the array-of-object
-  cross-product path.
+  cross-product path. Batch B11 replaces `/records/{type}/{slug}`'s
+  pre-precedence `variants` (bare id strings, computed by sorting every
+  same-type+slug row by `published` at request time) with objects resolved
+  from the `variant_of` column build-db's precedence pass now fills:
+  `{id, book_id, book_title, citation, published}` for every record whose
+  `variant_of` points at this one, ordered by `published` DESC then
+  `book_id` ASC (SQLite already sorts a NULL `published` last in DESC
+  order). `applied_overrides` is resolved the same way, from the stored id
+  list to `{id, name, type, book_id, book_title, citation, target_page,
+  replacement_text}` objects in stored order, skipping an id with no
+  matching row rather than raising -- the same defensive shape
+  `_resolve_tables` already used for a pending table. `canonical` and
+  `variant_of` are overlaid from the `records` COLUMNS onto the parsed
+  record JSON (the stored blob's own values are extraction-time defaults
+  and go stale the moment precedence runs); the `canonical = 0` fallback
+  branch (previously only a class-superseded record's home) now also
+  serves a precedence-demoted record whose own slug differs from its
+  winner's (the Rules Compendium case), resolving `variant_of`/
+  `applied_overrides` fully there too, not the pre-B11 empty shape.
 - `pipeline/owlsperch/dev.py` -- the `dev` subcommand (spec 4.10, batch B7):
   `build_dev_commands` decides what to run (`python -m owlsperch serve`,
   then `npm run dev` in `web/`) and where; `run_dev` spawns both as child
@@ -973,7 +1127,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `web/e2e/class.spec.ts`'s index-addressed feature ids stay stable),
   satisfying the new empty-text_md/duplicate-name/required-Spells-feature
   checks, and `schema_version: 3` (the class schema's `text_md`
-  `minLength: 1` bump) into `<dir>` and builds
+  `minLength: 1` bump); plus, since batch B11, a second book
+  (`fixture-book-2`, published later) and an errata booklet
+  (`fixture-errata`, `applies_to: fixture-book-2`) -- both print an
+  invented "Ice Storm" spell, so `fixture-book-2`'s printing wins
+  latest-wins and `fixture-book`'s becomes the variant, and
+  `fixture-errata`'s one entry (matched to `fixture-book-2`'s printing by
+  name) gives `/r/spell/ice-storm` real "Other printings"/"Overrides
+  applied" content) into `<dir>` and builds
   `<dir>/db/owlsperch.sqlite` from it via `owlsperch.build_db.runner.build_db`.
   Used by `web/e2e/serve-fixture.py` (the Playwright tests' backend) and
   usable standalone for poking at the UI locally without the real PDF corpus.
@@ -1071,7 +1232,16 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `superseded_by` notice (any record type, not just class): when set, a
   short "Superseded by <link>" line renders above the heading, the link
   target parsed straight out of the id (`<type>:<book_id>:<slug>` ->
-  `/r/<type>/<slug>`) rather than a second fetch.
+  `/r/<type>/<slug>`) rather than a second fetch. Batch B11 adds a
+  `variant_of` notice next to it, reusing the same id-to-path parser
+  (`supersededByLink`) rather than writing a second one, and two sections
+  below `RecordTables`, each rendered only when non-empty: "Other
+  printings" lists `record.variants` as plain text (book title/citation --
+  never links, since every printing shares the one `/r/:type/:slug` URL),
+  and "Overrides applied" lists `record.applied_overrides`, the entry's own
+  name linking to its own record page (`supersededByLink` again) alongside
+  its citation and `replacement_text`. `src/api.ts` gains `RecordVariant`/
+  `AppliedOverride` interfaces mirroring the server's resolved shapes.
   `vite.config.ts`'s dev server proxies `/api/*` to the FastAPI server on
   127.0.0.1:8000 (path rewrite strips `/api`) and binds `127.0.0.1`
   explicitly (Node's default `"localhost"` host can resolve to the IPv6
@@ -1080,7 +1250,9 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   has Playwright specs -- `smoke.spec.ts` (flow A: type a prefix, Enter,
   land on the record page; plus, batch B10, opening the fixture
   rules_section record and asserting its owned table renders as a real
-  `<table>` below the text), `mobile.spec.ts` (flow A at 400px width),
+  `<table>` below the text; plus, batch B11, opening the fixture's
+  duplicate "Ice Storm" printing and asserting both "Other printings" and
+  "Overrides applied" render), `mobile.spec.ts` (flow A at 400px width),
   (batch B9) `browse.spec.ts` (flow B: nav to Spells, check Cleric/3/
   Conjuration in the facet sidebar, sort by name, open the one matching
   spell), (batch B10b) `tree.spec.ts` (flow C: follow the header nav's

@@ -1469,3 +1469,156 @@ def test_build_db_ignores_records_under_superseded_directory(tmp_path: Path) -> 
     assert result.skipped_invalid == 0
     assert result.skipped_superseded == 0
     assert result.counts_by_type == {}
+
+
+# ---------------------------------------------------------------------------
+# Batch B11: variant_of/applied_overrides columns, and the errata/update
+# toc-warning exemption (criterion 8, design decision D17).
+# ---------------------------------------------------------------------------
+
+
+def test_records_table_has_variant_of_and_applied_overrides_columns(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    conn = _connect(result.db_path)
+    try:
+        row = conn.execute(
+            "SELECT variant_of, applied_overrides FROM records WHERE id = ?",
+            ("spell:book:fireball",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["variant_of"] is None
+    assert json.loads(row["applied_overrides"]) == []
+
+
+def _errata_manifest(tmp_path: Path) -> Path:
+    manifest = {
+        "entries": [
+            {
+                "book_id": "target-book",
+                "title": "Target Book",
+                "short_title": "TB",
+                "file": "targetbook.pdf",
+                "edition": "3.5",
+                "kind": "rulebook",
+            },
+            {
+                "book_id": "errata-book",
+                "title": "Target Book Errata",
+                "short_title": "TBE",
+                "file": "errata.pdf",
+                "edition": "3.5",
+                "kind": "errata",
+                "applies_to": "target-book",
+            },
+            {
+                "book_id": "supplement-book",
+                "title": "A Supplement",
+                "short_title": "SUP",
+                "file": "supplement.pdf",
+                "edition": "3.5",
+                "kind": "supplement",
+            },
+        ]
+    }
+    path = tmp_path / "manifest.yaml"
+    path.write_text(yaml.safe_dump(manifest))
+    return path
+
+
+def _valid_errata_entry_record(
+    *,
+    book_id: str = "errata-book",
+    seg_id: str = "errata-book-p0001-01",
+    slug: str = "glibness-p-236",
+    target_name: str = "Glibness",
+    target_page: int | None = 236,
+) -> dict[str, Any]:
+    name = f"{target_name} (p. {target_page})" if target_page is not None else target_name
+    return {
+        "id": f"errata_entry:{book_id}:{slug}",
+        "type": "errata_entry",
+        "name": name,
+        "slug": slug,
+        "aliases": [],
+        "book_id": book_id,
+        "pages": [1],
+        "citation": "Target Book Errata pdf p. 1",
+        "text_md": "Change the wording as follows: new wording.",
+        "fields": {
+            "target_book": "target-book",
+            "target_page": target_page,
+            "target_name": target_name,
+            "replacement_text": "New wording.",
+        },
+        "tables": [],
+        "canonical": False,
+        "variant_of": None,
+        "applied_overrides": [],
+        "macro_eligible": False,
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "claude-sonnet-test",
+            "segment_id": seg_id,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+def _write_errata_segment(data_dir: Path, book_id: str, seg_id: str, pages: list[int]) -> None:
+    seg_dir = data_dir / "segments" / book_id
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    segment = {
+        "seg_id": seg_id,
+        "book_id": book_id,
+        "pages": pages,
+        "printed_pages": [],
+        "kind_hint": "errata_entry",
+        "heading": "Glibness",
+        "text": "Glibness Target Book, page 236 change to read as follows: new wording.",
+        "status": "pending",
+        "tier": "sonnet",
+        "attempts": [],
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    (seg_dir / f"{seg_id}.json").write_text(json.dumps(segment, indent=2))
+
+
+def test_missing_toc_warning_skipped_for_errata_book_but_not_supplement(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _errata_manifest(tmp_path)
+
+    _write_errata_segment(data_dir, "errata-book", "errata-book-p0001-01", [1])
+    _write_record(
+        data_dir, "errata-book", "errata_entry", "glibness-p-236", _valid_errata_entry_record()
+    )
+
+    _write_segment(data_dir, "supplement-book", "supplement-book-p0010-01", [10])
+    _write_record(
+        data_dir,
+        "supplement-book",
+        "spell",
+        "fireball",
+        _valid_spell_record(
+            book_id="supplement-book", seg_id="supplement-book-p0010-01", pages=[10]
+        ),
+    )
+    # No toc/errata-book.json and no toc/supplement-book.json written.
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert result.toc_missing_books == ["supplement-book"]

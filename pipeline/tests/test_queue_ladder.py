@@ -350,3 +350,10 @@ def test_starting_tier_defaults_to_lowest_tier_for_other_kinds() -> None:
     assert starting_tier("spell") == TIERS[0]
     assert starting_tier("feat") == TIERS[0]
     assert starting_tier("stat_block") == TIERS[0]
+
+
+def test_starting_tier_is_sonnet_for_errata_and_update_kinds() -> None:
+    assert starting_tier("errata_entry") == "sonnet"
+    assert starting_tier("update_entry") == "sonnet"
+    assert STARTING_TIERS["errata_entry"] == "sonnet"
+    assert STARTING_TIERS["update_entry"] == "sonnet"

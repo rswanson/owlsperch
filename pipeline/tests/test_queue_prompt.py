@@ -1288,3 +1288,72 @@ def test_coverage_guard_catches_a_missing_cross_type_example(tmp_path: Path) -> 
 
     failures = _prompt_coverage_failures("rules_section", text, registry)
     assert any("cross-type `table`" in f and "examples/table.json" in f for f in failures), failures
+
+
+# ---------------------------------------------------------------------------
+# Batch B11: errata_entry prompt -- "Applies to book ID" line and rules.
+# ---------------------------------------------------------------------------
+
+
+def _write_errata_manifest(tmp_path: Path) -> Path:
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        """
+entries:
+  - book_id: phb1
+    title: "Player's Handbook (Core Rulebook I)"
+    file: "phb1.pdf"
+    edition: "3.5"
+    kind: rulebook
+  - book_id: phb1-errata
+    title: "Player's Handbook Errata"
+    file: "phb1-errata.pdf"
+    edition: "3.5"
+    kind: errata
+    applies_to: phb1
+"""
+    )
+    return manifest_path
+
+
+def test_errata_entry_prompt_renders_applies_to_book_id_and_rules(tmp_path: Path) -> None:
+    segment = _segment(
+        seg_id="phb1-errata-p0001-01",
+        book_id="phb1-errata",
+        pages=[1],
+        printed_pages=[],
+        kind_hint="errata_entry",
+        heading="Glibness",
+        text=(
+            "Glibness Player's Handbook, page 236 In second paragraph, change to read "
+            "as follows: If a magical effect is used against you, it fails."
+        ),
+    )
+    manifest_path = _write_errata_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "- Applies to book ID: phb1" in text
+    assert "## Extraction rules for `errata_entry`" in text
+    assert "`target_book`" in text
+    assert "`target_page`" in text
+    assert "`replacement_text`" in text
+
+
+def test_prompt_applies_to_book_id_none_for_ordinary_book(tmp_path: Path) -> None:
+    segment = _segment()
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "- Applies to book ID: (none)" in text

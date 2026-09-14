@@ -16,11 +16,13 @@ from owlsperch.validate.checks import (
     _split_special_cell,
     check_class_fields,
     check_envelope_consistency,
+    check_errata_entry_fields,
     check_feat_fields,
     check_pages_within_segment,
     check_rules_section_fields,
     check_spell_fields,
     check_table_fields,
+    check_update_entry_fields,
     expected_id,
     slugify,
 )
@@ -497,6 +499,107 @@ def test_check_class_fields_with_null_context_reports_unresolvable_table() -> No
     record = _valid_class_record()
     errors = check_class_fields(record, NULL_CONTEXT)
     assert any("not found" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Batch B11: check_errata_entry_fields / check_update_entry_fields
+# ---------------------------------------------------------------------------
+
+
+def test_check_errata_entry_fields_passes_for_qualified_name_with_page() -> None:
+    record = {
+        "name": "Glibness (p. 236)",
+        "fields": {
+            "target_book": "phb1",
+            "target_page": 236,
+            "target_name": "Glibness",
+            "replacement_text": "If a magical effect is used against you, it fails.",
+        },
+    }
+    assert check_errata_entry_fields(record) == []
+
+
+def test_check_errata_entry_fields_passes_for_bare_name_without_page() -> None:
+    record = {
+        "name": "Sable Strike",
+        "fields": {
+            "target_book": "fixture-book",
+            "target_name": "Sable Strike",
+            "replacement_text": "Change the bonus from +2 to +4.",
+        },
+    }
+    assert check_update_entry_fields(record) == []
+
+
+def test_check_errata_entry_fields_rejects_mismatched_name() -> None:
+    record = {
+        "name": "Glibness",
+        "fields": {
+            "target_book": "phb1",
+            "target_page": 236,
+            "target_name": "Glibness",
+            "replacement_text": "Some replacement text.",
+        },
+    }
+    errors = check_errata_entry_fields(record)
+    assert any("name" in e and "Glibness (p. 236)" in e for e in errors)
+
+
+def test_check_errata_entry_fields_requires_nonempty_target_book() -> None:
+    record = {
+        "name": "Glibness",
+        "fields": {
+            "target_book": "",
+            "target_name": "Glibness",
+            "replacement_text": "Some replacement text.",
+        },
+    }
+    errors = check_errata_entry_fields(record)
+    assert any("target_book" in e for e in errors)
+
+
+def test_check_errata_entry_fields_requires_nonempty_target_name() -> None:
+    record = {
+        "name": "",
+        "fields": {
+            "target_book": "phb1",
+            "target_name": "  ",
+            "replacement_text": "Some replacement text.",
+        },
+    }
+    errors = check_errata_entry_fields(record)
+    assert any("target_name" in e for e in errors)
+
+
+def test_check_errata_entry_fields_requires_nonempty_replacement_text() -> None:
+    record = {
+        "name": "Glibness",
+        "fields": {
+            "target_book": "phb1",
+            "target_name": "Glibness",
+            "replacement_text": "   ",
+        },
+    }
+    errors = check_errata_entry_fields(record)
+    assert any("replacement_text" in e for e in errors)
+
+
+def test_check_errata_entry_fields_rejects_non_positive_target_page() -> None:
+    record = {
+        "name": "Glibness (p. 0)",
+        "fields": {
+            "target_book": "phb1",
+            "target_page": 0,
+            "target_name": "Glibness",
+            "replacement_text": "Some replacement text.",
+        },
+    }
+    errors = check_errata_entry_fields(record)
+    assert any("target_page" in e for e in errors)
+
+
+def test_check_errata_entry_fields_flags_missing_fields_object() -> None:
+    assert check_errata_entry_fields({}) == ["fields is missing or not an object"]
 
 
 # ---------------------------------------------------------------------------

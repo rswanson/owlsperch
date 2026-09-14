@@ -52,7 +52,7 @@ def test_fixture_db_subcommand_builds_a_database(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0
-    assert "spell: 3" in result.stdout
+    assert "spell: 5" in result.stdout
 
 
 def test_queue_next_and_run_kind_default_to_none() -> None:

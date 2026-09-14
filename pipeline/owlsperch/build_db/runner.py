@@ -132,10 +132,16 @@ import json
 import os
 import sqlite3
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from owlsperch.build_db.precedence import (
+    apply_precedence,
+    write_precedence_report,
+    write_unmatched_overrides,
+)
 from owlsperch.manifest import ManifestEntry, default_manifest_path, load_manifest, status_for
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import entry_for_page, load_toc
@@ -205,12 +211,22 @@ CREATE TABLE records (
     -- record whose page span swallows this one, or NULL. Derived at build
     -- time in the same spirit as toc_category -- no record file is ever
     -- written to.
-    superseded_by TEXT
+    superseded_by TEXT,
+    -- Batch B11, design decision D11: a SEPARATE axis from superseded_by --
+    -- the id of the record this one is a variant printing of (an errata/
+    -- update override target, a Rules Compendium override, or an older
+    -- printing demoted by latest-wins), or NULL for a canonical record.
+    -- Set only by the precedence pass (owlsperch.build_db.precedence).
+    variant_of TEXT,
+    -- Batch B11: errata/update entry ids applied to this record, as a JSON
+    -- array. Set only by the precedence pass.
+    applied_overrides TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX records_type_slug_idx ON records (type, slug);
 CREATE INDEX records_book_id_idx ON records (book_id);
 CREATE INDEX records_toc_category_idx ON records (toc_category);
 CREATE INDEX records_superseded_by_idx ON records (superseded_by);
+CREATE INDEX records_variant_of_idx ON records (variant_of);
 
 CREATE TABLE record_fields (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,6 +394,17 @@ class BuildResult:
     #: superseded away). Purely a read-time report -- nothing about how
     #: rows are loaded changes because of this.
     dangling_parents: list[DanglingParent] = field(default_factory=list)
+    #: Batch B11: the precedence pass's own counters (design decision D16).
+    overrides_applied: int = 0
+    records_with_overrides: int = 0
+    unmatched_overrides: int = 0
+    rc_overrides: int = 0
+    unmatched_rc: int = 0
+    variants: int = 0
+    #: Where `reports/precedence.md` was written, once `build_db` has
+    #: finished (design decision D12) -- `None` only if the build itself
+    #: never reached that point (an exception before the atomic rename).
+    precedence_report_path: Path | None = None
 
     def render(self) -> str:
         lines = ["Records loaded by type:"]
@@ -392,6 +419,10 @@ class BuildResult:
         lines.append(f"Skipped (superseded segment): {self.skipped_superseded}")
         lines.append(f"Superseded (class/prestige_class span): {self.superseded}")
         lines.append(f"Dangling table parents: {len(self.dangling_parents)}")
+        lines.append(f"Overrides applied: {self.overrides_applied}")
+        lines.append(f"Unmatched overrides: {self.unmatched_overrides}")
+        lines.append(f"Rules Compendium overrides: {self.rc_overrides}")
+        lines.append(f"Variants: {self.variants}")
         lines.append(f"Books: {self.books}")
         lines.append(f"DB: {self.db_path}")
         return "\n".join(lines)
@@ -523,8 +554,10 @@ def _load_records(
     compiled: CompiledSchemas,
     result: BuildResult,
     context: ValidationContext,
+    book_kinds: Mapping[str, str] | None = None,
 ) -> None:
     toc_cache: dict[str, Toc | None] = {}
+    book_kinds = book_kinds or {}
 
     for book_id in discover_books_with_records(data_dir):
         if book_id not in toc_cache:
@@ -532,10 +565,13 @@ def _load_records(
             # A present-but-empty toc (entries == []) is treated exactly
             # like a missing one -- both fall back to uncategorized/None
             # via `_resolve_record_toc(None, ...)` below, and both get the
-            # one-line WARNING.
+            # one-line WARNING -- except an errata/update booklet (design
+            # decision D17, criterion 8), which has no table of contents by
+            # nature and so must never trigger this warning.
             if loaded is None or not loaded.entries:
                 toc_cache[book_id] = None
-                result.toc_missing_books.append(book_id)
+                if book_kinds.get(book_id) not in ("errata", "update"):
+                    result.toc_missing_books.append(book_id)
             else:
                 toc_cache[book_id] = loaded
         toc = toc_cache[book_id]
@@ -725,6 +761,7 @@ def build_db(
 
     entries = load_manifest(manifest_path)
     compiled = CompiledSchemas.load(schemas_dir)
+    book_kinds = {e.book_id: e.kind for e in entries}
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = db_path.parent / f".{db_path.name}.tmp"
@@ -739,9 +776,15 @@ def build_db(
             conn.executescript(_SCHEMA_SQL)
             _load_books(conn, entries)
             _load_records(
-                conn, data_dir=data_dir, compiled=compiled, result=result, context=context
+                conn,
+                data_dir=data_dir,
+                compiled=compiled,
+                result=result,
+                context=context,
+                book_kinds=book_kinds,
             )
             result.superseded = _apply_superseding(conn)
+            precedence = apply_precedence(conn)
             result.dangling_parents = _find_dangling_parents(conn)
             conn.execute(
                 "INSERT INTO names_fts (rowid, name, aliases, record_id) "
@@ -754,6 +797,18 @@ def build_db(
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+    # Design decision D12: the report and human/ files are written only
+    # AFTER the database file is atomically in place, so a failed build
+    # leaves no stray report behind.
+    result.overrides_applied = precedence.overrides_applied
+    result.records_with_overrides = precedence.records_with_overrides
+    result.unmatched_overrides = len(precedence.unmatched_overrides)
+    result.rc_overrides = precedence.rc_overrides
+    result.unmatched_rc = len(precedence.unmatched_rc)
+    result.variants = precedence.variants
+    write_unmatched_overrides(data_dir, precedence)
+    result.precedence_report_path = write_precedence_report(data_dir, precedence)
 
     return result
 
@@ -802,6 +857,16 @@ def run_build_db(
         )
         for dangling in result.dangling_parents[:5]:
             print(f"  {dangling.record_id} -> {dangling.parent_record}", file=err)
+
+    if result.unmatched_overrides > 0:
+        # Batch B11, design decision D16: expected mid-extraction (a target
+        # not extracted yet, or a genuinely unmatchable entry) -- never a
+        # build failure, even under --strict.
+        print(
+            f"WARNING: {result.unmatched_overrides} errata/update entry(ies) could not be "
+            f"matched to a target -- see {result.precedence_report_path}",
+            file=err,
+        )
 
     if strict and (result.skipped_invalid > 0 or result.dangling_parents):
         return 1

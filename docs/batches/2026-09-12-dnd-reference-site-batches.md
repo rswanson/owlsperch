@@ -1023,7 +1023,7 @@ skipped when the directory is absent, so CI never depends on the PDFs.
   `web/e2e/tree.spec.ts`, tests, `CLAUDE.md`, batch doc.
 
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
-- **Status:** pending
+- **Status:** in-progress
 - **User-visible outcome:** duplicate records collapse to one canonical
   entry; detail pages show applied overrides and "other printings".
 - **Acceptance criteria:**
@@ -1044,9 +1044,38 @@ skipped when the directory is absent, so CI never depends on the PDFs.
      "Overrides applied" list with citations.
   6. pytest: errata override, update override, RC override, latest-wins,
      unmatched to human, canonical-only search.
+  7. (Added by the B11 planner, 2026-09-14 -- the prerequisite criterion 1
+     leaves implicit: an errata/update PDF actually segments into
+     `errata_entry`/`update_entry` segments.) `owlsperch segment` emits an
+     `errata_entry` (manifest `kind: errata`) or `update_entry` (`kind:
+     update`) segment per entry paragraph -- the anchor is a `", page <N>"`
+     target reference near the start of a paragraph -- and those two kinds
+     start on the sonnet tier (`ladder.STARTING_TIERS`). Every other book
+     kind is unaffected: no anchor of either kind is ever produced for a
+     rulebook/supplement.
+  8. (Added by the B11 planner, 2026-09-14 -- a false warning this batch
+     would otherwise introduce.) `build-db`'s "has records but no usable
+     toc" warning is skipped for `errata`/`update` books, which have no
+     table of contents by nature.
+  9. `CLAUDE.md`'s "Current state" section documents the new types,
+     the precedence pass, `reports/precedence.md`, and the new server/UI
+     behavior, the way earlier batches did.
 - **How to observe:** after extracting PHB and Spell Compendium, open
   "Fireball": Spell Compendium is canonical, PHB listed under other printings.
-- **Touches:** `schemas/`, `pipeline/owlsperch/build_db/`, `server/`, `web/`.
+  (This batch's real-corpus observation is narrower, since only `phb1` and
+  `phb1-errata` are extracted: `uv run owlsperch text phb1-errata && uv run
+  owlsperch segment phb1-errata`, extract a couple of `errata_entry`
+  segments, `uv run owlsperch build-db`, then open the overridden PHB record
+  and see its "Overrides applied" list, plus `reports/precedence.md`.)
+- **Touches:** `schemas/`, `pipeline/owlsperch/segment/`,
+  `pipeline/owlsperch/queue/`, `pipeline/owlsperch/validate/`,
+  `pipeline/owlsperch/build_db/`, `pipeline/owlsperch/fixture_db.py`,
+  `server/`, `web/`, tests, `CLAUDE.md`, batch doc.
+- **Deferred out of this batch (planner, 2026-09-14):** the B8 follow-up
+  "derived pass that fills a variant spell's inherited stats (`Components:`
+  etc. on an `X, Mass` entry) from its base spell record, as a derived field
+  with a `derived_from` citation". It is orthogonal to precedence, and B11
+  is already the largest batch since B10c. Ship it as a B11 follow-up.
 
 ## B12: Monster, NPC, and template types
 - **Status:** pending

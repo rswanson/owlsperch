@@ -115,6 +115,7 @@ from owlsperch.manifest import (
     load_manifest,
     status_for,
 )
+from owlsperch.segment.anchors import Kind
 from owlsperch.segment.headings import Paragraph, compute_body_median
 from owlsperch.segment.splitter import KindHint, RawSegment, build_segments
 from owlsperch.text.runner import default_data_dir
@@ -131,7 +132,19 @@ _KIND_ORDER: tuple[KindHint, ...] = (
     "rules_section",
     "class",
     "prestige_class",
+    "errata_entry",
+    "update_entry",
 )
+
+#: Batch B11, design decision D1: a book's manifest `kind` gates whether
+#: `owlsperch.segment.anchors.find_triggers` ever produces an errata/update
+#: anchor at all. Any other manifest kind maps to `None`, so a rulebook
+#: sentence like "(see the Player's Handbook, page 44)" can never create a
+#: bogus segment.
+_ENTRY_KIND_TO_ANCHOR_KIND: dict[str, Kind] = {
+    "errata": "errata_entry",
+    "update": "update_entry",
+}
 
 #: The tier every freshly-written segment starts on, when `owlsperch.queue.
 #: ladder.starting_tier` isn't available for some reason (a defensive
@@ -964,7 +977,8 @@ def segment_book(
         return summary
 
     body_median = compute_body_median(paragraphs)
-    raw_segments = build_segments(paragraphs, body_median)
+    entry_kind = _ENTRY_KIND_TO_ANCHOR_KIND.get(entry.kind)
+    raw_segments = build_segments(paragraphs, body_median, entry_kind=entry_kind)
 
     summary = BookSegmentSummary(entry.book_id)
     first_page_counters: dict[int, int] = {}

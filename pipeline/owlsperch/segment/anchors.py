@@ -36,6 +36,22 @@ self-terminating extent runs to.
   is neither -- independent of any heading that may follow (only anchor
   detection elsewhere and `owlsperch.segment.splitter` cap it at the next
   trigger, as a safety net).
+- **errata_entry**/**update_entry** (batch B11, design decisions D1/D2):
+  gated entirely on the book's manifest `kind` (`errata`/`update`), passed
+  in as `entry_kind`; every other book passes `entry_kind=None` and never
+  produces this anchor at all, so a rulebook sentence like "(see the
+  Player's Handbook, page 44)" can never create a bogus segment. When
+  enabled, EVERY prose paragraph whose first `ERRATA_REF_MAX_PREFIX`
+  characters (after whitespace normalization) contain a ", page <N>"
+  reference, with a non-empty prefix of at most
+  `ERRATA_HEADING_MAX_WORDS` words before the match, is one entry -- the
+  whole errata/update booklet is one paragraph per entry (see the batch
+  brief's ground truth). These triggers are detected FIRST, before table/
+  spell/feat/stat_block, so an entry body that happens to contain a
+  "Benefit:" cue can't be stolen by the feat anchor. The raw heading (the
+  matched prefix) has a per-book common trailing phrase -- the target
+  book's printed title -- stripped by `strip_common_heading_suffix`
+  (design decision D3) before becoming the trigger's `heading`.
 
 A trigger whose `start` falls strictly inside an earlier trigger's span is
 simply never reached by `splitter.build_segments`'s forward-only sweep, so
@@ -44,13 +60,29 @@ overlap resolution needs no special handling here: the earlier trigger wins.
 
 from __future__ import annotations
 
+import math
 import re
+import string
 from dataclasses import dataclass
 from typing import Literal
 
 from owlsperch.segment.headings import BRACKET_ONLY_TAG_RE, Paragraph, is_heading
 
-Kind = Literal["spell", "stat_block", "feat", "table"]
+Kind = Literal["spell", "stat_block", "feat", "table", "errata_entry", "update_entry"]
+
+#: Batch B11, design decision D2: the errata/update anchor's target
+#: reference, e.g. ", page 236". Searched only within the first
+#: `ERRATA_REF_MAX_PREFIX` characters of a paragraph's normalized text.
+_ERRATA_REF_RE = re.compile(r",\s*page\s+(\d+)\b")
+
+#: How many leading characters of a normalized paragraph to search for the
+#: ", page N" reference.
+ERRATA_REF_MAX_PREFIX = 120
+
+#: The prefix before the ", page N" match must be non-empty and at most
+#: this many words to count as a heading (rather than an incidental
+#: mid-sentence page reference).
+ERRATA_HEADING_MAX_WORDS = 12
 
 _SCHOOL_RE = re.compile(
     r"^(?:Abjuration|Conjuration|Divination|Enchantment|Evocation|Illusion"
@@ -191,15 +223,120 @@ def _stat_block_name(
     return stat_line_index, paragraphs[stat_line_index].text.strip()
 
 
-def find_triggers(paragraphs: list[Paragraph], body_median: float) -> list[Trigger]:
+def _normalize_word(word: str) -> str:
+    """A word normalized for n-gram comparison in
+    `strip_common_heading_suffix`: apostrophes removed, casefolded, then
+    stripped of trailing punctuation."""
+    word = word.replace("'", "").replace("’", "")
+    return word.casefold().rstrip(string.punctuation)
+
+
+def strip_common_heading_suffix(headings: list[str]) -> list[str]:
+    """Batch B11, design decision D3: strip a per-book common trailing
+    phrase (the target book's printed title, e.g. "Player's Handbook") from
+    every errata/update anchor heading that ends with it. Computed
+    deterministically from `headings` alone: for every trailing word n-gram
+    (length 1..4) across all headings, the winner is the longest one whose
+    count is at least `max(3, ceil(len(headings) / 2))`, ties broken by
+    (count, then the n-gram tuple). With fewer than 3 headings, or no
+    qualifying n-gram, nothing is stripped. A heading that would become
+    empty after stripping is returned unstripped."""
+    if len(headings) < 3:
+        return list(headings)
+
+    normalized = [h.split() for h in headings]
+    normalized = [[_normalize_word(w) for w in words] for words in normalized]
+
+    counts: dict[tuple[str, ...], int] = {}
+    for words in normalized:
+        for length in range(1, 5):
+            if len(words) < length:
+                continue
+            ngram = tuple(words[-length:])
+            counts[ngram] = counts.get(ngram, 0) + 1
+
+    threshold = max(3, math.ceil(len(headings) / 2))
+    winner: tuple[str, ...] | None = None
+    for length in range(4, 0, -1):
+        candidates = [
+            (count, ngram)
+            for ngram, count in counts.items()
+            if len(ngram) == length and count >= threshold
+        ]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda c: (-c[0], c[1]))
+        winner = candidates[0][1]
+        break
+
+    if winner is None:
+        return list(headings)
+
+    result: list[str] = []
+    for heading, words in zip(headings, normalized, strict=True):
+        if tuple(words[-len(winner) :]) != winner:
+            result.append(heading)
+            continue
+        stripped = heading.split()[: -len(winner)]
+        result.append(" ".join(stripped) if stripped else heading)
+    return result
+
+
+def _find_errata_triggers(paragraphs: list[Paragraph], entry_kind: Kind | None) -> list[Trigger]:
+    """Batch B11, design decisions D1/D2: every errata/update entry anchor
+    in `paragraphs`, or `[]` when `entry_kind` is `None` (the book's
+    manifest kind isn't `errata`/`update`)."""
+    if entry_kind is None:
+        return []
+
+    raw: list[tuple[int, str]] = []
+    for i, p in enumerate(paragraphs):
+        if p.kind != "prose":
+            continue
+        text = " ".join(p.text.split())
+        if not text:
+            continue
+        match = _ERRATA_REF_RE.search(text[:ERRATA_REF_MAX_PREFIX])
+        if not match:
+            continue
+        prefix = text[: match.start()].strip()
+        if not prefix or len(prefix.split()) > ERRATA_HEADING_MAX_WORDS:
+            continue
+        raw.append((i, prefix))
+
+    if not raw:
+        return []
+
+    cleaned = strip_common_heading_suffix([prefix for _, prefix in raw])
+    return [
+        Trigger(start=i, kind=entry_kind, heading=heading)
+        for (i, _), heading in zip(raw, cleaned, strict=True)
+    ]
+
+
+def find_triggers(
+    paragraphs: list[Paragraph], body_median: float, *, entry_kind: Kind | None = None
+) -> list[Trigger]:
     """Every anchor trigger in `paragraphs`, sorted by start index. See the
-    module docstring for the per-kind rules and how overlaps resolve."""
+    module docstring for the per-kind rules and how overlaps resolve.
+    `entry_kind` (batch B11) is `"errata_entry"`/`"update_entry"` for a book
+    whose manifest `kind` is `errata`/`update`, else `None` -- gating
+    whether an errata/update anchor can ever be produced (design decision
+    D1)."""
     n = len(paragraphs)
     found: dict[int, Trigger] = {}
 
-    # Table: checked first (its caption pattern is specific, and its extent
-    # should not be pre-empted by an accidental name/school match nearby).
+    # Errata/update: checked first, so an entry body that happens to
+    # contain a "Benefit:" cue can't be stolen by the feat anchor.
+    for trigger in _find_errata_triggers(paragraphs, entry_kind):
+        found[trigger.start] = trigger
+
+    # Table: checked first among the "regular" anchors (its caption pattern
+    # is specific, and its extent should not be pre-empted by an accidental
+    # name/school match nearby).
     for i, p in enumerate(paragraphs):
+        if i in found:
+            continue
         if p.kind == "prose" and p.line_count == 1 and _TABLE_CAPTION_RE.match(p.text.strip()):
             end = _table_extent(paragraphs, i + 1)
             found[i] = Trigger(start=i, kind="table", heading=p.text.strip(), table_end=end)

@@ -33,6 +33,67 @@ function SupersededNotice({ supersededById }: { supersededById: string }) {
   );
 }
 
+/** Batch B11, design decision D20: a small notice linking to the canonical
+ * record when this one is a variant (`record.variant_of` set) -- reuses
+ * `supersededByLink` rather than writing a second id-to-path parser, since
+ * both `variant_of` and `superseded_by` name a record the same way. */
+function VariantNotice({ variantOfId }: { variantOfId: string }) {
+  const href = supersededByLink(variantOfId);
+  return (
+    <p className="variant-notice">
+      This is a variant printing. See{" "}
+      {href ? <Link to={href}>the canonical record</Link> : variantOfId}.
+    </p>
+  );
+}
+
+/** Batch B11, design decision D20: every OTHER printing of this record, as
+ * plain text (not links -- every printing shares the same `/r/:type/:slug`
+ * URL). Rendered only when the list is non-empty. */
+function OtherPrintings({ variants }: { variants: RecordDetail["variants"] }) {
+  if (variants.length === 0) return null;
+  return (
+    <section className="other-printings">
+      <h2>Other printings</h2>
+      <ul>
+        {variants.map((variant) => (
+          <li key={variant.id}>
+            {variant.book_title ?? variant.book_id}
+            {variant.citation ? ` — ${variant.citation}` : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Batch B11, design decision D20: every errata/update entry applied to
+ * this record, the entry's own name linking to its own record page (via
+ * `supersededByLink`, which parses any `<type>:<book_id>:<slug>` id the
+ * same way regardless of which relationship it names). Rendered only when
+ * the list is non-empty. */
+function OverridesApplied({ overrides }: { overrides: RecordDetail["applied_overrides"] }) {
+  if (overrides.length === 0) return null;
+  return (
+    <section className="overrides-applied">
+      <h2>Overrides applied</h2>
+      <ul>
+        {overrides.map((override) => {
+          const href = supersededByLink(override.id);
+          return (
+            <li key={override.id}>
+              {href ? <Link to={href}>{override.name}</Link> : override.name}
+              {override.citation ? ` — ${override.citation}` : null}
+              {": "}
+              {override.replacement_text}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 type LoadState =
   | { status: "loading" }
   | { status: "not-found" }
@@ -141,6 +202,7 @@ export function RecordPage() {
       </Link>
       <RecordBreadcrumb record={record} />
       {record.superseded_by && <SupersededNotice supersededById={record.superseded_by} />}
+      {record.variant_of && <VariantNotice variantOfId={record.variant_of} />}
       <div className="record-heading">
         <span className="type-badge">{typeLabel}</span>
         <h1>{record.name}</h1>
@@ -161,6 +223,8 @@ export function RecordPage() {
           <RecordTables tables={tables} />
         </>
       )}
+      <OtherPrintings variants={record.variants} />
+      <OverridesApplied overrides={record.applied_overrides} />
     </article>
   );
 }
