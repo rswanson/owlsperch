@@ -391,6 +391,62 @@ def _pages_in_range(paragraphs: list[Paragraph], start_page: int, end_page: int)
     return pages
 
 
+#: Matches every character that isn't a lowercase letter or digit --
+#: `_heading_matches_title`'s normalization strips punctuation/whitespace
+#: entirely rather than collapsing it, so "Chapter 3: Classes" and
+#: "chapter3classes" compare equal.
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
+
+
+def _heading_matches_title(text: str, title: str) -> bool:
+    """A printed class heading paragraph matched against its toc section
+    title: case/punctuation/whitespace-insensitive, tolerating a trailing
+    plural "s" on either side -- PHB 3.5 prints "WIZARDS" for the toc's
+    "Wizard"."""
+
+    def norm(s: str) -> str:
+        return _NON_ALNUM_RE.sub("", s.casefold())
+
+    a = norm(text)
+    b = norm(title)
+    if not a or not b:
+        return False
+    return a == b or a == b + "s" or b == a + "s"
+
+
+def _class_start_index(paragraphs: list[Paragraph], span: "_ClassSpan") -> int | None:
+    """The paragraph index this class span's own text should start at (Part
+    1, B10c-mand3): the first paragraph on the span's own toc start page
+    whose text matches the span's heading (see `_heading_matches_title`);
+    failing that, the first such match anywhere in the span's page range
+    (a heading printed a page later than the toc says, still better than
+    nothing); else `None` (never matched -- the caller falls back to the
+    whole-page-range behavior rather than dropping the class). Paragraphs
+    are in non-decreasing page order, so a single left-to-right scan
+    naturally prefers an on-start-page match over a later one."""
+    fallback: int | None = None
+    for i, p in enumerate(paragraphs):
+        if not (span.start <= p.page <= span.end):
+            continue
+        if not _heading_matches_title(p.text, span.heading):
+            continue
+        if p.page == span.start:
+            return i
+        if fallback is None:
+            fallback = i
+    return fallback
+
+
+def _first_index_after_page(paragraphs: list[Paragraph], page: int) -> int:
+    """The first paragraph index whose page is greater than `page`, or
+    `len(paragraphs)` if none (used to cap a class span's end index at its
+    own toc page range when no later class span's start comes sooner)."""
+    for i, p in enumerate(paragraphs):
+        if p.page > page:
+            return i
+    return len(paragraphs)
+
+
 @dataclass(frozen=True)
 class _ClassSpan:
     """One toc-driven class/prestige_class candidate (batch B10c, design
@@ -463,6 +519,9 @@ def _write_class_segment(
     covered_pages: set[int],
     summary: BookSegmentSummary,
     force: bool,
+    *,
+    start_index: int | None,
+    end_index: int | None,
 ) -> None:
     # Lazy import: `owlsperch.queue.ladder` imports `Segment` from this
     # module at module scope, so importing `starting_tier` from it up top
@@ -470,8 +529,21 @@ def _write_class_segment(
     # loaded, so a local import is safe.
     from owlsperch.queue.ladder import starting_tier
 
-    pages = _pages_in_range(paragraphs, span.start, span.end)
-    text = "\n\n".join(p.text for p in paragraphs if span.start <= p.page <= span.end)
+    if start_index is not None and end_index is not None:
+        # Part 1 (B10c-mand3): the span's own heading was matched --
+        # anchor the TEXT to paragraph indices so a neighbouring class's
+        # prose is never included (the supersede pass below stays
+        # page-based on purpose; only this text/pages pair changes).
+        pages = _pages_spanned(paragraphs, start_index, end_index)
+        text = "\n\n".join(p.text for p in paragraphs[start_index:end_index])
+    else:
+        # Fallback: the heading was never matched anywhere in the span (a
+        # column-reconstruction oddity, or a toc title that just doesn't
+        # match the printed heading) -- never drop the class; use today's
+        # whole-page-range behavior instead. The caller has already
+        # printed a warning naming the book and heading.
+        pages = _pages_in_range(paragraphs, span.start, span.end)
+        text = "\n\n".join(p.text for p in paragraphs if span.start <= p.page <= span.end)
     if not pages or not text.strip():
         return
     covered_pages.update(pages)
@@ -621,9 +693,55 @@ def segment_book(
     class_spans = _discover_class_spans(
         toc, text_dir=text_dir, book_id=entry.book_id, last_page=last_page
     )
+
+    # Part 1 (B10c-mand3): resolve every span's own start index FIRST, so
+    # each span's end index can be capped at the next span's start (never
+    # swallowing a neighbour's class), then write each span with its
+    # resolved [start_index, end_index) text range -- or fall back to the
+    # whole-page-range behavior (with a warning) when its own heading was
+    # never matched anywhere in its page range.
+    start_indices: dict[str, int | None] = {
+        span.seg_id: _class_start_index(paragraphs, span) for span in class_spans
+    }
+    resolved_starts = sorted(i for i in start_indices.values() if i is not None)
+
     for span in class_spans:
+        start_index = start_indices[span.seg_id]
+        if start_index is None:
+            print(
+                f"warning: {entry.book_id}: no heading match for class span "
+                f"'{span.heading}' (toc page {span.start}) -- using whole-page fallback",
+                file=sys.stderr,
+            )
+            _write_class_segment(
+                span,
+                paragraphs,
+                entry,
+                out_dir,
+                pages_json,
+                covered_pages,
+                summary,
+                force,
+                start_index=None,
+                end_index=None,
+            )
+            continue
+
+        next_starts = [i for i in resolved_starts if i > start_index]
+        page_cap_index = _first_index_after_page(paragraphs, span.end)
+        end_index = min(min(next_starts), page_cap_index) if next_starts else page_cap_index
+
         _write_class_segment(
-            span, paragraphs, entry, out_dir, pages_json, covered_pages, summary, force
+            span,
+            paragraphs,
+            entry,
+            out_dir,
+            pages_json,
+            covered_pages,
+            summary,
+            force,
+            start_index=start_index,
+            end_index=end_index,
         )
 
     superseded_total = 0
