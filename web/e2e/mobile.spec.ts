@@ -54,3 +54,17 @@ test("browse page fits without horizontal scrolling at 400px width", async ({ pa
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
     .toBeLessThanOrEqual(400);
 });
+
+// Batch B10c: the class page's progression table is the one wide element
+// on it -- must stay inside its own overflow-x: auto container, never
+// forcing the page itself to scroll horizontally.
+test("class page fits without horizontal scrolling at 400px width", async ({ page }) => {
+  await page.goto("/r/class/fixture-mage");
+
+  await expect(page.getByRole("heading", { level: 1, name: "Fixture Mage" })).toBeVisible();
+  await expect(page.locator(".class-progression table")).toBeVisible();
+
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(400);
+});
