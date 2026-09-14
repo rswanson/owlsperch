@@ -31,6 +31,25 @@ describe("Layout", () => {
     expect(featsLink).toHaveAttribute("href", "/browse/feat");
   });
 
+  it("renders a Classes nav link to /browse/class now that class is a registered type (batch B10c)", async () => {
+    vi.spyOn(api, "getSchemas").mockResolvedValue({
+      types: {
+        class: { label: "Class", plural_label: "Classes", version: 1, fields: [] },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <Layout>
+          <p>content</p>
+        </Layout>
+      </MemoryRouter>,
+    );
+
+    const classesLink = await screen.findByRole("link", { name: "Classes" });
+    expect(classesLink).toHaveAttribute("href", "/browse/class");
+  });
+
   it("still renders children and the site title when the schema fetch fails", async () => {
     vi.spyOn(api, "getSchemas").mockRejectedValue(new Error("boom"));
 
@@ -98,7 +117,7 @@ describe("Layout", () => {
           field: "category",
           label: "Category",
           values: [
-            { value: "classes", count: 70, label: "Classes" },
+            { value: "races", count: 70, label: "Races" },
             { value: "equipment", count: 28, label: "Equipment" },
             { value: "skills", count: 0, label: "Skills" },
             { value: "combat", count: 109, label: "Combat" },
@@ -115,8 +134,8 @@ describe("Layout", () => {
       </MemoryRouter>,
     );
 
-    const classesLink = await screen.findByRole("link", { name: "Classes" });
-    expect(classesLink).toHaveAttribute("href", "/browse/rules_section?category=classes");
+    const racesLink = await screen.findByRole("link", { name: "Races" });
+    expect(racesLink).toHaveAttribute("href", "/browse/rules_section?category=races");
     expect(screen.getByRole("link", { name: "Equipment" })).toHaveAttribute(
       "href",
       "/browse/rules_section?category=equipment",
@@ -125,6 +144,9 @@ describe("Layout", () => {
     expect(screen.queryByRole("link", { name: "Skills" })).not.toBeInTheDocument();
     // "Combat" isn't one of the categories a quick link is offered for.
     expect(screen.queryByRole("link", { name: "Combat" })).not.toBeInTheDocument();
+    // "classes" is no longer a rules quick-link category at all (batch
+    // B10c): class is its own registered type with its own nav link.
+    expect(screen.queryByRole("link", { name: "Classes" })).not.toBeInTheDocument();
   });
 
   it("renders no quick links (but keeps the rest of the nav working) when the facets fetch fails", async () => {

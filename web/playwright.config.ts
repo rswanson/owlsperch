@@ -23,7 +23,7 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testMatch: /(smoke|browse|tree)\.spec\.ts/,
+      testMatch: /(smoke|browse|tree|class)\.spec\.ts/,
     },
     {
       name: "mobile-400",

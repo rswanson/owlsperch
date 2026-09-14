@@ -61,6 +61,7 @@ function makeRecord(overrides: Partial<api.RecordDetail> = {}): api.RecordDetail
       section: "Spell Descriptions",
       path: ["Chapter 10: Magic", "Spell Descriptions"],
     },
+    superseded_by: null,
     ...overrides,
   };
 }
@@ -242,5 +243,60 @@ describe("RecordPage", () => {
     // columns/rows must not ALSO show up as comma-joined field-group rows.
     expect(screen.queryByText("Columns")).not.toBeInTheDocument();
     expect(screen.queryByText("Rows")).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // Batch B10c: superseded notice, class-aware branch.
+  // ---------------------------------------------------------------------
+
+  it("shows a superseded note linking to the superseding record when superseded_by is set", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({ superseded_by: "class:phb1:barbarian" }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const notice = await screen.findByText(/Superseded by/);
+    const link = within(notice.closest("p")!).getByRole("link", { name: "class:phb1:barbarian" });
+    expect(link).toHaveAttribute("href", "/r/class/barbarian");
+  });
+
+  it("renders no superseded note when superseded_by is null", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord({ superseded_by: null }));
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.queryByText(/Superseded by/)).not.toBeInTheDocument();
+  });
+
+  it("renders a class record via the ClassRecord branch, not the generic FieldGroups/text_md body", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        type: "class",
+        id: "class:phb1:barbarian",
+        name: "Barbarian",
+        slug: "barbarian",
+        text_md: "Barbarian overview text.",
+        fields: {
+          hit_die: "d12",
+          bab_progression: "good",
+          class_features: [{ name: "Rage", level: 1, text_md: "You rage." }],
+        },
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue({
+      types: { class: { label: "Class", plural_label: "Classes", version: 1, fields: [] } },
+    });
+
+    renderRecordPage("class", "barbarian");
+
+    await screen.findByRole("heading", { level: 1, name: "Barbarian" });
+    expect(screen.getByText("d12")).toBeInTheDocument();
+    expect(screen.getByText("Barbarian overview text.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Class Features" })).toBeInTheDocument();
+    expect(screen.getByText("You rage.")).toBeInTheDocument();
   });
 });

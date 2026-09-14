@@ -358,6 +358,92 @@ h1 {
   font-style: italic;
 }
 
+/* Batch B10c: ClassRecord's structured class/prestige_class body. */
+
+.superseded-notice {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.class-record {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.class-facts {
+  margin: 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.class-fact {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.class-fact dt {
+  font-weight: 500;
+  min-width: 10em;
+  color: var(--text-muted);
+}
+
+.class-fact dd {
+  margin: 0;
+  max-width: 60ch;
+}
+
+.class-requirements {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.class-record section {
+  margin-top: 20px;
+}
+
+.class-record section h2 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+
+.class-skills ul,
+.class-spells-level ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.class-feature {
+  margin-bottom: 14px;
+}
+
+.class-feature h3 {
+  font-size: 0.95rem;
+  margin: 0 0 4px;
+}
+
+.class-feature-level {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.class-spells-level {
+  margin-bottom: 10px;
+}
+
+.class-spells-level h3 {
+  font-size: 0.9rem;
+  margin: 0 0 4px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 480px) {
   .field-row {
     flex-direction: column;
