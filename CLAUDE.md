@@ -193,9 +193,44 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   segment <book_id>` do the entire job on a book that already has segments:
   the handful of class segments get written and every existing
   class-chapter fragment gets stamped, without touching anyone's
-  `records`/`outcome`/`attempts`. A toc-less book gets no class segments at
+  `outcome`/`attempts`. A toc-less book gets no class segments at
   all (reported in the summary), and a `--force` covering a class segment's
-  first page still deletes and recreates it like any other segment.
+  first page still deletes and recreates it like any other segment. Batch
+  B10c-mand2: a segment NEWLY stamped `superseded_by` this pass also has
+  its record claims RELEASED in the same atomic write, via
+  `pipeline/owlsperch/supersede.py`'s `release_segment_claims` (see that
+  module below) -- this is what lets a class segment claim its own level
+  table when that table shares the class's printed title (and so the same
+  slug/id/record-file path) with a pre-existing fragment segment: without
+  releasing the fragment's claim on that exact path first, `queue
+  complete`'s ownership guard would refuse the class segment's claim as a
+  collision and the class could never be extracted. A segment that already
+  carried `superseded_by` (from an earlier run, before this
+  release-at-stamp-time behavior existed) is skipped by the WHOLE pass
+  (stamp and release both) -- `queue audit --fix` is the separate,
+  retroactive path for those.
+
+- `pipeline/owlsperch/supersede.py` (batch B10c-mand2) -- `release_segment_
+  claims(segment, *, data_dir)`, the shared helper behind both the
+  class-span stamp pass above and `queue audit --fix` below: for ONE
+  superseded segment, every path in its `records` + `pending_records`
+  (deduplicated by resolved path) is MOVED (`os.replace`, never deleted)
+  from `records/<book_id>/<type>/<file>.json` to
+  `$OWLSPERCH_DATA/superseded/<book_id>/<type>/<file>.json` (parents
+  created; a destination name already taken gets `-<seg_id>`, then
+  `-<seg_id>-2`, ... appended rather than ever overwriting an existing file
+  there), UNLESS the file's own `extraction.segment_id` names a different
+  segment that is still live (not itself superseded) -- releasing must
+  never steal a live segment's record, so that claim is pruned from the
+  segment's own lists but the file is left exactly where it is. Either way
+  the segment's `records`/`pending_records` are cleared and one
+  `ReleasedRecord` (`{path, moved_to}`, `moved_to` null when the file
+  wasn't moved) is appended per claimed path onto the segment's own
+  `released_records` list. It mutates the `Segment` object passed to it
+  but never writes it to disk -- the caller persists it. `validate` and
+  `build-db` never look inside `superseded/` at all (they only ever glob
+  `records/<book_id>/*/*.json`), so a file living there is invisible to
+  both by construction.
 
 - `schemas/` (repo root, not under `pipeline/`) -- the single source of truth
   for record types (spec 4.6, 4.14): `envelope.json` is the common record
@@ -370,7 +405,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `human/<book_id>/*.json` file's own `records`/`pending_records` for this,
   since the record file's own `extraction.segment_id` is only a
   subagent-copied placeholder by the time `queue complete` runs and would
-  already name a thief on a just-clobbered file. A missing or colliding
+  already name a thief on a just-clobbered file -- except a claimant whose
+  own `superseded_by` is set (batch B10c-mand2), which no longer counts as
+  an owner at all: that claim is meant to be RELEASED (see
+  `pipeline/owlsperch/supersede.py` above), most commonly a level table
+  sharing its superseding class's own printed title (and so the same
+  slug/id/path), and this exemption is belt-and-braces for a claim that
+  survives release for any reason. A missing or colliding
   path, like a malformed reply, escalates the segment via
   `ladder.record_failure` (both kinds folded into the one attempt for a
   single reply), moving it to `human/` if already on opus; a colliding path
@@ -402,8 +443,25 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   name-qualification prompt rule -- a `pending`/`in_progress` segment just
   gets the pruning, and a segment sitting in `human/` is reported but left
   completely untouched; `fix_book` never deletes, moves, or rewrites a
-  record file itself. `runner.py` wires all of it (including `queue audit
-  [--fix]`) into the CLI. `owlsperch validate` promotes a path from
+  record file for a stale (non-superseded) claim. Batch B10c-mand2 adds a
+  third pass, for the segments B10c's class-span stamp pass marked
+  `superseded_by` before it released claims at stamp time: `audit_book`
+  also reports `superseded_claims` -- every segment whose own
+  `superseded_by` is set that still holds a claim -- and EXCLUDES a
+  superseded segment from `stale_claims` entirely (so this pass can never
+  soft-reset a segment B10c-mand2 deliberately freezes back to `pending`).
+  `fix_book` releases every `superseded_claims` entry through the shared
+  `owlsperch.supersede.release_segment_claims` helper (reported with
+  `action: "released"`, the released paths, and a `moved` list of
+  `{"from", "to"}` for the files actually moved), except one sitting in
+  `human/`, which -- like a `stale_claims` victim there -- is reported but
+  left completely untouched (`action: "left_in_human"`); this is `queue
+  audit --fix`'s retroactive counterpart to the class-span pass's
+  release-at-stamp-time behavior, for exactly the segments stamped before
+  that behavior existed. `runner.py` wires all of it (including `queue
+  audit [--fix]`, whose non-JSON `--fix` output now also prints a "`N`
+  claim(s) released, `M` record file(s) moved to superseded/" line) into
+  the CLI. `owlsperch validate` promotes a path from
   `pending_records` to `records` on PASS and drops it (deleting the file
   too, unless it's also in `records`) on FAIL. The skill itself is
   `.claude/skills/extract/SKILL.md`
@@ -526,6 +584,19 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   disappear from its own page (the most likely bug this pass could have).
   A record already superseded by an earlier class is left alone. Printed
   as one informational line (never a WARNING -- superseding is expected).
+  Batch B10c-mand2: belt-and-braces against a record file left behind (or
+  restored by hand) after `pipeline/owlsperch/supersede.py`'s
+  `release_segment_claims` should have moved it out of `records/` -- a
+  record whose OWNING segment (via its own `extraction.segment_id`) itself
+  carries `superseded_by` is skipped entirely, counted in its own
+  `skipped_superseded` (its own "Skipped (superseded segment): N" render
+  line), kept OUT of `skipped_invalid`/the "skipped N invalid record(s)"
+  WARNING/`--strict`'s exit 1 (such a record may be perfectly schema-valid;
+  it just belongs to a frozen segment). `validate` and `build-db` both only
+  ever glob `records/<book_id>/*/*.json`, so `$OWLSPERCH_DATA/superseded/
+  <book_id>/<type>/<file>.json` -- where `release_segment_claims` moves
+  (never deletes) a released record file -- is invisible to both by
+  construction, with no code change needed for that.
 - `pipeline/owlsperch/serve.py` -- the `serve` subcommand: imports
   `uvicorn` and `owlsperch_server.app.create_app` lazily (inside
   `run_serve`) so importing `owlsperch.cli` never requires either to be

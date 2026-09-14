@@ -255,7 +255,7 @@ def test_fail_removes_path_from_pending_records_without_promoting(tmp_path: Path
     assert exit_code == 1
     segment = _read_segment(data_dir, "book", "book-p0010-01")
     assert segment["pending_records"] == []
-    assert segment["records"] == []
+    assert segment.get("records", []) == []
     assert segment["status"] == "pending"
 
 
@@ -804,3 +804,29 @@ def test_committed_fixture_record_passes(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "PASS" in output
+
+
+# ---------------------------------------------------------------------------
+# `superseded/` is ignored entirely (batch B10c-mand2, criterion 7): a
+# record file living under `$OWLSPERCH_DATA/superseded/<book_id>/<type>/`
+# (moved there by `owlsperch.supersede.release_segment_claims`) is not a
+# `records/<book_id>/<type>/` file, so `validate` never even discovers it
+# -- no production code change is needed for this; the test is the guard.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_never_discovers_a_record_under_superseded_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+
+    superseded_dir = data_dir / "superseded" / "book" / "spell"
+    superseded_dir.mkdir(parents=True, exist_ok=True)
+    (superseded_dir / "fireball.json").write_text(json.dumps(_valid_spell_record(), indent=2))
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 0
+    assert "fireball" not in output
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment.get("records", []) == []

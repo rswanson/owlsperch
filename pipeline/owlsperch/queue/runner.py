@@ -207,6 +207,8 @@ def run_queue_audit(
         print(report.render(), file=out)
         if fixed is not None:
             reset_count = 0
+            released_count = 0
+            moved_count = 0
             for entry in fixed:
                 pruned = ", ".join(entry["pruned_paths"]) if entry["pruned_paths"] else "(none)"
                 print(
@@ -215,7 +217,15 @@ def run_queue_audit(
                 )
                 if entry["action"] == "reset":
                     reset_count += 1
+                elif entry["action"] == "released":
+                    released_count += len(entry["pruned_paths"])
+                    moved_count += len(entry.get("moved", []))
             print(f"  {reset_count} segment(s) reset", file=out)
+            print(
+                f"  {released_count} claim(s) released, {moved_count} record file(s) "
+                "moved to superseded/",
+                file=out,
+            )
     return 0
 
 

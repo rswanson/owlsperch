@@ -88,6 +88,23 @@ precedence (B11) and macro eligibility (B22) are future work.
    informational line -- this is expected, not a problem, so it's never a
    WARNING.
 
+9. (Batch B10c-mand2) A record whose OWNING segment (looked up the same
+   way as step 8's `extraction.segment_id`, via `owlsperch.validate.loader.
+   load_segment`) itself carries `superseded_by` is skipped entirely --
+   never loaded into `records` at all. This is belt-and-braces for a
+   record file left behind, or restored by hand, after `owlsperch.
+   supersede.release_segment_claims` should have moved it out of
+   `records/<book_id>/` into `superseded/<book_id>/<type>/<file>.json`
+   (see `owlsperch.segment.runner`'s class-span pass and `owlsperch queue
+   audit --fix`, which perform that release at stamp time and
+   retroactively, respectively) -- in the ordinary case build-db never even
+   sees such a file, since it isn't under `records/` any more. Counted in
+   its own `skipped_superseded` counter, rendered as its own
+   "Skipped (superseded segment): N" line, and kept OUT of
+   `skipped_invalid`/the "skipped N invalid record(s)" WARNING/`--strict`'s
+   exit 1 -- such a record may be perfectly schema-valid, it just belongs
+   to a frozen segment.
+
 The whole build writes to a temp file in the same directory as the final
 `db/owlsperch.sqlite` and only then atomically renames it into place
 (`os.replace`), so a server reading the DB mid-build never sees a
@@ -324,6 +341,15 @@ class BuildResult:
     #: prestige_class record's page span swallows them. Expected, not a
     #: problem -- `run_build_db` prints it as information, never a WARNING.
     superseded: int = 0
+    #: Batch B10c-mand2: how many record files were skipped because their
+    #: OWNING segment (looked up via the record's own
+    #: `extraction.segment_id`) carries `superseded_by` -- belt-and-braces
+    #: for a record file left behind, or restored by hand, after
+    #: `owlsperch.supersede.release_segment_claims` should have moved it out
+    #: of `records/`. Counted SEPARATELY from `skipped_invalid`: such a
+    #: record may well be perfectly schema-valid, so it must never trigger
+    #: the "skipped N invalid record(s)" WARNING or `--strict`'s exit 1.
+    skipped_superseded: int = 0
 
     def render(self) -> str:
         lines = ["Records loaded by type:"]
@@ -335,6 +361,7 @@ class BuildResult:
         total = sum(self.counts_by_type.values())
         lines.append(f"  total: {total}")
         lines.append(f"Skipped (invalid): {self.skipped_invalid}")
+        lines.append(f"Skipped (superseded segment): {self.skipped_superseded}")
         lines.append(f"Superseded (class/prestige_class span): {self.superseded}")
         lines.append(f"Books: {self.books}")
         lines.append(f"DB: {self.db_path}")
@@ -501,6 +528,16 @@ def _load_records(
                 segment_id = seg_id_raw if isinstance(seg_id_raw, str) else None
 
             segment = load_segment(data_dir, book_id, segment_id) if segment_id else None
+            if segment is not None:
+                superseded_by = segment.get("superseded_by")
+                if isinstance(superseded_by, str) and superseded_by:
+                    # Batch B10c-mand2: belt-and-braces -- a record whose
+                    # owning segment is frozen (superseded) must never load,
+                    # even if the file itself is perfectly schema-valid, so
+                    # this must not count as "invalid".
+                    result.skipped_superseded += 1
+                    continue
+
             errors = validate_record(
                 record, type_dir=type_dir, compiled=compiled, segment=segment, context=context
             )

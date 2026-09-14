@@ -522,6 +522,37 @@ def test_run_queue_audit_fix_text_reports_pruned_and_reset_counts_separately(
     assert "1 segment(s) reset" in output
 
 
+def test_run_queue_audit_fix_prints_released_and_moved_counts(tmp_path: Path) -> None:
+    """Batch B10c-mand2 criterion 5: `--fix`'s non-JSON output names how
+    many claims were released and how many record files were actually
+    moved to `superseded/`."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    record_path = data_dir / "records" / "book" / "table" / "table-3-8-the-druid.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps({"extraction": {"segment_id": "book-p0036-01"}}))
+
+    out = io.StringIO()
+    exit_code = run_queue_audit("book", fix=True, json_output=False, data_dir=data_dir, out=out)
+
+    assert exit_code == 0
+    output = out.getvalue()
+    assert "book-p0036-01: released" in output
+    assert "1 claim(s) released, 1 record file(s) moved to superseded/" in output
+
+    moved = data_dir / "superseded" / "book" / "table" / "table-3-8-the-druid.json"
+    assert moved.is_file()
+
+
 # ---------------------------------------------------------------------------
 # queue reset
 # ---------------------------------------------------------------------------

@@ -791,6 +791,133 @@ def test_class_span_supersedes_fragment_segments_but_not_unrelated_ones(tmp_path
     assert segments["book-class-p0003"]["superseded_by"] is None
 
 
+def test_segment_without_released_records_key_still_loads(tmp_path: Path) -> None:
+    """Batch B10c-mand2 criterion 2: `Segment` is `extra="forbid"`, so a
+    segment JSON file written before `released_records` existed must still
+    load, defaulting to an empty list."""
+    from owlsperch.segment.runner import Segment
+
+    raw = {
+        "seg_id": "book-p0010-01",
+        "book_id": "book",
+        "pages": [10],
+        "printed_pages": [10],
+        "kind_hint": "spell",
+        "heading": "Fireball",
+        "text": "Fireball text.",
+        "status": "pending",
+        "tier": "haiku",
+        "attempts": [],
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    segment = Segment.model_validate_json(json.dumps(raw))
+    assert segment.released_records == []
+
+
+def test_class_span_release_moves_a_fragments_claimed_record_to_superseded(
+    tmp_path: Path,
+) -> None:
+    """Batch B10c-mand2 criterion 4: the class-span pass releases a NEWLY
+    stamped fragment's record claims in the same atomic write that sets
+    `superseded_by` -- mirroring the real corpus's history, where
+    extraction (and the record claims that came with it) happened before
+    class detection existed at all, so the very first `segment` run after
+    a toc appears must both stamp AND release in one pass."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("BARBARIAN"),
+                _para(
+                    "Hit Die: d12. A barbarian is a fierce warrior, savage and strong in "
+                    "battle here.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para("BARD"),
+                _para(
+                    "Hit Die: d6. Bards are trained in music and magic together for adventuring.",
+                    line_count=3,
+                ),
+            ],
+            4: [
+                _para(
+                    "Bards continue channeling their magic across the land for a while "
+                    "longer here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+
+    # First pass: no toc yet -- fragments are created but no class segments
+    # exist and nothing is superseded yet.
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    seg_dir = data_dir / "segments" / "book"
+    fragment_path = next(
+        p
+        for p in seg_dir.glob("*.json")
+        if json.loads(p.read_text())["pages"] == [2]
+        and json.loads(p.read_text())["kind_hint"] == "rules_section"
+    )
+    fragment = json.loads(fragment_path.read_text())
+    fragment_seg_id = fragment["seg_id"]
+
+    record_rel_path = "records/book/rules_section/barbarian-table.json"
+    record_path = data_dir / record_rel_path
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "extraction": {
+                    "tier": "haiku",
+                    "model": "claude-haiku-4-5",
+                    "segment_id": fragment_seg_id,
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                }
+            }
+        )
+    )
+    fragment["records"] = [record_rel_path]
+    fragment_path.write_text(json.dumps(fragment))
+
+    # Now the toc appears -- the next (plain, non-`--force`) run discovers
+    # the class span and stamps + releases the fragment's claim for the
+    # first time.
+    _write_toc(data_dir, "book", _classes_toc_entries())
+    summary = segment_book(_entry("book"), data_dir=data_dir)
+
+    assert summary.superseded == 2  # Barbarian + Bard fragments
+    assert summary.released == 1
+    assert "1 record claim(s) released" in summary.render()
+
+    updated = json.loads(fragment_path.read_text())
+    assert updated["superseded_by"] == "book-class-p0002"
+    assert updated["records"] == []
+    assert updated["pending_records"] == []
+    assert len(updated["released_records"]) == 1
+    assert updated["released_records"][0]["path"] == record_rel_path
+    assert updated["released_records"][0]["moved_to"] == (
+        "superseded/book/rules_section/barbarian-table.json"
+    )
+
+    assert not record_path.is_file()
+    moved = data_dir / "superseded" / "book" / "rules_section" / "barbarian-table.json"
+    assert moved.is_file()
+
+    # A further run stamps and releases nothing more, and moves no files.
+    third_summary = segment_book(_entry("book"), data_dir=data_dir)
+    assert third_summary.superseded == 0
+    assert third_summary.released == 0
+    assert moved.is_file()
+    assert json.loads(fragment_path.read_text()) == updated
+
+
 def test_class_segmentation_is_additive_and_idempotent(tmp_path: Path) -> None:
     """A plain (non `--force`) rerun both leaves every existing segment's
     bookkeeping alone and doesn't re-stamp/duplicate anything (design

@@ -46,8 +46,21 @@ came back fenced and were wrongly rejected before this. In precedence order:
   been clobbered already carries the new (thieving) claimant's id, not the
   real owner's. A segment re-claiming a path it already owns itself (its
   own `records`/`pending_records`) is still allowed -- an idempotent retry
-  of the same claim is not a collision. Every path that passes all three
-  checks has its own `extraction` overwritten with the authoritative
+  of the same claim is not a collision. Nor does a claim held by a segment
+  whose own `superseded_by` is set count as ownership at all (batch
+  B10c-mand2): that claim is meant to be RELEASED (moved to
+  `superseded/<book_id>/<type>/<file>.json`, never deleted, and cleared
+  from the segment's own lists -- see `owlsperch.supersede.
+  release_segment_claims`, run by the class-span stamp pass and by
+  `owlsperch queue audit --fix`) precisely so the class segment superseding
+  it can claim the SAME path -- most often a level table sharing the
+  class's own printed title, and so the same slug/id/path. This guard's
+  exemption for it is belt-and-braces, for a claim that survives release
+  for any reason (a segment stamped by an older `segment` run, or a claim
+  restored by hand): without it, the class's own claim on that path would
+  be wrongly refused as a collision and the class could never be
+  extracted. Every path that passes all three checks has its own
+  `extraction` overwritten with the authoritative
   `{tier, model, segment_id, timestamp}` (B5 follow-up 3), and
   (B6 follow-up) its `pages` and `book_id` overwritten with the segment's
   own `pages` (PDF page indices) and `book_id` -- see
@@ -280,6 +293,20 @@ def _record_path_owners(data_dir: Path, book_id: str, own_seg_id: str) -> dict[P
             continue
         other_seg_id = raw.get("seg_id")
         if not isinstance(other_seg_id, str) or other_seg_id == own_seg_id:
+            continue
+        # Batch B10c-mand2: a segment whose own `superseded_by` is set no
+        # longer counts as an owner at all -- its claims are meant to be
+        # RELEASED (see `owlsperch.supersede.release_segment_claims`, run
+        # by the class-span stamp pass and by `queue audit --fix`), most
+        # commonly a level table sharing its superseding class's own
+        # printed title (and so the same slug/id/path). This exemption is
+        # belt-and-braces for a claim that survives release for any reason
+        # (a segment stamped by an older `segment` run, or a claim restored
+        # by hand) -- without it, the class segment's own claim on that
+        # exact path would be refused as a collision and the class could
+        # never be extracted.
+        superseded_by = raw.get("superseded_by")
+        if isinstance(superseded_by, str) and superseded_by:
             continue
         claimed: list[str] = []
         for key in ("records", "pending_records"):

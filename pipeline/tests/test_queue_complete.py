@@ -1325,3 +1325,77 @@ def test_proposed_type_takes_precedence_over_needs_context(tmp_path: Path) -> No
     outcome = complete_segment("book-p0010-01", result, data_dir=data_dir)
 
     assert outcome.outcome == "proposed_type"
+
+
+# ---------------------------------------------------------------------------
+# Superseded segments (batch B10c-mand2): a segment that has been
+# superseded by a class/prestige_class span no longer counts as an owner
+# for the collision guard above -- its claim is meant to be RELEASED (see
+# `owlsperch.supersede`), but this exemption is belt-and-braces for a claim
+# that survives release for any reason (e.g. a segment stamped by an older
+# `segment` run, before this batch's release-at-stamp-time behavior
+# existed).
+# ---------------------------------------------------------------------------
+
+
+def test_a_superseded_segments_claim_no_longer_blocks_a_new_owner(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-class-p0034",
+        kind_hint="class",
+        tier="sonnet",
+    )
+    record_path = data_dir / "records" / "book" / "table" / "table-3-8-the-druid.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "extraction": {
+                    "tier": "haiku",
+                    "model": "claude-haiku-4-5",
+                    "segment_id": "book-p0036-01",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                },
+                "pages": [36],
+                "book_id": "book",
+            },
+            indent=2,
+        )
+    )
+
+    result = json.dumps(
+        {
+            "seg_id": "book-class-p0034",
+            "records": ["records/book/table/table-3-8-the-druid.json"],
+            "no_content": None,
+        }
+    )
+
+    outcome = complete_segment("book-class-p0034", result, data_dir=data_dir)
+
+    assert outcome.outcome == "pending_records"
+    assert "collision" not in outcome.detail
+
+    victim = _read_segment(data_dir, "book", "book-class-p0034")
+    assert victim["pending_records"] == ["records/book/table/table-3-8-the-druid.json"]
+    assert victim["status"] == "pending"
+
+    record = json.loads(record_path.read_text())
+    assert record["extraction"]["segment_id"] == "book-class-p0034"
+
+    # The superseded segment's own claim is untouched by `queue complete`
+    # itself -- releasing it is `owlsperch.supersede`'s job, not the guard's.
+    superseded = _read_segment(data_dir, "book", "book-p0036-01")
+    assert superseded["records"] == ["records/book/table/table-3-8-the-druid.json"]

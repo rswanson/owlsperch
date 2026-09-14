@@ -874,6 +874,59 @@ skipped when the directory is absent, so CI never depends on the PDFs.
 - **Touches:** `web/package.json`, `web/package-lock.json`,
   `web/tsconfig.app.json`, `web/tsconfig.node.json`, `CLAUDE.md`.
 
+## B10c-mand2: superseded segments release their record claims
+- **Status:** merged
+- **Follow-up to:** B10c (a defect in B10c's class-span pass): a
+  class-chapter fragment segment's own level table shares the class's
+  printed title, and so the same slug/id/record-file path. Once B10c's
+  class-span pass stamps that fragment `superseded_by`, the class segment
+  that superseded it can never claim the same path, because `queue
+  complete`'s record-ownership guard refuses it as a collision. Five of
+  PHB's 11 classes were stuck this way.
+- **User-visible outcome:** the blocked classes can be extracted again --
+  a class segment claims its own level table instead of failing with
+  `record_path_collision`, and `owlsperch queue audit --fix` retroactively
+  frees the segments stamped before this behavior existed.
+- **Acceptance criteria:**
+  1. `queue complete` no longer counts a claim held by an
+     already-`superseded_by` segment as an ownership collision, so the
+     superseding class segment can claim that exact record path.
+  2. A segment JSON written before this batch (no `released_records` key)
+     still loads -- the new field is additive with a default.
+  3. New `pipeline/owlsperch/supersede.py`'s `release_segment_claims` is
+     the one shared release helper: it MOVES each claimed record file to
+     `$OWLSPERCH_DATA/superseded/<book_id>/<type>/<file>.json` (never
+     deletes; never overwrites an existing destination -- it suffixes
+     `-<seg_id>`), leaves a file alone when its own
+     `extraction.segment_id` names a different *live* segment, clears
+     `records`/`pending_records`, records each release on
+     `released_records`, and never writes the segment file itself (the
+     caller persists it).
+  4. The class-span pass releases claims in the same atomic write that
+     stamps `superseded_by`, for segments it NEWLY stamps; a second run is
+     a no-op.
+  5. `queue audit` reports `superseded_claims` separately, excludes
+     superseded segments from `stale_claims`, and `--fix` releases them
+     through the same helper -- idempotently, and leaving a segment in
+     `human/` untouched. The non-JSON `--fix` output prints the released /
+     moved counts.
+  6. `build-db` skips a record whose owning segment is superseded, in its
+     own `skipped_superseded` counter, kept out of `skipped_invalid`, the
+     invalid-record WARNING and `--strict`'s exit 1.
+  7. `validate` and `build-db` never discover anything under
+     `superseded/` (they only glob `records/<book_id>/*/*.json`) --
+     guarded by tests, no production change needed.
+  8. Full gate suite green: ruff, ruff format, mypy, pytest, and web
+     lint/typecheck/vitest/Playwright.
+- **How to observe:** `uv run owlsperch queue audit phb1 --fix` prints the
+  released/moved counts and the previously-stuck class segments become
+  extractable; released record files appear under
+  `$OWLSPERCH_DATA/superseded/phb1/...` rather than being deleted.
+- **Touches:** `pipeline/owlsperch/supersede.py` (new),
+  `pipeline/owlsperch/segment/runner.py`, `pipeline/owlsperch/queue/`
+  (`complete.py`, `audit.py`, `runner.py`),
+  `pipeline/owlsperch/build_db/runner.py`, `CLAUDE.md`, batch doc.
+
 ## B11: Precedence: errata and update entries, Rules Compendium, latest-wins
 - **Status:** pending
 - **User-visible outcome:** duplicate records collapse to one canonical
