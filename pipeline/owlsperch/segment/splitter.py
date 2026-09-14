@@ -23,15 +23,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from owlsperch.segment.anchors import Trigger, find_triggers
+from owlsperch.segment.anchors import Kind, Trigger, find_triggers
 from owlsperch.segment.headings import Paragraph, is_heading
 
 #: Batch B10c adds "class"/"prestige_class" -- these are never produced by
 #: `build_segments` itself (they're a separate, toc-driven pass -- see
 #: `owlsperch.segment.runner`'s class-span post-pass); the literal is
-#: widened here only so `Segment.kind_hint` accepts them too.
+#: widened here only so `Segment.kind_hint` accepts them too. Batch B11 adds
+#: "errata_entry"/"update_entry" (design decision D1) -- these ARE produced
+#: by `build_segments` itself, gated by the `entry_kind` argument.
 KindHint = Literal[
-    "spell", "stat_block", "feat", "table", "rules_section", "class", "prestige_class"
+    "spell",
+    "stat_block",
+    "feat",
+    "table",
+    "rules_section",
+    "class",
+    "prestige_class",
+    "errata_entry",
+    "update_entry",
 ]
 
 
@@ -77,11 +87,14 @@ def _flush_rules_section_run(
     return current_heading
 
 
-def build_segments(paragraphs: list[Paragraph], body_median: float) -> list[RawSegment]:
+def build_segments(
+    paragraphs: list[Paragraph], body_median: float, *, entry_kind: Kind | None = None
+) -> list[RawSegment]:
     """Every segment (anchors and the `rules_section`s between them) for
-    `paragraphs`, in stream order."""
+    `paragraphs`, in stream order. `entry_kind` (batch B11) is passed
+    through to `find_triggers` -- see its docstring."""
     n = len(paragraphs)
-    triggers = find_triggers(paragraphs, body_median)
+    triggers = find_triggers(paragraphs, body_median, entry_kind=entry_kind)
     trigger_by_start: dict[int, Trigger] = {t.start: t for t in triggers}
     trigger_starts = sorted(trigger_by_start)
 

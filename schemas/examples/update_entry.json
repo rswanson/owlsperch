@@ -1,0 +1,30 @@
+{
+  "id": "update_entry:example-update:sable-strike",
+  "type": "update_entry",
+  "name": "Sable Strike",
+  "slug": "sable-strike",
+  "aliases": [],
+  "book_id": "example-update",
+  "pages": [
+    1
+  ],
+  "citation": "Example Update pdf p. 1",
+  "text_md": "Sable Strike: change the bonus from +2 to +4.",
+  "fields": {
+    "target_book": "fixture-book",
+    "target_name": "Sable Strike",
+    "replacement_text": "Change the bonus from +2 to +4."
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-update-p0001-01",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

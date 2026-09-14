@@ -370,6 +370,46 @@ h1 {
   font-size: 0.9rem;
 }
 
+/* Batch B11: precedence's "other printings"/"overrides applied" sections
+   and the variant notice. */
+
+.variant-notice {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.other-printings,
+.overrides-applied {
+  margin-top: 24px;
+}
+
+.other-printings h2,
+.overrides-applied h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.other-printings ul,
+.overrides-applied ul {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.overrides-applied a {
+  color: var(--accent);
+}
+
 .class-record {
   display: flex;
   flex-direction: column;

@@ -83,6 +83,31 @@ export interface RecordToc {
   section: string | null;
 }
 
+/** One other printing of this record (batch B11, design decision D19) --
+ * another record whose own `variant_of` points at this one: an errata/
+ * update override target, a Rules Compendium override, or an older
+ * printing demoted by latest-wins. */
+export interface RecordVariant {
+  id: string;
+  book_id: string;
+  book_title: string | null;
+  citation: string | null;
+  published: string | null;
+}
+
+/** One errata/update entry applied to this record (batch B11, design
+ * decision D19), resolved from the stored `applied_overrides` id list. */
+export interface AppliedOverride {
+  id: string;
+  name: string;
+  type: string;
+  book_id: string;
+  book_title: string | null;
+  citation: string | null;
+  target_page: number | null;
+  replacement_text: string;
+}
+
 export interface RecordDetail {
   id: string;
   type: string;
@@ -97,11 +122,11 @@ export interface RecordDetail {
   tables: RecordTable[];
   canonical: boolean;
   variant_of: string | null;
-  applied_overrides: unknown[];
+  applied_overrides: AppliedOverride[];
   macro_eligible: boolean;
   schema_version: number;
   extraction: Record<string, unknown>;
-  variants: string[];
+  variants: RecordVariant[];
   links: unknown[];
   referenced_by: unknown[];
   book_title: string | null;

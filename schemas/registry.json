@@ -35,6 +35,18 @@
       "label": "Prestige class",
       "plural_label": "Prestige classes",
       "version": 2
+    },
+    "errata_entry": {
+      "schema": "errata_entry.json",
+      "label": "Errata entry",
+      "plural_label": "Errata entries",
+      "version": 1
+    },
+    "update_entry": {
+      "schema": "update_entry.json",
+      "label": "Update entry",
+      "plural_label": "Update entries",
+      "version": 1
     }
   }
 }

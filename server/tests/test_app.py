@@ -42,6 +42,21 @@ def test_search_substring_fallback_for_mid_word_match(built_data_dir: Path) -> N
     assert any(h["slug"] == "fireball" for h in hits)
 
 
+def test_search_returns_canonical_only_after_precedence(built_data_dir: Path) -> None:
+    """Batch B11 criterion 6/acceptance criterion 5: precedence's
+    latest-wins pass demotes book-a's "Acid Fog" to canonical = 0 at build
+    time, and `/search` (like `/records/{type}` and `/facets/{type}`) must
+    never surface a non-canonical row."""
+    response = _client(built_data_dir).get("/search", params={"q": "acid"})
+    hits = [h for g in response.json()["groups"] for h in g["hits"]]
+    assert [h["id"] for h in hits] == ["spell:book-b:acid-fog"]
+
+    list_response = _client(built_data_dir).get("/records/spell", params={"page_size": 50})
+    ids = [item["id"] for item in list_response.json()["items"]]
+    assert "spell:book-b:acid-fog" in ids
+    assert "spell:book-a:acid-fog" not in ids
+
+
 def test_search_type_filter(built_data_dir: Path) -> None:
     response = _client(built_data_dir).get("/search", params={"q": "test", "types": "spell"})
     hits = [h for g in response.json()["groups"] for h in g["hits"]]
@@ -144,11 +159,95 @@ def test_record_detail_unknown_slug_404(built_data_dir: Path) -> None:
 def test_record_detail_duplicate_slug_returns_latest_and_lists_variant(
     built_data_dir: Path,
 ) -> None:
+    # Batch B11: precedence's latest-wins pass demotes book-a's printing at
+    # build time (canonical = 0, variant_of = book-b's id), and `variants`
+    # is now a list of objects, not bare id strings (design decision D19).
     response = _client(built_data_dir).get("/records/spell/acid-fog")
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == "spell:book-b:acid-fog"  # book-b published later
-    assert body["variants"] == ["spell:book-a:acid-fog"]
+    assert body["variant_of"] is None
+    assert len(body["variants"]) == 1
+    variant = body["variants"][0]
+    assert variant["id"] == "spell:book-a:acid-fog"
+    assert variant["book_id"] == "book-a"
+    assert "book_title" in variant
+    assert "citation" in variant
+
+
+def test_record_detail_resolves_applied_overrides_to_objects(built_data_dir: Path) -> None:
+    response = _client(built_data_dir).get("/records/spell/ember-spark")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["applied_overrides"]) == 1
+    override = body["applied_overrides"][0]
+    assert override["id"] == "errata_entry:book-a-errata:ember-spark"
+    assert override["type"] == "errata_entry"
+    assert override["replacement_text"] == "Deals fire damage in a slightly bigger burst."
+    assert override["book_id"] == "book-a-errata"
+
+
+def test_record_detail_variant_with_different_slug_resolves_by_direct_url(
+    built_data_dir: Path,
+) -> None:
+    """Design decision D19's RC-shaped edge case: a variant whose own slug
+    differs from its winner's must still resolve by direct URL (the
+    `canonical = 0` fallback branch) and report `variant_of` -- not the
+    pre-B11 empty shape. Simulates precedence's output directly on the
+    built database (the matching/grouping logic itself is covered by
+    `test_build_db_precedence.py`) using two already-fixtured, differently
+    -slugged rules_section records."""
+    import sqlite3
+
+    conn = sqlite3.connect(built_data_dir / "db" / "owlsperch.sqlite")
+    conn.execute(
+        "UPDATE records SET canonical = 0, variant_of = ? WHERE id = ?",
+        (
+            "rules_section:book-a:sable-rites",
+            "rules_section:book-a:pending-table-section",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    response = _client(built_data_dir).get("/records/rules_section/pending-table-section")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "rules_section:book-a:pending-table-section"
+    assert body["variant_of"] == "rules_section:book-a:sable-rites"
+    assert body["variants"] == []
+
+
+def test_record_detail_variants_resolve_a_two_hop_chain(built_data_dir: Path) -> None:
+    """B11 fix: `_resolve_variants` must walk the transitive closure of
+    `variant_of`, not just one hop -- defence in depth against a chain the
+    pipeline itself no longer produces (`build_db.precedence
+    ._flatten_variant_chains` keeps every stored `variant_of` at most one
+    hop from its root). Builds a second hop on top of the fixture's real
+    build-time chain (`spell:book-a:acid-fog` -> `spell:book-b:acid-fog`,
+    book-b winning as the later-published printing) by repointing an
+    already-fixtured, otherwise-unrelated spell at `spell:book-a:acid-fog`."""
+    import sqlite3
+
+    conn = sqlite3.connect(built_data_dir / "db" / "owlsperch.sqlite")
+    conn.execute(
+        "UPDATE records SET canonical = 0, variant_of = ? WHERE id = ?",
+        ("spell:book-a:acid-fog", "spell:book-a:test-spell-one"),
+    )
+    conn.commit()
+    conn.close()
+
+    response = _client(built_data_dir).get("/records/spell/acid-fog")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "spell:book-b:acid-fog"
+
+    variant_ids = [v["id"] for v in body["variants"]]
+    assert "spell:book-a:acid-fog" in variant_ids
+    assert "spell:book-a:test-spell-one" in variant_ids
+
+    for variant in body["variants"]:
+        assert variant.keys() >= {"id", "book_id", "book_title", "citation", "published"}
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +373,16 @@ def test_health_reports_db_true_when_built(built_data_dir: Path) -> None:
 def test_stats_counts_canonical_records_by_type(built_data_dir: Path) -> None:
     response = _client(built_data_dir).get("/stats")
     assert response.status_code == 200
-    # built_data_dir (conftest.py) writes 6 spell records: fireball,
-    # acid-fog x2 (book-a and book-b), test-spell-{one,two,three} -- plus
-    # (B10) 2 rules_section records and the 1 table record they reference.
-    assert response.json() == {"counts": {"spell": 6, "rules_section": 2, "table": 1}}
+    # built_data_dir (conftest.py) writes 7 spell records: fireball,
+    # acid-fog x2 (book-a and book-b), test-spell-{one,two,three},
+    # ember-spark -- plus (B10) 2 rules_section records and the 1 table
+    # record they reference, plus (B11) 1 errata_entry record.
+    # Precedence's latest-wins pass demotes book-a's acid-fog printing to
+    # canonical = 0 (book-b's is the later printing), so only 6 of the 7
+    # spell records are canonical now.
+    assert response.json() == {
+        "counts": {"spell": 6, "rules_section": 2, "table": 1, "errata_entry": 1}
+    }
 
 
 def test_stats_503_when_db_missing(tmp_path: Path) -> None:

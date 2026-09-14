@@ -1506,3 +1506,103 @@ def test_phb1_real_corpus_class_segments() -> None:
             text = class_segment["text"]
             assert text.count("Alignment:") == 2, (class_segment["heading"], text)
             assert text.count("Religion:") == 1, (class_segment["heading"], text)
+
+
+# ---------------------------------------------------------------------------
+# Batch B11: errata_entry/update_entry segments, gated by manifest kind
+# ---------------------------------------------------------------------------
+
+
+def _errata_entry(book_id: str) -> ManifestEntry:
+    return ManifestEntry(
+        book_id=book_id,
+        title="Test Errata",
+        file=f"{book_id}.pdf",
+        edition="3.5",
+        kind="errata",
+        applies_to="book",
+    )
+
+
+def _update_entry(book_id: str) -> ManifestEntry:
+    return ManifestEntry(
+        book_id=book_id,
+        title="Test Update",
+        file=f"{book_id}.pdf",
+        edition="3.5",
+        kind="update",
+        applies_to="book",
+    )
+
+
+def test_errata_book_produces_one_errata_entry_segment_per_paragraph(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "errata-book",
+        {
+            1: [
+                _para("Errata Rule: Primary Sources take precedence.", line_count=2),
+                _para(
+                    "Glibness Player's Handbook, page 236 In second paragraph, change to X.",
+                    line_count=3,
+                ),
+                _para(
+                    "A Thousand Faces Player's Handbook, page 37 Replace alter self with "
+                    "disguise self.",
+                    line_count=3,
+                ),
+                _para(
+                    "Overrun Player's Handbook, page 148 Change -1 to +1.",
+                    line_count=2,
+                ),
+            ]
+        },
+    )
+
+    segment_book(_errata_entry("errata-book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "errata-book")
+    entries = _by_kind(segments, "errata_entry")
+    assert len(entries) == 3
+    # The per-book common suffix ("Player's Handbook") is stripped (D3).
+    assert {e["heading"] for e in entries} == {"Glibness", "A Thousand Faces", "Overrun"}
+
+
+def test_update_book_produces_update_entry_segments(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "update-book",
+        {1: [_para("Overrun Player's Handbook, page 148 Change -1 to +1.", line_count=2)]},
+    )
+
+    segment_book(_update_entry("update-book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "update-book")
+    entries = _by_kind(segments, "update_entry")
+    assert len(entries) == 1
+    assert entries[0]["kind_hint"] == "update_entry"
+
+
+def test_rulebook_never_produces_errata_anchor_even_with_page_reference(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [
+                _para(
+                    "For more on grappling see the Player's Handbook, page 44 for the full "
+                    "rules on the subject.",
+                    line_count=3,
+                )
+            ]
+        },
+    )
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = _segment_files(data_dir, "book")
+    assert _by_kind(segments, "errata_entry") == []
+    assert _by_kind(segments, "update_entry") == []

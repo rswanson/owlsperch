@@ -299,4 +299,103 @@ describe("RecordPage", () => {
     expect(screen.getByRole("heading", { name: "Class Features" })).toBeInTheDocument();
     expect(screen.getByText("You rage.")).toBeInTheDocument();
   });
+
+  // ---------------------------------------------------------------------
+  // Batch B11: variant notice, "Other printings", "Overrides applied".
+  // ---------------------------------------------------------------------
+
+  it("renders a variant notice linking to the canonical record when variant_of is set", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({ variant_of: "spell:phb1:fireball-v2" }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const notice = await screen.findByText(/This is a variant printing/);
+    const link = within(notice.closest("p")!).getByRole("link", { name: "the canonical record" });
+    expect(link).toHaveAttribute("href", "/r/spell/fireball-v2");
+  });
+
+  it("renders no variant notice when variant_of is null", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord({ variant_of: null }));
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.queryByText(/This is a variant printing/)).not.toBeInTheDocument();
+  });
+
+  it("renders Other printings when variants is non-empty", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        variants: [
+          {
+            id: "spell:fixture-book:fireball",
+            book_id: "fixture-book",
+            book_title: "Fixture Book",
+            citation: "FB p. 1",
+            published: "2001-01",
+          },
+        ],
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const section = await screen.findByRole("heading", { name: "Other printings" });
+    expect(section.closest("section")).toHaveTextContent("Fixture Book");
+    expect(section.closest("section")).toHaveTextContent("FB p. 1");
+  });
+
+  it("renders no Other printings section when variants is empty", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord({ variants: [] }));
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.queryByRole("heading", { name: "Other printings" })).not.toBeInTheDocument();
+  });
+
+  it("renders Overrides applied with a link, citation, and replacement text", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(
+      makeRecord({
+        applied_overrides: [
+          {
+            id: "errata_entry:phb1-errata:glibness-p-236",
+            name: "Glibness (p. 236)",
+            type: "errata_entry",
+            book_id: "phb1-errata",
+            book_title: "PHB Errata",
+            citation: "PHB Errata pdf p. 1",
+            target_page: 236,
+            replacement_text: "New wording.",
+          },
+        ],
+      }),
+    );
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    const section = await screen.findByRole("heading", { name: "Overrides applied" });
+    const container = section.closest("section")!;
+    const link = within(container).getByRole("link", { name: "Glibness (p. 236)" });
+    expect(link).toHaveAttribute("href", "/r/errata_entry/glibness-p-236");
+    expect(container).toHaveTextContent("PHB Errata pdf p. 1");
+    expect(container).toHaveTextContent("New wording.");
+  });
+
+  it("renders no Overrides applied section when applied_overrides is empty", async () => {
+    vi.spyOn(api, "getRecord").mockResolvedValue(makeRecord({ applied_overrides: [] }));
+    vi.spyOn(api, "getSchemas").mockResolvedValue(SCHEMAS_RESPONSE);
+
+    renderRecordPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Fireball" });
+    expect(screen.queryByRole("heading", { name: "Overrides applied" })).not.toBeInTheDocument();
+  });
 });

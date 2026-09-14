@@ -68,3 +68,22 @@ test("a spell record's chapter breadcrumb lands in the tree view, not the list",
   await expect(page.locator(".record-tree summary", { hasText: /^Magic\s/ })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Pagination" })).not.toBeVisible();
 });
+
+// Batch B11: precedence's "Other printings"/"Overrides applied" sections
+// against the fixture DB's duplicate "Ice Storm" printing (fixture-book,
+// fixture-book-2) and its errata entry (fixture-errata).
+test("a record with duplicate printings and an errata override shows both sections", async ({
+  page,
+}) => {
+  await page.goto("/r/spell/ice-storm");
+
+  await expect(page.getByRole("heading", { level: 1, name: "Ice Storm" })).toBeVisible();
+
+  const otherPrintings = page.locator(".other-printings");
+  await expect(otherPrintings).toBeVisible();
+  await expect(otherPrintings.getByText("FB p. 6")).toBeVisible();
+
+  const overridesApplied = page.locator(".overrides-applied");
+  await expect(overridesApplied).toBeVisible();
+  await expect(overridesApplied.getByRole("link", { name: /Ice Storm/ })).toBeVisible();
+});
