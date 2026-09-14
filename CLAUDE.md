@@ -194,7 +194,32 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   Level:/Components:/Casting Time:/... list) sit in the same y-range --
   they mutually satisfy both overlap fractions and still get merged into
   one bogus tab-joined table row (e.g. PHB pp. 254, 272's "Mind Fog" and
-  "Repel Wood" spells) -- not fixed as part of this B3 follow-up.
+  "Repel Wood" spells) -- not fixed as part of this B3 follow-up. Batch
+  B10c-mand7 adds a reassembly pass (module docstring step 2b) for a
+  fragmented class-level table (e.g. PHB Table 3-6: The Cleric, p. 32):
+  poppler sometimes splits one printed table into several per-column
+  table-group cliques (one per short run of rows) plus a pile of orphan
+  single-cell blocks -- one block per CELL -- for the rows in between,
+  since those rows never meet the >= 2 non-blank line bar step 2's clique
+  detection requires. This runs immediately after step 2's clique
+  detection and before any leftover block reaches the single-block-table
+  check above, alternating two moves to a joint fixpoint: merge two
+  table-group candidates whose x-extents overlap by >= 80% of the
+  narrower one's span and whose vertical gap is <= 2x their larger median
+  line height, and absorb a leftover non-prose/non-label:value block
+  whose x-extent sits entirely inside a group's x span and whose y-center
+  sits within one median line height of the group's y span. Absorbing
+  orphan rows can be what brings a too-wide gap under the merge
+  threshold, so a single merge-then-absorb pass isn't enough -- see
+  `owlsperch.text.columns`'s module docstring for the PHB p.32 walkthrough
+  where this matters. Every merge/absorb is guarded by rebuilding the
+  candidate and requiring its count of >= 2-cell rows not to drop.
+  Deliberately out of scope: the phantom ", Bonus Feat" / ", BF" tokens
+  PHB class tables print in their Special column are an ERRATA OVERLAY
+  baked into the PDF's own text -- even `pdftotext -layout` prints them,
+  and poppler's bbox output carries no font signal to distinguish them --
+  so this pass does not try to strip them; that stays the extraction
+  prompt's "drop a Special token with no printed feature heading" rule.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size

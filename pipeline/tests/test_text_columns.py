@@ -9,8 +9,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from owlsperch.text.bbox import Block, Page, parse_bbox_xhtml
-from owlsperch.text.columns import TableGroup, is_vertical_block, order_blocks
+from owlsperch.text.bbox import Block, Line, Page, Word, parse_bbox_xhtml
+from owlsperch.text.columns import (
+    TableGroup,
+    _absorb_orphan_blocks,
+    _groups_can_merge,
+    _merge_adjacent_groups,
+    _qualifying_row_count,
+    is_vertical_block,
+    order_blocks,
+)
 
 _NS = 'xmlns="http://www.w3.org/1999/xhtml"'
 
@@ -589,3 +597,300 @@ def test_transitive_but_not_mutual_overlap_is_not_one_table_group(tmp_path: Path
     assert len(ordered) == 3
     assert not any(isinstance(item, TableGroup) for item in ordered)
     assert all(isinstance(item, Block) for item in ordered)
+
+
+# ---------------------------------------------------------------------------
+# Fragmented class-level tables (step 2b, B10c-mand7): `pdftotext` splits a
+# printed class-level table (e.g. PHB Table 3-6: The Cleric) into several
+# per-column table groups plus orphan single-cell blocks for the rows in
+# between, and step 2b must reassemble all of it into one `TableGroup`.
+# ---------------------------------------------------------------------------
+
+#: (x_min, x_max, short column code) for the class-table fixture's columns,
+#: modeled on PHB p.32's Level/BAB/Fort/Ref/Will/Special columns.
+_CLASS_TABLE_COLUMNS = [
+    (35.0, 50.0, "LV"),
+    (62.0, 98.0, "BA"),
+    (120.0, 133.0, "FO"),
+    (148.0, 158.0, "RE"),
+    (175.0, 187.0, "WI"),
+    (206.0, 284.0, "SP"),
+]
+
+#: Row 0 is the header; rows 1-20 are class levels 1st-20th. Row pitch 10pt,
+#: line height 8pt -- close to PHB p.32's real ~10pt pitch/~8pt line height.
+_CLASS_TABLE_ROW_PITCH = 10.0
+_CLASS_TABLE_Y_START = 489.0
+_CLASS_TABLE_LINE_HEIGHT = 8.0
+
+#: Rows `pdftotext` emits as one block per CELL rather than as part of a
+#: per-column block -- the 4th/8th/12th/15th/16th/20th level rows, per the
+#: real PHB p.32 probe this fixture is modeled on.
+_CLASS_TABLE_ORPHAN_ROWS = {4, 8, 12, 15, 16, 20}
+
+_CLASS_TABLE_HEADER_BY_CODE = {
+    "LV": "LVL",
+    "BA": "BAB",
+    "FO": "FORT",
+    "RE": "REF",
+    "WI": "WILL",
+    "SP": "SPECIAL",
+}
+
+
+def _class_table_row_y(row: int) -> tuple[float, float]:
+    y_min = _CLASS_TABLE_Y_START + row * _CLASS_TABLE_ROW_PITCH
+    return y_min, y_min + _CLASS_TABLE_LINE_HEIGHT
+
+
+def _class_table_cell_text(row: int, header: str, code: str) -> str:
+    return header if row == 0 else f"{code}{row}"
+
+
+def _class_table_column_block(x_min: float, x_max: float, code: str, rows: list[int]) -> str:
+    """One per-column block (the shape `pdftotext` emits for a class-level
+    table's columns) containing exactly `rows`' cells for this column --
+    possibly a non-contiguous subset, modeling one of the several
+    per-column clusters poppler splits a fragmented table into."""
+    lines = []
+    for row in rows:
+        y_min, y_max = _class_table_row_y(row)
+        text = _class_table_cell_text(row, _CLASS_TABLE_HEADER_BY_CODE[code], code)
+        lines.append(
+            f'<line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">'
+            f'<word xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{text}</word>'
+            f"</line>"
+        )
+    block_y_min, _ = _class_table_row_y(rows[0])
+    _, block_y_max = _class_table_row_y(rows[-1])
+    return (
+        f'<flow><block xMin="{x_min}" yMin="{block_y_min}" xMax="{x_max}" '
+        f'yMax="{block_y_max}">{"".join(lines)}</block></flow>'
+    )
+
+
+def _class_table_orphan_cell_blocks(row: int) -> str:
+    """The single-word, single-cell blocks `pdftotext` emits for one
+    "orphan" row of a fragmented class-level table -- one block per
+    column, all at that row's y position (see step 2b's module docstring:
+    these rows arrive as one block per CELL, not as part of any
+    per-column block)."""
+    y_min, y_max = _class_table_row_y(row)
+    out = []
+    for x_min, x_max, code in _CLASS_TABLE_COLUMNS:
+        text = _class_table_cell_text(row, _CLASS_TABLE_HEADER_BY_CODE[code], code)
+        out.append(_block(x_min, y_min, x_max, y_max, text))
+    return "".join(out)
+
+
+def _fragmented_class_table_body() -> str:
+    # Non-orphan rows are grouped into 5 runs (5 per-column block clusters
+    # per column), separated by the orphan rows -- the exact PHB p.32
+    # shape (5 table groups + ~90 loose orphan blocks) this step must
+    # reassemble into one.
+    row_groups = [
+        [0, 1, 2, 3],
+        [5, 6, 7],
+        [9, 10, 11],
+        [13, 14],
+        [17, 18, 19],
+    ]
+    body = ""
+    for x_min, x_max, code in _CLASS_TABLE_COLUMNS:
+        for rows in row_groups:
+            body += _class_table_column_block(x_min, x_max, code, rows)
+    for row in sorted(_CLASS_TABLE_ORPHAN_ROWS):
+        body += _class_table_orphan_cell_blocks(row)
+
+    # A caption to the left of the table's own x span (x_min 26 < the
+    # table's 35), a multi-line footnote below it, and a page number far to
+    # the right -- none of these belong in the reassembled table group.
+    body += _block(26.0, 470.0, 200.0, 482.0, "Table 3-6: The Cleric")
+    footnote_lines = [
+        [
+            (35.0, 90.0, "1"),
+            (95.0, 538.0, "In addition to the stated number of spells per day for"),
+        ],
+        [(35.0, 538.0, "the cleric's level, the cleric gets a number of bonus spells")],
+        [(35.0, 538.0, "per day if the cleric has a high Wisdom score.")],
+    ]
+    body += _wide_block_of_rows(footnote_lines, y_start=721.6, row_height=11.0)
+    body += _block(562.9, 750.0, 578.0, 762.0, "31")
+    return body
+
+
+def test_fragmented_class_level_table_reassembles_into_one_group(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand7, PHB p.32 "Table 3-6: The
+    # Cleric"): `pdftotext` fragments a class-level table into several
+    # per-column table groups plus orphan single-cell blocks for the rows
+    # in between. Step 2b must reassemble all of it into ONE `TableGroup`
+    # with every level row complete and in column order, and must NOT pull
+    # in the caption, footnote, or page number.
+    page = _parse_page(tmp_path, "fragmented_class_table.html", _fragmented_class_table_body())
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1, [
+        (len(tg.rows), tg.rows[0].cells if tg.rows else None) for tg in table_groups
+    ]
+    group = table_groups[0]
+
+    # Header row + 20 level rows, all with every column present.
+    assert len(group.rows) == 21
+    assert group.rows[0].cells == ["LVL", "BAB", "FORT", "REF", "WILL", "SPECIAL"]
+    for row in range(1, 21):
+        expected = [f"LV{row}", f"BA{row}", f"FO{row}", f"RE{row}", f"WI{row}", f"SP{row}"]
+        assert group.rows[row].cells == expected, (row, group.rows[row].cells)
+
+    # The caption, footnote, and page number stay out of the table group.
+    non_table_texts = [
+        line.text for item in ordered if isinstance(item, Block) for line in item.lines
+    ]
+    assert any("Table 3-6" in text for text in non_table_texts)
+    assert any("bonus spells" in text for text in non_table_texts)
+    assert any(text.strip() == "31" for text in non_table_texts)
+
+
+def _line(x_min: float, y_min: float, x_max: float, y_max: float, text: str) -> Line:
+    return Line(x_min, y_min, x_max, y_max, [Word(x_min, y_min, x_max, y_max, text)])
+
+
+def test_two_stacked_tables_with_incompatible_x_grids_stay_separate(tmp_path: Path) -> None:
+    # Acceptance criterion 8 regression: two real, independently-detected
+    # table groups sit almost directly on top of each other (a small
+    # vertical gap, well within the step-2b merge threshold) but their
+    # x-grids barely overlap -- well below `TABLE_MERGE_X_OVERLAP_FRACTION`
+    # (80% of the narrower one's span). Step 2b's merge pass must leave
+    # them as two separate `TableGroup`s.
+    top_columns = [
+        (34.0, 100.0, ["Name", "Falchion", "Longsword"]),
+        (110.0, 180.0, ["Cost", "75 gp", "15 gp"]),
+        (190.0, 260.0, ["Dmg", "2d4", "1d8"]),
+    ]
+    top_blocks = "".join(
+        _table_column_block(x_min, x_max, 100.0, texts) for x_min, x_max, texts in top_columns
+    )
+
+    # Shifted far enough right that the two tables' x-extents (34-260 vs.
+    # 254-480, both 226 wide) overlap by only 6 units -- ~2.7% of the
+    # narrower span, far under the 80% merge threshold -- even though the
+    # vertical gap between them (a few points) would easily pass the merge
+    # pass's own gap check on its own.
+    bottom_columns = [
+        (254.0, 320.0, ["Name", "Dagger", "Rapier"]),
+        (330.0, 400.0, ["Cost", "2 gp", "20 gp"]),
+        (410.0, 480.0, ["Dmg", "1d4", "1d6"]),
+    ]
+    bottom_blocks = "".join(
+        _table_column_block(x_min, x_max, 155.0, texts) for x_min, x_max, texts in bottom_columns
+    )
+
+    page = _parse_page(tmp_path, "stacked_tables.html", top_blocks + bottom_blocks)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 2, [tg.rows for tg in table_groups]
+    row_counts = sorted(len(tg.rows) for tg in table_groups)
+    assert row_counts == [3, 3]
+
+
+def test_group_merge_is_rejected_when_it_would_reduce_qualifying_rows() -> None:
+    # Acceptance criterion 5 regression, merge guard (step 2b, part A):
+    # hand-built table-group candidates that satisfy `_groups_can_merge`'s
+    # geometry (x-overlap, vertical gap) on their own, but whose combined
+    # line-height distribution shifts `_build_table_group`'s shared row
+    # threshold enough to fuse what were 2 clean rows in each group into a
+    # single garbled row -- reducing the qualifying (>= 2 cell) row count
+    # from 2+2=4 to 3. The guard must discard this merge and leave both
+    # groups untouched.
+    group_a = [
+        Block(0.0, 0.0, 10.0, 20.0, [_line(0, 0, 10, 10, "a1"), _line(0, 10, 10, 20, "a2")]),
+        Block(20.0, 0.0, 30.0, 20.0, [_line(20, 0, 30, 10, "b1"), _line(20, 10, 30, 20, "b2")]),
+    ]
+    group_b = [
+        Block(0.0, 40.0, 10.0, 120.0, [_line(0, 40, 10, 80, "c1"), _line(0, 80, 10, 120, "c2")]),
+        Block(20.0, 40.0, 30.0, 120.0, [_line(20, 40, 30, 80, "d1"), _line(20, 80, 30, 120, "d2")]),
+    ]
+
+    # The geometry alone qualifies for a merge (full x-overlap, small gap
+    # relative to group b's own -- much taller -- median line height).
+    assert _groups_can_merge(group_a, group_b) is True
+
+    before = _qualifying_row_count(group_a) + _qualifying_row_count(group_b)
+    assert before == 4
+    assert _qualifying_row_count(group_a + group_b) == 3
+
+    result = _merge_adjacent_groups([group_a, group_b])
+    assert result is None
+
+
+def test_orphan_absorption_is_rejected_when_it_would_reduce_qualifying_rows() -> None:
+    # Acceptance criterion 5 regression, absorb guard (step 2b, part B): a
+    # leftover block that satisfies `_block_fits_group` (not prose-like or
+    # label:value-like, x-extent inside the group's, y-center inside the
+    # group's y-span expanded by one median line height) but whose own
+    # much-taller lines shift the combined row threshold enough that every
+    # row -- the group's own 2 and the leftover's own, otherwise-qualifying
+    # row -- fuses into a single row. Absorbing it would reduce the
+    # qualifying row count from 2+1=3 to 1, so the guard must discard it.
+    group = [
+        Block(0.0, 0.0, 10.0, 40.0, [_line(0, 0, 10, 20, "a1"), _line(0, 20, 10, 40, "a2")]),
+        Block(20.0, 0.0, 30.0, 40.0, [_line(20, 0, 30, 20, "b1"), _line(20, 20, 30, 40, "b2")]),
+    ]
+    leftover = Block(
+        0.0,
+        -10.0,
+        30.0,
+        55.0,
+        [
+            _line(0, -10, 10, 50, "c1"),
+            _line(20, -10, 30, 50, "d1"),
+            _line(0, -5, 10, 55, "c2"),
+            _line(20, -5, 30, 55, "d2"),
+        ],
+    )
+
+    before = _qualifying_row_count(group) + _qualifying_row_count([leftover])
+    assert before == 3
+    assert _qualifying_row_count([*group, leftover]) == 1
+
+    result = _absorb_orphan_blocks([group], [leftover])
+    assert result is None
+
+
+def test_orphan_absorption_guard_uses_true_total_not_group_only_baseline() -> None:
+    # Acceptance criterion 5 regression, absorb guard (step 2b, part B):
+    # distinguishes the correct guard baseline (the group's own qualifying
+    # rows PLUS the leftover block's own standalone qualifying row count)
+    # from a buggy one that omits the leftover's own count. Here the group
+    # alone has 1 qualifying row and the leftover alone would also form 1
+    # qualifying row (true total 2), but absorbing it fuses everything into
+    # a single combined row (1 qualifying row) -- fewer than the true
+    # total of 2, so the guard must discard it. A guard whose baseline is
+    # only the group's own row count (1) would wrongly accept this, since
+    # 1 is not less than 1 -- this is exactly the scenario the earlier
+    # `test_orphan_absorption_is_rejected_when_it_would_reduce_qualifying_rows`
+    # cannot catch, because there both baselines already agree on
+    # rejection.
+    group = [
+        Block(0.0, 0.0, 10.0, 20.0, [_line(0, 0, 10, 20, "a1")]),
+        Block(20.0, 0.0, 30.0, 20.0, [_line(20, 0, 30, 20, "b1")]),
+    ]
+    leftover = Block(
+        12.0,
+        0.0,
+        18.0,
+        20.0,
+        [_line(12, 0, 15, 20, "c1"), _line(16, 0, 18, 20, "c2")],
+    )
+
+    group_only_baseline = _qualifying_row_count(group)
+    true_total_baseline = _qualifying_row_count(group) + _qualifying_row_count([leftover])
+    assert group_only_baseline == 1
+    assert true_total_baseline == 2
+    assert _qualifying_row_count([*group, leftover]) == 1
+
+    result = _absorb_orphan_blocks([group], [leftover])
+    assert result is None
