@@ -125,9 +125,13 @@ batch B10c, a class/prestige_class's own level-progression table), the
 subagent's prompt tells it to write TWO record files for that one segment:
 the entity's own record, and a separate `table` record (cross-linked via
 the table's `fields.parent_record` and the owning record's `tables` list).
-The subagent lists BOTH paths in its reply's `records` array, and `queue
-complete` already accepts any path under `records/<book_id>/` -- no change
-to this loop is needed to handle it.
+Both files are written into the segment's own STAGING directory (the
+prompt prints the absolute path, batch B10c-mand4) -- never directly into
+the book's shared `records/<book_id>/` directory. The subagent lists BOTH
+staged paths in its reply's `records` array, and `queue complete` moves
+each one into `records/<book_id>/` itself once it has verified the
+destination isn't already owned by a different segment -- no change to
+this loop is needed to handle it.
 
 ## Report to the user
 

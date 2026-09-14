@@ -38,6 +38,7 @@ def _write_segment(
     attempts: list[dict[str, Any]] | None = None,
     status: str = "pending",
     pending_records: list[str] | None = None,
+    claim_tier: str | None = None,
 ) -> Path:
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +56,8 @@ def _write_segment(
         "created_at": "2026-01-01T00:00:00+00:00",
         "pending_records": pending_records or [],
     }
+    if claim_tier is not None:
+        segment["claim_tier"] = claim_tier
     path = seg_dir / f"{seg_id}.json"
     path.write_text(json.dumps(segment, indent=2))
     return path
@@ -813,6 +816,339 @@ def test_committed_fixture_record_passes(tmp_path: Path) -> None:
 # `records/<book_id>/<type>/` file, so `validate` never even discovers it
 # -- no production code change is needed for this; the test is the guard.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand4: atomic per-segment validation write-back. A segment
+# often owns more than one record from the same extraction attempt (e.g. an
+# entity plus a `table` record it cross-links) -- a passing sibling must
+# never overwrite a failing sibling's escalation, and a `pending_records`
+# claim whose file this run's discovery never found at all must fail the
+# segment too.
+# ---------------------------------------------------------------------------
+
+
+def test_a_failing_sibling_record_is_not_clobbered_by_a_passing_one(tmp_path: Path) -> None:
+    """The exact defect this batch fixes: one segment owns two records from
+    the same run -- one fails, one passes. The FAIL's escalation must
+    survive; the segment must NOT end up `done`/`validated` just because a
+    sibling happened to pass."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    # Named to sort AFTER the failing record, so file-discovery order alone
+    # can't be relied on to save the old, per-record write-back from this.
+    passing = _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "zzz-mage-armor",
+        _valid_spell_record(name="Zzz Mage Armor", slug="zzz-mage-armor"),
+    )
+    failing_record = _valid_spell_record(name="Aaa Bad Spell", slug="aaa-bad-spell")
+    failing_record["fields"]["levels"] = []  # fails the non-empty `levels` check
+    failing = _write_record(data_dir, "book", "spell", "aaa-bad-spell", failing_record)
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 1
+    assert f"PASS {passing.relative_to(data_dir).as_posix()}" in output
+    assert f"FAIL {failing.relative_to(data_dir).as_posix()}" in output
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    # The whole segment is a failure -- never "done"/"validated" just
+    # because one sibling record happened to pass.
+    assert segment["status"] == "pending"
+    assert segment["outcome"] != "validated"
+    assert segment["tier"] == "sonnet"  # escalated once, for the FAIL
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["kind"] == "validation"
+    assert any("levels" in e for e in segment["attempts"][0]["errors"])
+    # Neither sibling was promoted -- the passing one is not silently
+    # granted a free pass just because it happened to validate on its own.
+    assert segment.get("records", []) == []
+
+
+def test_missing_pending_record_fails_the_whole_segment(tmp_path: Path) -> None:
+    """A path still listed in `pending_records` that this run's file
+    discovery never found at all (deleted, moved, or never actually
+    written) fails the segment -- even when a sibling record from the same
+    claim was found and validates cleanly."""
+    data_dir = tmp_path / "data"
+    vanished_rel = "records/book/spell/vanished.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=["records/book/spell/fireball.json", vanished_rel],
+    )
+    _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+    # `vanished_rel` is listed in `pending_records` but was never written to
+    # disk (or was deleted after being claimed) -- discovery never sees it.
+
+    exit_code, output = _run(data_dir)
+
+    # No record FILE actually failed conformance (there's nothing to check
+    # for `vanished_rel` at all) -- per-record exit codes/summary counts are
+    # untouched by this criterion; the segment write-back below is where the
+    # missing claim actually bites.
+    assert exit_code == 0
+    assert "PASS records/book/spell/fireball.json" in output
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {vanished_rel}"]
+    # The vanished claim is left in place (nothing on disk to drop it for);
+    # the found sibling is not promoted either -- the whole claim failed.
+    assert segment["pending_records"] == [vanished_rel]
+    assert segment.get("records", []) == []
+
+
+def test_entirely_vanished_pending_record_still_fails_the_segment(tmp_path: Path) -> None:
+    """Acceptance criterion 3, the general case (not just a claim with a
+    surviving sibling): a segment whose ENTIRE `pending_records` claim
+    vanished -- no path on disk, and no other record anywhere in the book --
+    produces zero `_CheckedRecord`s of its own this run. Before the
+    `_orphaned_pending_segments` follow-up, such a segment's
+    `(book_id, segment_id)` never entered `groups` at all, so it stayed
+    `pending` forever with no new `attempts` entry."""
+    data_dir = tmp_path / "data"
+    vanished_rel = "records/book/spell/vanished.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=[vanished_rel],
+    )
+    # No record file anywhere under `records/book/` -- discovery finds
+    # nothing for this book at all.
+
+    exit_code, output = _run(data_dir)
+
+    assert exit_code == 0  # nothing failed conformance; there's nothing to check
+    assert output.strip() == "0 passed, 0 failed, 0 total"
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "sonnet"  # escalated once
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["kind"] == "validation"
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {vanished_rel}"]
+    assert segment["pending_records"] == [vanished_rel]
+    assert segment.get("records", []) == []
+
+
+def test_two_pending_records_one_valid_one_invalid_neither_file_survives(
+    tmp_path: Path,
+) -> None:
+    """Acceptance criterion 4's mandated regression test, exercised exactly
+    as specified: a segment with two paths in `pending_records`, one record
+    valid and one invalid. After `run_validate`, the segment is left
+    `pending` (never `done`/`validated`), its tier has advanced one rung, it
+    has exactly one new `attempts` entry of kind `validation`,
+    `pending_records` and `records` both end up empty, and NEITHER record
+    file is left on disk -- the passing sibling is not spared."""
+    data_dir = tmp_path / "data"
+    good_rel = "records/book/spell/fireball.json"
+    bad_rel = "records/book/spell/bad-spell.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=[good_rel, bad_rel],
+    )
+    good_path = _write_record(data_dir, "book", "spell", "fireball", _valid_spell_record())
+    bad_record = _valid_spell_record(name="Bad Spell", slug="bad-spell")
+    bad_record["fields"]["levels"] = []  # fails the non-empty `levels` check
+    bad_path = _write_record(data_dir, "book", "spell", "bad-spell", bad_record)
+
+    exit_code, _ = _run(data_dir)
+
+    assert exit_code == 1
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["outcome"] != "validated"
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["kind"] == "validation"
+    assert segment["pending_records"] == []
+    assert segment.get("records", []) == []
+    assert not good_path.is_file()
+    assert not bad_path.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand4: ladder-idempotency fix (`claim_tier`)
+# ---------------------------------------------------------------------------
+
+
+def test_revalidating_an_unchanged_missing_claim_is_idempotent(tmp_path: Path) -> None:
+    """The defect this batch fixes: before `claim_tier` existed, a group
+    write-back whose only problem is a `missing_record_path` (nothing on
+    disk to read an `extraction.tier` from) fell back to the segment's
+    CURRENT `tier` -- which the previous run had just advanced -- so
+    re-validating an entirely unchanged segment walked the escalation
+    ladder once per run instead of recording one idempotent repeat. Anchor
+    the attempt tier to `claim_tier` (stamped once by `owlsperch queue
+    complete` and stable across runs) instead: three runs over nothing but
+    an unchanged missing claim must produce exactly one attempt, one rung
+    of escalation, and never reach `human/`."""
+    data_dir = tmp_path / "data"
+    vanished_rel = "records/book/spell/vanished.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=[vanished_rel],
+        claim_tier="haiku",
+    )
+    # `vanished_rel` is never written to disk at all.
+
+    for _ in range(3):
+        exit_code, _output = _run(data_dir)
+        assert exit_code == 0
+
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 1
+    assert segment["attempts"][0]["errors"] == [f"missing_record_path: {vanished_rel}"]
+    assert segment["pending_records"] == [vanished_rel]
+    assert not (data_dir / "human" / "book" / "book-p0010-01.json").exists()
+
+
+def test_mixed_fail_and_missing_claim_advances_ladder_once_then_stabilizes(
+    tmp_path: Path,
+) -> None:
+    """The mixed shape: one record that genuinely fails conformance
+    (deleted from disk by the same write-back, per criterion 3) plus one
+    permanently-missing path. Run 1 fails on both together and advances the
+    ladder using the failing record's own `extraction.tier`. Run 2 sees
+    only the missing path -- a different `errors` list, so one more
+    attempt is recorded, but at `claim_tier` (now behind the
+    already-advanced `segment.tier`), which `owlsperch.queue.ladder`
+    recognizes as stale and does not move. Run 3 is then a clean repeat of
+    run 2's errors and is a true no-op. Net: two attempts total, the ladder
+    moves exactly once."""
+    data_dir = tmp_path / "data"
+    bad_rel = "records/book/spell/bad-spell.json"
+    vanished_rel = "records/book/spell/vanished.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        pending_records=[bad_rel, vanished_rel],
+        claim_tier="haiku",
+    )
+    bad_record = _valid_spell_record(name="Bad Spell", slug="bad-spell")
+    bad_record["fields"]["levels"] = []  # fails the non-empty `levels` check
+    bad_path = _write_record(data_dir, "book", "spell", "bad-spell", bad_record)
+
+    exit_code, _output = _run(data_dir)
+    assert exit_code == 1
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 1
+    assert not bad_path.is_file()  # the failing claim is deleted
+    assert segment["pending_records"] == [vanished_rel]
+
+    # Run 2: only the missing path remains -- a new attempt (different
+    # errors), but recorded at the now-stale `claim_tier`, so no advance.
+    exit_code, _output = _run(data_dir)
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 2
+    assert segment["attempts"][1]["errors"] == [f"missing_record_path: {vanished_rel}"]
+
+    # Run 3: identical to run 2's recorded errors -- idempotent no-op.
+    exit_code, _output = _run(data_dir)
+    assert exit_code == 0
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["tier"] == "sonnet"
+    assert len(segment["attempts"]) == 2
+    assert segment["status"] == "pending"
+
+
+def test_new_claim_at_a_higher_tier_still_escalates_and_opus_failure_reaches_human(
+    tmp_path: Path,
+) -> None:
+    """Criterion 4: `claim_tier` must not stall REAL escalation. A segment
+    already once-escalated (haiku attempt on record) gets a genuinely new
+    claim registered at sonnet (as `owlsperch queue complete` would stamp
+    it) -- a fresh failure at that claim uses the failing record's own
+    `extraction.tier` (unchanged precedence) and still advances the ladder
+    to opus. A further new claim and failure at opus then exhausts the
+    ladder and moves the segment to `human/`, exactly as before this
+    batch."""
+    data_dir = tmp_path / "data"
+    sonnet_rel = "records/book/spell/bad-spell-2.json"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        tier="sonnet",
+        claim_tier="sonnet",
+        attempts=[
+            {
+                "tier": "haiku",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "errors": ["missing_record_path: records/book/spell/vanished.json"],
+                "kind": "validation",
+            }
+        ],
+        pending_records=[sonnet_rel],
+    )
+    sonnet_record = _valid_spell_record(name="Bad Spell 2", slug="bad-spell-2")
+    sonnet_record["fields"]["levels"] = []
+    sonnet_record["extraction"]["tier"] = "sonnet"
+    _write_record(data_dir, "book", "spell", "bad-spell-2", sonnet_record)
+
+    exit_code, _output = _run(data_dir)
+    assert exit_code == 1
+    segment = _read_segment(data_dir, "book", "book-p0010-01")
+    assert segment["status"] == "pending"
+    assert segment["tier"] == "opus"
+    assert len(segment["attempts"]) == 2
+
+    # A new claim at opus (as a real `queue complete` would stamp it) fails
+    # too -- opus is exhausted, so the segment moves to `human/`.
+    opus_rel = "records/book/spell/bad-spell-3.json"
+    segment_after = _read_segment(data_dir, "book", "book-p0010-01")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0010-01",
+        [10],
+        tier="opus",
+        claim_tier="opus",
+        attempts=segment_after["attempts"],
+        pending_records=[opus_rel],
+    )
+    opus_record = _valid_spell_record(name="Bad Spell 3", slug="bad-spell-3")
+    opus_record["fields"]["levels"] = []
+    opus_record["extraction"]["tier"] = "opus"
+    _write_record(data_dir, "book", "spell", "bad-spell-3", opus_record)
+
+    exit_code, _output = _run(data_dir)
+    assert exit_code == 1
+    seg_path = data_dir / "segments" / "book" / "book-p0010-01.json"
+    assert not seg_path.exists()
+    human_path = data_dir / "human" / "book" / "book-p0010-01.json"
+    assert human_path.is_file()
+    human_segment = json.loads(human_path.read_text())
+    assert human_segment["status"] == "human"
+    assert human_segment["outcome"] == "escalation_exhausted"
+    assert human_segment["tier"] == "opus"
+    assert len(human_segment["attempts"]) == 3
 
 
 def test_validate_never_discovers_a_record_under_superseded_dir(tmp_path: Path) -> None:

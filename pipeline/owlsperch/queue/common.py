@@ -97,3 +97,55 @@ def resolve_record_path_under_book(data_dir: Path, book_id: str, rel_path: str) 
     except ValueError:
         return None
     return candidate
+
+
+def staging_records_root(data_dir: Path, book_id: str, seg_id: str) -> Path:
+    """Batch B10c-mand4: the private staging directory a subagent writes its
+    candidate record files into for one extraction attempt of `seg_id` --
+    `staging/<book_id>/<seg_id>/records/<type>/<slug>.json`. Never in the
+    repo, always under `$OWLSPERCH_DATA`. A subagent's claimed paths must
+    resolve inside here (see `resolve_staged_record_path`); `owlsperch queue
+    complete` moves an accepted file out of here into
+    `records/<book_id>/<type>/<slug>.json` and removes this whole directory
+    once it's done with the reply (see `owlsperch.queue.complete`)."""
+    return data_dir / "staging" / book_id / seg_id / "records"
+
+
+def resolve_staged_record_path(
+    data_dir: Path, book_id: str, seg_id: str, rel_path: str
+) -> Path | None:
+    """Resolve `rel_path` (as claimed by a subagent, relative to `data_dir`,
+    or an absolute path) and return it iff it falls inside THIS segment's
+    own `staging_records_root` -- the same `.resolve()` + `relative_to`
+    traversal guard as `resolve_record_path_under_book`, but scoped to one
+    segment's own staging tree rather than a whole book's shared records
+    directory. Returns `None` if `rel_path` resolves outside that directory
+    (including a bare `records/<book_id>/...` path with no staging prefix
+    at all -- batch B10c-mand4 accepts staging paths only). Existence on
+    disk is not checked here; callers decide what else "valid" requires."""
+    staging_root = staging_records_root(data_dir, book_id, seg_id).resolve()
+    candidate = (data_dir / rel_path).resolve()
+    try:
+        candidate.relative_to(staging_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def destination_rel_path_for_staged(root: Path, staged: Path, book_id: str) -> str | None:
+    """Map a resolved staged file path (`<root>/<type>/<file>.json`, `root`
+    being that segment's own resolved `staging_records_root`) to its final
+    home once `owlsperch queue complete` accepts it:
+    `records/<book_id>/<type>/<file>.json`. Returns `None` if `staged` is
+    not exactly two path components under `root` (a wrong-depth claim, e.g.
+    missing the type directory or nesting an extra one) -- the shape
+    `owlsperch.queue.prompt` tells every subagent to write."""
+    try:
+        rel = staged.relative_to(root)
+    except ValueError:
+        return None
+    parts = rel.parts
+    if len(parts) != 2:
+        return None
+    type_dir, filename = parts
+    return f"records/{book_id}/{type_dir}/{filename}"

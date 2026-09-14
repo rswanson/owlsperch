@@ -20,7 +20,12 @@ final message would be handed to `owlsperch queue complete`.
 -> re-validate the whole book, until a wave selects nothing (respecting
 `--tier` when given -- otherwise `select_and_mark`'s own default picks
 whatever tier currently has pending work -- and `--limit` as a total cap
-across every wave).
+across every wave). Each wave's re-validate calls `validate_record_files`
+once over every discovered record file (batch B10c-mand4), not
+`validate_record_file` in a loop -- looping the single-record wrapper would
+write each segment back once per record again instead of once per wave,
+losing the atomic per-segment write-back `owlsperch.validate.runner`'s
+module docstring describes.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ from owlsperch.queue.select import select_and_mark
 from owlsperch.queue.summary import QueueSummary, compute_summary
 from owlsperch.text.runner import default_data_dir
 from owlsperch.validate.loader import CompiledSchemas, discover_record_files
-from owlsperch.validate.runner import validate_record_file
+from owlsperch.validate.runner import build_validation_context, validate_record_files
 
 
 class FixtureExhaustedError(Exception):
@@ -142,8 +147,14 @@ def drive_dry_run(
             if remaining is not None:
                 remaining -= 1
 
-        for record_path in discover_record_files(data_dir, book_id):
-            validate_record_file(record_path, data_dir=data_dir, compiled=compiled)
+        context = build_validation_context(data_dir)
+        validate_record_files(
+            discover_record_files(data_dir, book_id),
+            data_dir=data_dir,
+            compiled=compiled,
+            context=context,
+            book_ids={book_id},
+        )
 
     return DriveResult(
         total_calls=total_calls,
