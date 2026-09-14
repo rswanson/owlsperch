@@ -54,7 +54,21 @@ Per book:
    set) -- an in-place stamp, not a delete/rewrite, so a plain (non-`--force`)
    `owlsperch segment <book_id>` run both writes the handful of new class
    segments AND stamps every existing class-chapter fragment segment,
-   without touching their own `records`/`outcome`/`attempts` bookkeeping.
+   without touching their own `outcome`/`attempts` bookkeeping. (Batch
+   B10c-mand2) A segment NEWLY stamped this way also has its record claims
+   RELEASED in the same pass, via `owlsperch.supersede.
+   release_segment_claims`: every path in its `records`/`pending_records`
+   is moved to `superseded/<book_id>/<type>/<file>.json` (never deleted)
+   and those two lists are cleared, with one `ReleasedRecord` appended to
+   `released_records` per path -- freeing the class segment being stamped
+   in to claim the same path (most often a level table sharing the class's
+   own printed title, and so the same slug/id/path) without
+   `owlsperch.queue.complete`'s ownership guard refusing it as a collision.
+   A segment that already carried `superseded_by` from an earlier run is
+   skipped entirely by this whole pass (stamp AND release), which is
+   exactly why `owlsperch queue audit --fix` exists as a separate,
+   retroactive path for segments stamped before this release-at-stamp-time
+   behavior existed.
 """
 
 from __future__ import annotations
@@ -120,6 +134,23 @@ _TOC_CATEGORY_TO_KIND: dict[str, KindHint] = {
 class SegmentError(Exception):
     """A hard failure segmenting one book (e.g. a page missing its
     `.meta.json` sidecar)."""
+
+
+class ReleasedRecord(BaseModel):
+    """One record claim released from a superseded segment (batch
+    B10c-mand2, see `owlsperch.supersede.release_segment_claims`): `path` is
+    the record path (relative to `$OWLSPERCH_DATA`), exactly as the segment
+    spelled it in its own `records`/`pending_records` list, that the
+    segment used to claim; `moved_to` is where the file now lives under
+    `superseded/<book_id>/<type>/<file>.json`, or `None` when the file was
+    left exactly where it was (already missing on disk, or still
+    legitimately owned by a different, still-live segment -- releasing
+    must never steal a live segment's record)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    moved_to: str | None = None
 
 
 class Segment(BaseModel):
@@ -195,6 +226,15 @@ class Segment(BaseModel):
     #: segment not superseded by a class span (which, pre-B10c, is every
     #: segment).
     superseded_by: str | None = None
+    #: Batch B10c-mand2: record claims released when this segment was
+    #: stamped `superseded_by` (by the class-span pass below, at stamp
+    #: time) or, retroactively, by `owlsperch queue audit --fix` -- see
+    #: `owlsperch.supersede.release_segment_claims`. Empty for a segment
+    #: that has never held a claim released this way. A segment JSON file
+    #: written before this field existed still loads fine (defaulting to
+    #: `[]`), since `Segment` is `extra="forbid"` and this field has a
+    #: default.
+    released_records: list[ReleasedRecord] = []
 
 
 @dataclass
@@ -208,6 +248,11 @@ class BookSegmentSummary:
     #: the class-span post-pass this run (0 for a book with no usable toc,
     #: or one whose class-span discovery found nothing new to stamp).
     superseded: int = 0
+    #: Batch B10c-mand2: how many record claims were released (via
+    #: `owlsperch.supersede.release_segment_claims`) from segments NEWLY
+    #: stamped `superseded_by` this run -- 0 whenever `superseded` is 0, and
+    #: also 0 for a run that stamps segments holding no claims at all.
+    released: int = 0
     #: Batch B10c: set (instead of left "") when the book has records but
     #: no usable `toc/<book_id>.json` -- printed as a second summary line
     #: rather than replacing the main one, since ordinary segmentation still
@@ -223,6 +268,8 @@ class BookSegmentSummary:
         lines = [f"{self.book_id}: {counts_str} ({self.written} written, {self.skipped} skipped)"]
         if self.superseded:
             lines.append(f"{self.book_id}: {self.superseded} segment(s) marked superseded_by")
+        if self.released:
+            lines.append(f"{self.book_id}: {self.released} record claim(s) released")
         if self.class_note:
             lines.append(f"{self.book_id}: {self.class_note}")
         return "\n".join(lines)
@@ -453,15 +500,38 @@ def _write_class_segment(
 
 
 def _supersede_segments_in_span(
-    out_dir: Path, book_id: str, class_seg_id: str, start: int, end: int
-) -> int:
+    out_dir: Path,
+    book_id: str,
+    class_seg_id: str,
+    start: int,
+    end: int,
+    *,
+    data_dir: Path,
+) -> tuple[int, int]:
     """Stamp `superseded_by = class_seg_id` on every OTHER segment of
     `book_id` whose `pages` fall ENTIRELY inside `[start, end]`, in place --
-    every other field (`records`, `outcome`, `attempts`, `tier`, ...) is
-    preserved. Idempotent: a segment that already carries a `superseded_by`
-    (from this or an earlier class span) is left untouched. Returns how many
-    segments were newly stamped."""
-    count = 0
+    every other field (`outcome`, `attempts`, `tier`, ...) is preserved
+    except `records`/`pending_records`, which are RELEASED (batch
+    B10c-mand2, `owlsperch.supersede.release_segment_claims`): moved to
+    `superseded/<book_id>/<type>/<file>.json` and cleared, so the class
+    segment being stamped in for it is free to claim the same path (most
+    often a level table sharing the class's own printed title, and so the
+    same slug/id/path) without `owlsperch.queue.complete`'s ownership guard
+    refusing it as a collision. Idempotent: a segment that already carries a
+    `superseded_by` (from this or an earlier class span) is left completely
+    untouched -- its claims, if any, were already released the first time
+    it was stamped (or need `owlsperch queue audit --fix`'s retroactive pass
+    if it predates this behavior entirely). Returns `(segments newly
+    stamped, record claims released)`."""
+    # Lazy import: `owlsperch.supersede` imports from `owlsperch.queue.
+    # common`, which imports `Segment` from this module at module scope --
+    # a module-level import here would be circular. By call time this
+    # module is fully loaded, so a local import is safe (same pattern as
+    # `_write_class_segment`/`_write_one_segment`'s `starting_tier` import).
+    from owlsperch.supersede import release_segment_claims
+
+    stamped = 0
+    released = 0
     for path in sorted(out_dir.glob(f"{book_id}-*.json")):
         if path.stem == class_seg_id:
             continue
@@ -470,9 +540,11 @@ def _supersede_segments_in_span(
             continue
         if segment.pages and all(start <= p <= end for p in segment.pages):
             segment.superseded_by = class_seg_id
+            newly_released = release_segment_claims(segment, data_dir=data_dir)
+            released += len(newly_released)
             atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
-            count += 1
-    return count
+            stamped += 1
+    return stamped, released
 
 
 def segment_book(
@@ -555,11 +627,15 @@ def segment_book(
         )
 
     superseded_total = 0
+    released_total = 0
     for span in class_spans:
-        superseded_total += _supersede_segments_in_span(
-            out_dir, entry.book_id, span.seg_id, span.start, span.end
+        stamped, released = _supersede_segments_in_span(
+            out_dir, entry.book_id, span.seg_id, span.start, span.end, data_dir=data_dir
         )
+        superseded_total += stamped
+        released_total += released
     summary.superseded = superseded_total
+    summary.released = released_total
 
     return summary
 

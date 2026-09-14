@@ -33,10 +33,26 @@ under the new guard and under B10-mand1's name-qualification prompt rule. A
 segment already `pending`/`in_progress` just gets the pruning. A segment
 sitting in `human/` is reported but left completely untouched -- a human is
 meant to look at those. `fix_book` never deletes, moves, or rewrites a
-record file: pruning a stale claim from a segment's own lists is index
-hygiene, not deletion, and it's what keeps the ownership index unambiguous
-for the Part (a) guard afterwards (a victim that kept claiming a path it no
-longer owns would give that path two claimants again).
+record file for a stale (non-superseded) claim: pruning it from a segment's
+own lists is index hygiene, not deletion, and it's what keeps the ownership
+index unambiguous for the Part (a) guard afterwards (a victim that kept
+claiming a path it no longer owns would give that path two claimants
+again).
+
+Batch B10c-mand2 adds a third, related report and recovery: `audit_book`
+also reports `superseded_claims` -- every segment whose own `superseded_by`
+is set that STILL holds a claim (`records`/`pending_records` non-empty). A
+superseded segment is EXCLUDED from `stale_claims` entirely (even if its
+claimed file's on-disk owner doesn't match it): that pass can soft-reset a
+`done` victim back to `pending`, which must never happen to a segment this
+batch deliberately freezes. `fix_book` releases every `superseded_claims`
+entry through the shared `owlsperch.supersede.release_segment_claims`
+helper -- exactly the retroactive counterpart to the class-span pass's
+release-at-stamp-time behavior (`owlsperch.segment.runner`), for the
+segments that were stamped `superseded_by` before that behavior existed
+and so never had their claims released. A superseded segment sitting in
+`human/` is, like a `stale_claims` victim there, reported but left
+completely untouched.
 """
 
 from __future__ import annotations
@@ -49,6 +65,7 @@ from typing import Any
 from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.common import resolve_record_path_under_book
 from owlsperch.segment.runner import Segment
+from owlsperch.supersede import release_segment_claims
 
 
 def _segment_files(data_dir: Path, book_id: str) -> list[tuple[Path, str]]:
@@ -154,10 +171,37 @@ class StaleClaim:
 
 
 @dataclass
+class SupersededClaim:
+    """A segment whose own `superseded_by` is set but that still holds a
+    claim (batch B10c-mand2) -- reported separately from, and excluded
+    from, `stale_claims` (see this module's docstring)."""
+
+    seg_id: str
+    superseded_by: str
+    status: str
+    #: "segments" | "human"
+    location: str
+    #: Every path currently in the segment's own `records` +
+    #: `pending_records`, deduplicated (order preserved), exactly as the
+    #: segment spelled them.
+    paths: list[str] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "seg_id": self.seg_id,
+            "superseded_by": self.superseded_by,
+            "status": self.status,
+            "location": self.location,
+            "paths": self.paths,
+        }
+
+
+@dataclass
 class AuditReport:
     book_id: str
     collisions: list[Collision] = field(default_factory=list)
     stale_claims: list[StaleClaim] = field(default_factory=list)
+    superseded_claims: list[SupersededClaim] = field(default_factory=list)
 
     def render(self) -> str:
         lines = [f"{self.book_id}:"]
@@ -188,6 +232,20 @@ class AuditReport:
                     lines.append(f"      {entry.path}: {entry.reason} (owner: {owner})")
         else:
             lines.append("  no segments carry a stale claim")
+
+        if self.superseded_claims:
+            lines.append(
+                f"  {len(self.superseded_claims)} superseded segment(s) still hold a claim:"
+            )
+            for superseded_claim in self.superseded_claims:
+                lines.append(
+                    f"    {superseded_claim.seg_id}"
+                    f" (superseded_by={superseded_claim.superseded_by},"
+                    f" status={superseded_claim.status}, location={superseded_claim.location}):"
+                    f" {', '.join(superseded_claim.paths)}"
+                )
+        else:
+            lines.append("  no superseded segments hold a claim")
         return "\n".join(lines)
 
     def to_json(self) -> dict[str, Any]:
@@ -195,6 +253,7 @@ class AuditReport:
             "book_id": self.book_id,
             "collisions": [c.to_json() for c in self.collisions],
             "stale_claims": [sc.to_json() for sc in self.stale_claims],
+            "superseded_claims": [sc.to_json() for sc in self.superseded_claims],
         }
 
 
@@ -230,7 +289,28 @@ def audit_book(book_id: str, *, data_dir: Path) -> AuditReport:
         )
 
     stale_claims: list[StaleClaim] = []
+    superseded_claims: list[SupersededClaim] = []
     for seg_id, location, raw in parsed:
+        superseded_by = raw.get("superseded_by")
+        if isinstance(superseded_by, str) and superseded_by:
+            # A superseded segment is frozen (batch B10c-mand2): it is
+            # EXCLUDED from stale_claims entirely (that pass can soft-reset
+            # a `done` segment back to `pending`, which must never happen
+            # here), and any claim it still holds is reported separately so
+            # `--fix` can release it instead.
+            claimed_paths = list(dict.fromkeys(_claimed_paths(raw)))
+            if claimed_paths:
+                superseded_claims.append(
+                    SupersededClaim(
+                        seg_id=seg_id,
+                        superseded_by=superseded_by,
+                        status=str(raw.get("status", "")),
+                        location=location,
+                        paths=claimed_paths,
+                    )
+                )
+            continue
+
         seen: set[Path] = set()
         stale_paths: list[StalePathEntry] = []
         for rel_path in _claimed_paths(raw):
@@ -258,17 +338,55 @@ def audit_book(book_id: str, *, data_dir: Path) -> AuditReport:
                 )
             )
 
-    return AuditReport(book_id=book_id, collisions=collisions, stale_claims=stale_claims)
+    return AuditReport(
+        book_id=book_id,
+        collisions=collisions,
+        stale_claims=stale_claims,
+        superseded_claims=superseded_claims,
+    )
 
 
 def fix_book(book_id: str, *, data_dir: Path) -> list[dict[str, Any]]:
     """Apply the recovery `audit_book` describes. Returns one summary dict
     per affected segment: `{"seg_id", "location", "action", "pruned_paths"}`
-    where `action` is `"reset"` (soft reset, was `done`), `"pruned"` (paths
-    dropped, status left alone), or `"left_in_human"` (reported only,
-    nothing written)."""
+    (plus, for a `"released"` action, `"moved"`) where `action` is
+    `"reset"` (soft reset, was `done`), `"pruned"` (paths dropped, status
+    left alone), `"released"` (a superseded segment's claims released via
+    `owlsperch.supersede.release_segment_claims`), or `"left_in_human"`
+    (reported only, nothing written)."""
     report = audit_book(book_id, data_dir=data_dir)
     results: list[dict[str, Any]] = []
+
+    for superseded_claim in report.superseded_claims:
+        if superseded_claim.location == "human":
+            results.append(
+                {
+                    "seg_id": superseded_claim.seg_id,
+                    "location": "human",
+                    "action": "left_in_human",
+                    "pruned_paths": list(superseded_claim.paths),
+                }
+            )
+            continue
+
+        seg_path = data_dir / "segments" / book_id / f"{superseded_claim.seg_id}.json"
+        segment = Segment.model_validate_json(seg_path.read_text())
+        newly_released = release_segment_claims(segment, data_dir=data_dir)
+        atomic_write_text(seg_path, segment.model_dump_json(indent=2) + "\n")
+
+        results.append(
+            {
+                "seg_id": superseded_claim.seg_id,
+                "location": "segments",
+                "action": "released",
+                "pruned_paths": [r.path for r in newly_released],
+                "moved": [
+                    {"from": r.path, "to": r.moved_to}
+                    for r in newly_released
+                    if r.moved_to is not None
+                ],
+            }
+        )
 
     for claim in report.stale_claims:
         stale_paths = {p.path for p in claim.paths}
