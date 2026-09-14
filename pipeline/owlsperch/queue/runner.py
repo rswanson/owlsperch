@@ -19,10 +19,11 @@ from owlsperch.fsutil import atomic_write_text
 from owlsperch.queue.audit import audit_book, fix_book
 from owlsperch.queue.common import find_segment_path, resolve_record_path_under_book
 from owlsperch.queue.complete import QueueError, complete_segment
+from owlsperch.queue.ladder import starting_tier
 from owlsperch.queue.prompt import DEFAULT_MODEL, render_prompt_to_file
 from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT, LockTimeoutError, select_and_mark
 from owlsperch.queue.summary import compute_summary
-from owlsperch.segment.runner import SEGMENT_TIER, Segment
+from owlsperch.segment.runner import Segment
 from owlsperch.text.runner import default_data_dir
 
 
@@ -295,7 +296,7 @@ def run_queue_reset(
             segment.outcome_reason = None
             segment.proposal = None
             segment.context_seg_ids = []
-            segment.tier = SEGMENT_TIER
+            segment.tier = starting_tier(segment.kind_hint)
         elif was_human:
             segment.outcome = None
             segment.outcome_reason = None
