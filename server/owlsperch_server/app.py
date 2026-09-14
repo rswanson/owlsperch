@@ -336,18 +336,43 @@ def _resolve_tables(conn: sqlite3.Connection, table_ids: list[Any]) -> list[dict
     return resolved
 
 
+_RECORD_DETAIL_SELECT = (
+    "SELECT r.id, r.json, r.toc_category, r.toc_chapter, r.toc_section, r.toc_path, "
+    "r.superseded_by, b.published, COALESCE(b.short_title, b.title) AS book_title FROM records r "
+    "LEFT JOIN books b ON b.book_id = r.book_id "
+    "WHERE r.type = ? AND r.slug = ? AND r.canonical = ?"
+)
+
+
 def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[str, Any] | None:
-    rows = list(
-        conn.execute(
-            "SELECT r.id, r.json, r.toc_category, r.toc_chapter, r.toc_section, r.toc_path, "
-            "b.published, COALESCE(b.short_title, b.title) AS book_title FROM records r "
-            "LEFT JOIN books b ON b.book_id = r.book_id "
-            "WHERE r.type = ? AND r.slug = ? AND r.canonical = 1",
-            (type_name, slug),
-        )
-    )
+    rows = list(conn.execute(_RECORD_DETAIL_SELECT, (type_name, slug, 1)))
     if not rows:
-        return None
+        # Batch B10c, design decision D12: a record a class/prestige_class
+        # span superseded (canonical = 0) still resolves by direct URL --
+        # only search/browse/facets stay canonical-only. Since a
+        # superseded record was never a duplicate-across-books situation to
+        # begin with (`build_db`'s superseding pass runs per book), there's
+        # no variants/published tie-break to do here.
+        superseded_rows = list(conn.execute(_RECORD_DETAIL_SELECT, (type_name, slug, 0)))
+        if not superseded_rows:
+            return None
+        row = superseded_rows[0]
+        winner: dict[str, Any] = json.loads(row["json"])
+        winner["variants"] = []
+        winner["links"] = []
+        winner["referenced_by"] = []
+        winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])
+        winner["book_title"] = row["book_title"]
+        winner["superseded_by"] = row["superseded_by"]
+        category_labels = {c.key: c.label for c in load_categories()}
+        winner["toc"] = {
+            "category": row["toc_category"],
+            "category_label": category_labels.get(row["toc_category"], row["toc_category"]),
+            "chapter": row["toc_chapter"],
+            "section": row["toc_section"],
+            "path": json.loads(row["toc_path"]) if row["toc_path"] is not None else [],
+        }
+        return winner
 
     # Spec 4.5/4.7 step 5: before precedence collapses duplicates (B11),
     # more than one canonical record can share type+slug across books --
@@ -355,12 +380,13 @@ def _record_detail(conn: sqlite3.Connection, type_name: str, slug: str) -> dict[
     rows.sort(key=lambda row: row["published"] or "", reverse=True)
     row = rows[0]
 
-    winner: dict[str, Any] = json.loads(row["json"])
+    winner = json.loads(row["json"])
     winner["variants"] = [r["id"] for r in rows[1:]]
     winner["links"] = []
     winner["referenced_by"] = []
     winner["tables"] = _resolve_tables(conn, winner.get("tables") or [])
     winner["book_title"] = row["book_title"]
+    winner["superseded_by"] = row["superseded_by"]
     category_labels = {c.key: c.label for c in load_categories()}
     winner["toc"] = {
         "category": row["toc_category"],

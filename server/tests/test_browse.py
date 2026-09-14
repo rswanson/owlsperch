@@ -244,6 +244,83 @@ def test_load_type_browse_schema_handles_nullable_array_of_object_type(tmp_path:
 
 
 # ---------------------------------------------------------------------------
+# Batch B10c, design decision D10: a plain (not array-of-) object filterable
+# field, e.g. class `spellcasting` -- sub-fields derived the same way, but
+# NO combined-row cross-product path, since `flatten_fields` writes no
+# combined row for a plain dict.
+# ---------------------------------------------------------------------------
+
+
+def _widget_registry_with_object_field(tmp_path: Path) -> Registry:
+    schema = {
+        "properties": {
+            "spellcasting": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string"},
+                    "ability": {"type": "string"},
+                },
+                "x-ui": {"label": "Spellcasting", "filterable": True, "sortable": False},
+            }
+        }
+    }
+    (tmp_path / "widget.json").write_text(json.dumps(schema))
+    return Registry(
+        schemas_dir=tmp_path,
+        types={
+            "widget": TypeInfo(
+                type_name="widget",
+                schema_file="widget.json",
+                label="Widget",
+                plural_label="Widgets",
+                version=1,
+            )
+        },
+        envelope_schema={},
+    )
+
+
+def test_load_type_browse_schema_derives_sub_fields_for_a_plain_object_field(
+    tmp_path: Path,
+) -> None:
+    registry = _widget_registry_with_object_field(tmp_path)
+
+    browse_schema = load_type_browse_schema(registry, "widget")
+    field = browse_schema.filterable[0]
+    assert field.name == "spellcasting"
+    assert [sf.name for sf in field.sub_fields] == ["ability", "kind"]
+    assert field.combined is False
+    assert {"kind", "ability"} <= browse_schema.allowed_params()
+
+
+def test_build_filter_clauses_object_field_never_takes_the_combined_row_path(
+    tmp_path: Path,
+) -> None:
+    """Even with BOTH sub-properties given at once (the shape that would
+    trigger the combined-row cross-product for an array-of-object field),
+    a plain object field must always go through its own `<parent>.<sub>`
+    key -- there is no combined `record_fields` row for it to match."""
+    registry = _widget_registry_with_object_field(tmp_path)
+    browse_schema = load_type_browse_schema(registry, "widget")
+
+    clauses, params = build_filter_clauses(browse_schema, {"kind": ["arcane"], "ability": ["Int"]})
+
+    assert len(clauses) == 2
+    assert "spellcasting.kind" in params
+    assert "spellcasting.ability" in params
+    assert "spellcasting" not in params  # never the bare parent-name combined key
+
+
+def test_filterable_field_names_uses_dotted_keys_for_a_plain_object_field(
+    tmp_path: Path,
+) -> None:
+    registry = _widget_registry_with_object_field(tmp_path)
+    browse_schema = load_type_browse_schema(registry, "widget")
+
+    assert browse_schema.filterable_field_names() == ["spellcasting.ability", "spellcasting.kind"]
+
+
+# ---------------------------------------------------------------------------
 # GET /records/{type} -- filtering
 # ---------------------------------------------------------------------------
 
