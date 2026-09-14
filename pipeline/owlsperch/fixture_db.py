@@ -557,6 +557,28 @@ _TOC: dict[str, Any] = {
             "path": ["Chapter 3: Equipment", "Hauling Gear"],
             "category": "equipment",
         },
+        {
+            # B10c-mand3 Part 6: gives the fixture class record a real
+            # "classes" toc category (it resolved to "uncategorized"
+            # before this) so the web tree's Classes branch has a fixture
+            # to open in Playwright.
+            "title": "Chapter 4: Classes",
+            "level": 1,
+            "printed_page": 5,
+            "pdf_page_start": 5,
+            "pdf_page_end": 5,
+            "path": ["Chapter 4: Classes"],
+            "category": "classes",
+        },
+        {
+            "title": "Fixture Mage",
+            "level": 2,
+            "printed_page": 5,
+            "pdf_page_start": 5,
+            "pdf_page_end": 5,
+            "path": ["Chapter 4: Classes", "Fixture Mage"],
+            "category": "classes",
+        },
     ],
 }
 
