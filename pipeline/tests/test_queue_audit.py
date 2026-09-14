@@ -502,3 +502,199 @@ def test_fix_book_running_twice_is_a_noop_the_second_time(tmp_path: Path) -> Non
 
     after_second = _read_segment(data_dir, "book", "book-p0010-01")
     assert after_second == after_first
+
+
+# ---------------------------------------------------------------------------
+# superseded_claims (batch B10c-mand2): a segment whose own `superseded_by`
+# is set is frozen -- it must never be soft-reset via `stale_claims`, and
+# any claim it still holds is reported separately so `--fix` can release
+# it (see `owlsperch.supersede.release_segment_claims`) instead of pruning
+# it like an ordinary stale claim.
+# ---------------------------------------------------------------------------
+
+
+def test_superseded_segment_holding_a_claim_is_reported_separately(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    _write_record(
+        data_dir,
+        "records/book/table/table-3-8-the-druid.json",
+        segment_id="book-p0036-01",
+    )
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert len(report.superseded_claims) == 1
+    claim = report.superseded_claims[0]
+    assert claim.seg_id == "book-p0036-01"
+    assert claim.superseded_by == "book-class-p0034"
+    assert claim.status == "done"
+    assert claim.location == "segments"
+    assert claim.paths == ["records/book/table/table-3-8-the-druid.json"]
+
+    payload = report.to_json()
+    assert payload["superseded_claims"][0]["seg_id"] == "book-p0036-01"
+    assert "book-p0036-01" in report.render()
+
+
+def test_superseded_segment_is_excluded_from_stale_claims_even_if_it_looks_stale(
+    tmp_path: Path,
+) -> None:
+    """A superseded segment's own-disk-owner mismatch must never land it in
+    `stale_claims` -- that pass can soft-reset a `done` segment back to
+    `pending`, which would un-freeze a segment this batch deliberately
+    freezes."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    # The file's on-disk owner is a DIFFERENT segment -- would ordinarily
+    # be "owned_by_other" stale, but must be reported ONLY as a superseded
+    # claim.
+    _write_record(
+        data_dir,
+        "records/book/table/table-3-8-the-druid.json",
+        segment_id="book-class-p0034",
+    )
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert report.stale_claims == []
+    assert len(report.superseded_claims) == 1
+
+
+def test_superseded_segment_with_no_claim_is_not_reported(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+    )
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert report.superseded_claims == []
+    assert report.stale_claims == []
+
+
+def test_fix_book_releases_a_superseded_segments_claim(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    record_path = _write_record(
+        data_dir,
+        "records/book/table/table-3-8-the-druid.json",
+        segment_id="book-p0036-01",
+    )
+
+    results = fix_book("book", data_dir=data_dir)
+
+    assert len(results) == 1
+    assert results[0]["seg_id"] == "book-p0036-01"
+    assert results[0]["location"] == "segments"
+    assert results[0]["action"] == "released"
+    assert results[0]["pruned_paths"] == ["records/book/table/table-3-8-the-druid.json"]
+    assert results[0]["moved"] == [
+        {
+            "from": "records/book/table/table-3-8-the-druid.json",
+            "to": "superseded/book/table/table-3-8-the-druid.json",
+        }
+    ]
+
+    assert not record_path.is_file()
+    moved = data_dir / "superseded" / "book" / "table" / "table-3-8-the-druid.json"
+    assert moved.is_file()
+
+    segment = _read_segment(data_dir, "book", "book-p0036-01")
+    assert segment["records"] == []
+    assert segment["pending_records"] == []
+    assert segment["superseded_by"] == "book-class-p0034"
+    # Frozen -- not soft-reset like an ordinary stale-claim victim.
+    assert segment["status"] == "done"
+    assert len(segment["released_records"]) == 1
+
+
+def test_fix_book_leaves_a_superseded_segment_in_human_untouched(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    human_path = _write_segment(
+        data_dir,
+        "book",
+        "book-p0148-01",
+        location="human",
+        status="human",
+        outcome="escalation_exhausted",
+        superseded_by="book-class-p0034",
+        pending_records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    _write_record(
+        data_dir,
+        "records/book/table/table-3-8-the-druid.json",
+        segment_id="book-p0148-01",
+    )
+    original = human_path.read_text()
+
+    results = fix_book("book", data_dir=data_dir)
+
+    assert len(results) == 1
+    assert results[0]["seg_id"] == "book-p0148-01"
+    assert results[0]["action"] == "left_in_human"
+    assert human_path.read_text() == original
+    assert (data_dir / "records" / "book" / "table" / "table-3-8-the-druid.json").is_file()
+    assert not (data_dir / "superseded").exists()
+
+
+def test_fix_book_release_is_idempotent(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0036-01",
+        kind_hint="table",
+        status="done",
+        outcome="validated",
+        superseded_by="book-class-p0034",
+        records=["records/book/table/table-3-8-the-druid.json"],
+    )
+    _write_record(
+        data_dir,
+        "records/book/table/table-3-8-the-druid.json",
+        segment_id="book-p0036-01",
+    )
+
+    first = fix_book("book", data_dir=data_dir)
+    assert len(first) == 1
+
+    second = fix_book("book", data_dir=data_dir)
+    assert second == []
+
+    moved = data_dir / "superseded" / "book" / "table" / "table-3-8-the-druid.json"
+    assert moved.is_file()
+    # No new/renamed file was created the second time around.
+    assert list((data_dir / "superseded" / "book" / "table").iterdir()) == [moved]

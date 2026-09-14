@@ -1211,3 +1211,143 @@ def test_run_build_db_prints_superseded_count(tmp_path: Path) -> None:
     assert "Superseded" in out.getvalue()
     assert "1" in out.getvalue()
     assert "WARNING" not in err.getvalue()  # superseding is informational, not a problem
+
+
+# ---------------------------------------------------------------------------
+# Superseded-segment skip (batch B10c-mand2, criterion 6): belt-and-braces
+# against a record file left behind (or restored by hand) even though its
+# OWNING segment (looked up via the record's own `extraction.segment_id`)
+# carries `superseded_by` -- it must never load into the database, but it
+# must not count as an "invalid" record either (it may well be perfectly
+# schema-valid).
+# ---------------------------------------------------------------------------
+
+
+def _write_raw_segment(data_dir: Path, book_id: str, seg_id: str, **overrides: Any) -> None:
+    seg_dir = data_dir / "segments" / book_id
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    segment: dict[str, Any] = {
+        "seg_id": seg_id,
+        "book_id": book_id,
+        "pages": [11],
+        "printed_pages": [11],
+        "kind_hint": "spell",
+        "heading": "Test Spell",
+        "text": "text",
+        "status": "done",
+        "tier": "haiku",
+        "attempts": [],
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    segment.update(overrides)
+    (seg_dir / f"{seg_id}.json").write_text(json.dumps(segment))
+
+
+def test_build_db_skips_a_record_whose_owning_segment_is_superseded(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_raw_segment(data_dir, "book", "book-p0011-01", superseded_by="book-class-p0002")
+
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "fireball",
+        _valid_spell_record(book_id="book", seg_id="book-p0010-01", pages=[10]),
+    )
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "icy-bolt",
+        _valid_spell_record(
+            book_id="book",
+            seg_id="book-p0011-01",
+            pages=[11],
+            name="Icy Bolt",
+            slug="icy-bolt",
+        ),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert result.skipped_invalid == 0, result.skipped
+    assert result.skipped_superseded == 1
+    assert result.counts_by_type.get("spell") == 1
+
+    conn = _connect(result.db_path)
+    try:
+        assert (
+            conn.execute("SELECT id FROM records WHERE id = ?", ("spell:book:icy-bolt",)).fetchone()
+            is None
+        )
+        assert (
+            conn.execute("SELECT id FROM records WHERE id = ?", ("spell:book:fireball",)).fetchone()
+            is not None
+        )
+    finally:
+        conn.close()
+
+
+def test_run_build_db_prints_skipped_superseded_count_separately(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
+    _write_raw_segment(data_dir, "book", "book-p0011-01", superseded_by="book-class-p0002")
+    _write_record(
+        data_dir,
+        "book",
+        "spell",
+        "icy-bolt",
+        _valid_spell_record(
+            book_id="book",
+            seg_id="book-p0011-01",
+            pages=[11],
+            name="Icy Bolt",
+            slug="icy-bolt",
+        ),
+    )
+
+    out = io.StringIO()
+    err = io.StringIO()
+    exit_code = run_build_db(
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+        out=out,
+        err=err,
+    )
+
+    assert exit_code == 0
+    assert "Skipped (superseded segment): 1" in out.getvalue()
+    assert "Skipped (invalid): 0" in out.getvalue()
+    assert "WARNING" not in err.getvalue()
+
+
+def test_build_db_ignores_records_under_superseded_directory(tmp_path: Path) -> None:
+    """Criterion 7: `superseded/<book_id>/<type>/*.json` is not
+    `records/<book_id>/<type>/*.json`, so build-db never even discovers a
+    file living there -- no production code change is needed for this; the
+    test is the guard."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-p0010-01", [10])
+
+    superseded_dir = data_dir / "superseded" / "book" / "spell"
+    superseded_dir.mkdir(parents=True, exist_ok=True)
+    (superseded_dir / "fireball.json").write_text(
+        json.dumps(
+            _valid_spell_record(book_id="book", seg_id="book-p0010-01", pages=[10]), indent=2
+        )
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+
+    assert result.skipped_invalid == 0
+    assert result.skipped_superseded == 0
+    assert result.counts_by_type == {}
