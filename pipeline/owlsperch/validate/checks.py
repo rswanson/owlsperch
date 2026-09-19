@@ -437,29 +437,60 @@ def _fold_trailing_plural(word: str) -> str:
         return word[:-3] + "y"
     if len(word) > 3 and word.endswith("es") and word[:-2].endswith(("ss", "x", "z", "ch", "sh")):
         return word[:-2]
+    # Known gap: an "-oes" plural ("heroes") falls through to the plain
+    # strip below and yields "heroe" -- harmless for matching, since both
+    # sides go through the same fold, and no 3.5e class feature is named
+    # that way.
     if word.endswith("s") and not word.endswith(("ss", "us", "is")):
         return word[:-1]
     return word
 
 
+#: Words that mark a TIERED class feature sharing its stem with a lesser
+#: one -- "Greater Rage"/"Rage", "Improved Evasion"/"Evasion", "Improved
+#: Uncanny Dodge"/"Uncanny Dodge", "Mighty Rage", "Tireless Rage". Each of
+#: these is its own printed Class Features heading, so a Special token
+#: carrying one of them must match a `class_features` entry of its own;
+#: `_special_token_matches_feature` refuses to let it fall through to the
+#: base feature's entry (B10c-mand8 review finding).
+_TIER_MODIFIER_WORDS = frozenset(
+    {"greater", "improved", "lesser", "mighty", "tireless", "superior", "mass", "advanced"}
+)
+
+
 def _special_token_matches_feature(normalized_token: str, normalized_feature_name: str) -> bool:
     """Whether a level table's Special-column token (already through
     `_normalize_special_token`) is described by a `class_features[].name`
-    (likewise normalized). True when either one contains the other as a
-    whole-word sequence -- so "summon familiar" (the sorcerer's/wizard's
-    Special cell) matches the feature the printed Class Features heading
-    names simply "Familiar", and a cell reading "sneak attack" still matches
-    a feature spelled "Sneak Attack (Ex)". Word-boundary containment, not
-    substring, so "feat" never matches inside "defeat". An empty name on
-    either side never matches (B10c-mand8: bidirectional containment
-    replaces the earlier one-way `startswith` prefix test, which
-    required the FEATURE name to be the shorter of the two even though
-    the prompt correctly names features from the printed headings)."""
+    (likewise normalized). True when the feature name appears in the token
+    as a whole-word sequence -- so "summon familiar" (the sorcerer's/
+    wizard's Special cell) matches the feature the printed Class Features
+    heading names simply "Familiar" -- UNLESS one of the token's leftover
+    words is a tier modifier (`_TIER_MODIFIER_WORDS`): "greater rage" must
+    NOT be satisfied by a "Rage" entry, since "Greater Rage" is its own
+    printed heading and a record missing it would otherwise validate.
+    Word-boundary containment, not substring, so "feat" never matches
+    inside "defeat"; and only THIS direction -- a feature name longer than
+    the token ("inspire courage" for a truncated cell "courage") never
+    matches, so a truncated cell still errors. An empty name on either side
+    never matches. (B10c-mand8: replaces the earlier one-way `startswith`
+    prefix test, which required the feature name to be a PREFIX of the
+    token even though the prompt correctly names features from the printed
+    headings -- "Familiar", not "Summon Familiar".)"""
     if not normalized_token or not normalized_feature_name:
         return False
-    token_words = f" {normalized_token} "
-    feature_words = f" {normalized_feature_name} "
-    return feature_words in token_words or token_words in feature_words
+    if f" {normalized_feature_name} " not in f" {normalized_token} ":
+        return False
+    token_words = normalized_token.split(" ")
+    feature_words = normalized_feature_name.split(" ")
+    # Leftover words = the token's words with ONE occurrence of the feature's
+    # word sequence removed (it is present as a whole-word run, checked above).
+    for i in range(len(token_words) - len(feature_words) + 1):
+        if token_words[i : i + len(feature_words)] == feature_words:
+            leftover = token_words[:i] + token_words[i + len(feature_words) :]
+            break
+    else:  # pragma: no cover -- unreachable given the containment check above
+        return False
+    return not any(word in _TIER_MODIFIER_WORDS for word in leftover)
 
 
 def _normalize_special_token(token: str) -> str:

@@ -487,31 +487,56 @@ def test_check_class_fields_special_ability_matches_special_abilities_feature() 
     assert not any("Special ability" in e and "no matching" in e for e in errors)
 
 
-def test_check_class_fields_longer_feature_name_still_matches_shorter_token() -> None:
+def test_check_class_fields_prefix_direction_still_matches() -> None:
     """The pre-existing direction (feature name is a prefix of the token)
-    keeps working, and so does the feature name being the LONGER one."""
+    keeps working."""
     errors = _class_with_special_and_feature("Sneak attack +1d6", "Sneak Attack (Ex)")
     assert not any("Sneak attack" in e and "no matching" in e for e in errors)
-    errors = _class_with_special_and_feature("Trapfinding", "Trapfinding (Ex) and Trap Sense")
-    assert not any("Trapfinding" in e and "no matching" in e for e in errors)
 
 
 def test_check_class_fields_containment_is_word_bounded_not_substring() -> None:
-    """Bidirectional containment must not turn into substring matching:
-    a token "Defeat" is not described by a feature named "Feat", and a
-    feature "Rage" does not cover a Special cell reading "Courage"."""
+    """Containment must not turn into substring matching: a token "Defeat"
+    is not described by a feature named "Feat", and a feature "Rage" does
+    not cover a Special cell reading "Courage"."""
     errors = _class_with_special_and_feature("Defeat", "Feat")
     assert any("Defeat" in e and "no matching class_features entry" in e for e in errors)
     errors = _class_with_special_and_feature("Courage", "Rage")
     assert any("Courage" in e and "no matching class_features entry" in e for e in errors)
 
 
-def test_special_token_matches_feature_rejects_empty_names() -> None:
+def test_check_class_fields_tiered_feature_is_not_masked_by_its_base() -> None:
+    """Review finding: a record missing the "Greater Rage"/"Improved
+    Evasion" entry must still fail -- the token's tier modifier means it
+    is its own printed heading, never covered by the base feature."""
+    errors = _class_with_special_and_feature("Greater rage", "Rage")
+    assert any("Greater rage" in e and "no matching class_features entry" in e for e in errors)
+    errors = _class_with_special_and_feature("Improved evasion", "Evasion")
+    assert any("Improved evasion" in e and "no matching" in e for e in errors)
+    errors = _class_with_special_and_feature("Improved uncanny dodge", "Uncanny Dodge")
+    assert any("Improved uncanny dodge" in e and "no matching" in e for e in errors)
+
+
+def test_check_class_fields_longer_feature_never_covers_truncated_token() -> None:
+    """A truncated Special cell ("Courage" for "Inspire courage +2", "Rage"
+    when only "Greater Rage" was recorded) still errors: only the
+    token-contains-feature direction matches."""
+    errors = _class_with_special_and_feature("Courage", "Inspire Courage")
+    assert any("Courage" in e and "no matching" in e for e in errors)
+    errors = _class_with_special_and_feature("Rage", "Greater Rage")
+    assert any("'Rage'" in e and "no matching" in e for e in errors)
+
+
+def test_special_token_matches_feature_direct_cases() -> None:
     assert not _special_token_matches_feature("", "familiar")
     assert not _special_token_matches_feature("summon familiar", "")
     assert _special_token_matches_feature("summon familiar", "familiar")
-    assert _special_token_matches_feature("familiar", "summon familiar")
+    assert _special_token_matches_feature("special ability", "special ability")
+    assert _special_token_matches_feature("bonus feat", "bonus feat")
+    assert not _special_token_matches_feature("familiar", "summon familiar")
     assert not _special_token_matches_feature("familiar spirit", "summon familiar")
+    assert not _special_token_matches_feature("greater rage", "rage")
+    assert not _special_token_matches_feature("mighty rage", "rage")
+    assert not _special_token_matches_feature("rage", "greater rage")
 
 
 def test_fold_trailing_plural_singularizes_ies_and_sibilant_es() -> None:
