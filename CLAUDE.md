@@ -562,7 +562,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   (checked against the SAME "Spells per Day `<slot>`" naming convention
   `_KIND_RULES["class"]`/`["prestige_class"]` states in the prompt) -- a
   caster class whose level table has no spells-per-day/known/points column
-  now fails validation instead of silently passing. `check_table_fields`
+  now fails validation instead of silently passing. B10c-mand10 adds, for a
+  `class_type: "base"` caster only: when the table's "Spells per Day
+  <slot>" columns reach 5th-level spells or higher, a "Spells per Day 0"
+  column must also be present (`_spell_slot_levels`; paladin/ranger top
+  out at 4th and have none) -- the real-corpus miss this catches is the
+  cleric's Table 3-6, whose orisons column the text layer dropped
+  entirely while every 1st..9th column was present. `check_table_fields`
   (B10c-mand4) also checks, per column, that cells with no printed value
   are all written the SAME way -- either every one blank (`""`) or every
   one a dash placeholder (`"—"`, `"–"`, `"-"`, `"--"`, or the Unicode minus

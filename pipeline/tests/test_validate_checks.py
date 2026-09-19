@@ -897,6 +897,51 @@ def test_check_class_fields_flags_caster_without_spells_feature() -> None:
     assert any("no 'Spells' entry" in e for e in errors)
 
 
+def _caster_record_with_slots(slots: list[str], class_type: str = "base") -> list[str]:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["class_type"] = class_type
+    record["fields"]["spellcasting"] = {
+        "kind": "divine",
+        "ability": "Wis",
+        "type": "prepared",
+        "spell_list": "Anything At All",
+    }
+    record["fields"]["class_features"].append(
+        {"name": "Spells", "level": 1, "text_md": "A testclass casts divine spells."}
+    )
+    table = _valid_table_record()
+    for slot in slots:
+        table["fields"]["columns"].append(f"Spells per Day {slot}")
+        for row in table["fields"]["rows"]:
+            row.append("1")
+    return check_class_fields(record, _context({table["id"]: table}))
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand10: a base caster reaching 5th-level spells must carry a
+# "Spells per Day 0" column (the cleric's dropped-orisons-column miss).
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_cleric_shaped_table_missing_level_0_column_fails() -> None:
+    errors = _caster_record_with_slots(["1st", "2nd", "3rd", "4th", "5th", "6th"])
+    assert any("has no 'Spells per Day 0' column" in e and "6th-level" in e for e in errors)
+
+
+def test_check_class_fields_full_caster_with_level_0_column_passes() -> None:
+    assert _caster_record_with_slots(["0", "1st", "2nd", "3rd", "4th", "5th"]) == []
+
+
+def test_check_class_fields_half_caster_topping_out_at_4th_needs_no_level_0() -> None:
+    """Paladin/ranger shape: 1st-4th only, no 0 column, is correct."""
+    assert _caster_record_with_slots(["1st", "2nd", "3rd", "4th"]) == []
+
+
+def test_check_class_fields_level_0_rule_skips_non_base_class_type() -> None:
+    errors = _caster_record_with_slots(["1st", "2nd", "3rd", "4th", "5th"], class_type="npc")
+    assert not any("Spells per Day 0" in e for e in errors)
+
+
 def test_check_class_fields_caster_with_spells_feature_passes() -> None:
     record = copy.deepcopy(_valid_class_record())
     record["fields"]["spellcasting"] = {
