@@ -894,3 +894,112 @@ def test_orphan_absorption_guard_uses_true_total_not_group_only_baseline() -> No
 
     result = _absorb_orphan_blocks([group], [leftover])
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Narrow single-glyph table columns (step 1): a numeric column whose every
+# cell is one digit, e.g. the PHB p.56 wizard table's "Spells per Day" 0 and
+# 1st columns.
+# ---------------------------------------------------------------------------
+
+
+def _wizard_table_column_block(
+    x_min: float, x_max: float, cells: list[str], *, y_start: float = 547.3
+) -> str:
+    # The real PHB p.56 geometry of one class-table column block: one line
+    # (one word) per level row, glyph height 6.4 at a 9.8 row pitch, with
+    # the column's own -- frequently very narrow -- x extent.
+    glyph_height = 6.4
+    row_pitch = 9.8
+    lines = []
+    for index, text in enumerate(cells):
+        y = y_start + index * row_pitch
+        lines.append(
+            f"""
+            <line xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{y + glyph_height}">
+              <word xMin="{x_min}" yMin="{y}" xMax="{x_max}" yMax="{y + glyph_height}">{text}</word>
+            </line>
+            """
+        )
+    y_max = y_start + (len(cells) - 1) * row_pitch + glyph_height
+    return f"""
+    <flow>
+      <block xMin="{x_min}" yMin="{y_start}" xMax="{x_max}" yMax="{y_max}">
+        {"".join(lines)}
+      </block>
+    </flow>
+    """
+
+
+#: The real x extents and cell values of six of PHB p.56 (Table 3-18: The
+#: Wizard)'s column blocks, levels 2nd-6th: Level, Base Attack Bonus, Will
+#: Save, then the "Spells per Day" 0, 1st, and 2nd columns. The 0 and 1st
+#: columns' cells are each a single digit, ~5 units wide against a 6.4-unit
+#: glyph height.
+_WIZARD_TABLE_COLUMNS = [
+    (34.2, 49.2, ["2nd", "3rd", "4th", "5th", "6th"]),
+    (70.5, 94.7, ["+1", "+1", "+2", "+2", "+3"]),
+    (181.8, 194.3, ["+3", "+3", "+4", "+4", "+5"]),
+    (301.3, 306.5, ["4", "4", "4", "4", "4"]),
+    (330.0, 334.8, ["2", "2", "3", "3", "3"]),
+    (356.3, 364.3, ["—", "1", "2", "2", "3"]),
+]
+
+
+def test_single_glyph_numeric_column_is_not_dropped_as_vertical(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand9, PHB p.56 "Table 3-18: The
+    # Wizard"): the "Spells per Day" 0 and 1st column blocks hold nothing
+    # but single digits, each of which is taller than it is wide -- so the
+    # old `all(line.height > line.width)` test read the whole block as
+    # rotated marginalia and dropped it from the page, losing the leading
+    # spells-per-day cells of every level row (see step 1).
+    blocks_xml = "".join(
+        _wizard_table_column_block(x_min, x_max, cells)
+        for x_min, x_max, cells in _WIZARD_TABLE_COLUMNS
+    )
+    page = _parse_page(tmp_path, "wizard_table.html", blocks_xml)
+
+    # The two digit-only columns' every line really is taller than it is
+    # wide (this is the geometry that used to trigger the drop) -- they are
+    # still not vertical text.
+    digit_columns = [page.blocks[3], page.blocks[4]]
+    for block in digit_columns:
+        assert all(line.height > line.width for line in block.lines)
+        assert is_vertical_block(block) is False
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1, [tg.rows for tg in table_groups]
+    group = table_groups[0]
+    assert [row.cells for row in group.rows] == [
+        ["2nd", "+1", "+3", "4", "2", "—"],
+        ["3rd", "+1", "+3", "4", "2", "1"],
+        ["4th", "+2", "+4", "4", "3", "2"],
+        ["5th", "+2", "+4", "4", "3", "2"],
+        ["6th", "+3", "+5", "4", "3", "3"],
+    ]
+
+
+def test_multi_character_rotated_line_is_still_vertical(tmp_path: Path) -> None:
+    # The other side of the same rule: a block whose lines have real
+    # multi-character text that is nonetheless taller than it is wide is a
+    # rotated page-edge tab, and still excluded (step 1). A single-glyph
+    # line mixed in with it (poppler occasionally splits one off) does not
+    # rescue it.
+    tab = """
+    <flow>
+      <block xMin="587.7" yMin="145.4" xMax="599.5" yMax="215.0">
+        <line xMin="587.7" yMin="145.4" xMax="599.5" yMax="210.8">
+          <word xMin="587.7" yMin="145.4" xMax="599.5" yMax="210.8">CHAPTER 3:</word>
+        </line>
+        <line xMin="587.7" yMin="211.0" xMax="599.5" yMax="215.0">
+          <word xMin="587.7" yMin="211.0" xMax="599.5" yMax="215.0">3</word>
+        </line>
+      </block>
+    </flow>
+    """
+    page = _parse_page(tmp_path, "rotated_tab.html", _block(34, 40, 580, 400, "BODY") + tab)
+
+    assert is_vertical_block(page.blocks[1]) is True
+    assert [_block_text(item) for item in order_blocks(page)] == ["BODY"]

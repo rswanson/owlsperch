@@ -2,15 +2,28 @@
 
 Algorithm (per page):
 
-1. **Drop vertical/rotated blocks.** A block all of whose lines are taller
-   than they are wide (`line.height > line.width` for every line) is glyph
-   text rotated 90 degrees -- in practice, a page-edge chapter/section tab
+1. **Drop vertical/rotated blocks.** A block all of whose *judged* lines
+   are taller than they are wide (`line.height > line.width`) is glyph text
+   rotated 90 degrees -- in practice, a page-edge chapter/section tab
    printed sideways in the margin. These carry no reading-order position
    relative to the body columns, so they are excluded from the output
    entirely rather than assigned to a column. (The caller -- see
    `owlsperch.text.runner` -- separately counts how many blocks this drops,
    since the same rule also discards image credits like "Illus. by ...",
    and that loss is otherwise invisible.)
+
+   Only lines of at least `VERTICAL_MIN_LINE_CHARS` (2) characters are
+   judged, and a block with no line long enough to judge is never dropped:
+   a *single* glyph is taller than it is wide in ordinary horizontal text
+   too, so a one-character line carries no orientation evidence at all.
+   Without that gate, a narrow class-table column whose every cell is one
+   digit -- PHB p.56's Table 3-18: The Wizard "Spells per Day" 0 and 1st
+   columns (`4`/`2`...), p.32's Table 3-6: The Cleric 0 column (`3`/`4`...)
+   -- was read as rotated marginalia and dropped whole, silently losing the
+   leading spells-per-day cell of every level row (and, on p.32, the `0`
+   column header too). A sibling column holding an em dash, or two-glyph
+   cells like `+1`, was wider than tall and so never affected, which is why
+   only the leftmost spell columns went missing.
 
 1a. **Exclude prose-like blocks from table grouping.** A three (or more)
     -column prose layout (e.g. the PHB spell chapter) looks, block by
@@ -233,6 +246,12 @@ from owlsperch.text.bbox import Block, Line, Page, Word
 #: break (a full-width table or heading) rather than clustered into a column.
 WIDE_BLOCK_FRACTION = 0.6
 
+#: A line needs at least this many characters for its own width-vs-height
+#: shape to be evidence of rotated text (see step 1 and
+#: `is_vertical_block`): a single glyph -- a digit in a narrow numeric table
+#: column, say -- is taller than it is wide whichever way the text runs.
+VERTICAL_MIN_LINE_CHARS = 2
+
 #: Column-clustering threshold, as a multiple of the run's median word
 #: glyph height: a block starts a new column when the horizontal gap from
 #: the current column's rightmost extent so far is at least this wide (see
@@ -333,11 +352,17 @@ TABLE_MERGE_GAP_HEIGHT_FACTOR = 2.0
 def is_vertical_block(block: Block) -> bool:
     """Whether `block` is rotated/vertical text (see module docstring, step 1).
 
-    A block with no lines is not considered vertical (nothing to judge).
+    Only lines with at least `VERTICAL_MIN_LINE_CHARS` characters are judged:
+    a one-character line (e.g. a table cell holding the single digit `4`) is
+    taller than it is wide in ordinary horizontal text too, so it carries no
+    orientation evidence at all (see step 1). A block with no line long
+    enough to judge -- like a block with no lines -- is not considered
+    vertical.
     """
-    if not block.lines:
+    judged = [line for line in block.lines if len(line.text.strip()) >= VERTICAL_MIN_LINE_CHARS]
+    if not judged:
         return False
-    return all(line.height > line.width for line in block.lines)
+    return all(line.height > line.width for line in judged)
 
 
 def _is_prose_like_block(block: Block) -> bool:
