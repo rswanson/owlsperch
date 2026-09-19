@@ -507,7 +507,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   commas OUTSIDE parentheses only, so `"Wild shape (Huge elemental,
   2/day), Venom immunity"` yields two tokens, not three -- a stray
   unbalanced `)` clamps depth at 0 rather than swallowing the rest of the
-  cell) matches a `class_features[].name` by prefix, checked ONCE per
+  cell) matches a `class_features[].name` when the normalized feature
+  name appears in the token as a whole-word sequence -- prefix, suffix,
+  or infix, never substring, and never the reverse direction -- UNLESS
+  one of the token's leftover words is a tier modifier (greater/
+  improved/lesser/mighty/tireless/superior/mass/advanced,
+  `_TIER_MODIFIER_WORDS`), so "Greater rage" is never satisfied by a
+  bare "Rage" entry (B10c-mand8 -- `_special_token_matches_feature`;
+  replaces a one-way prefix test that required the feature name to be
+  a PREFIX of the token, which is what left "Summon familiar" vs the
+  printed heading "Familiar" unmatched and kept sorcerer/wizard/rogue
+  in `human/`), checked ONCE per
   normalized token across the WHOLE level table rather than once per row
   -- a repeated progression ("1st favored enemy"/"2nd favored enemy"/...,
   "Inspire courage +2"/"+3"/"+4") is one required `class_features` entry,
@@ -534,9 +544,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   yet, since that's simply not extracted yet, not wrong. Batch B10c-mand3
   (Part 3): `_normalize_special_token` (shared by the Special/
   `class_features[].name` prefix match above) strips every parenthetical,
-  a trailing numeric bonus (`+N`, `+NdN`), and folds a trailing plural "s"
-  per word (skipping words ending `ss`/`us`/`is`, so "bonus"/"class"
-  survive) before the `startswith` comparison -- so a Special cell reading
+  a trailing numeric bonus (`+N`, `+NdN`), and singularizes each word
+  (`_fold_trailing_plural`: `ies` -> `y`, a sibilant-stem `es` dropped,
+  else a trailing "s" stripped, skipping words ending `ss`/`us`/`is`, so
+  "bonus"/"class" survive; the `ies`/`es` rules are B10c-mand8, so
+  "Special Abilities" and "Special ability" both normalize to "special
+  ability") before the containment comparison -- so a Special cell reading
   "Bonus feat" matches a `class_features` entry spelled "Bonus Feats" (the
   fighter's own printed heading) without the record having to misspell the
   feature to validate; B10c-mand4 additionally strips a leading ordinal

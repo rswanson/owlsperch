@@ -422,15 +422,75 @@ _TRAILING_DISTANCE_RE = re.compile(r"\d+\s*(?:ft\.?|feet)\.?\s*$", re.IGNORECASE
 
 
 def _fold_trailing_plural(word: str) -> str:
-    """Strip a trailing plural "s" from `word`, except when it ends in
-    "ss", "us", or "is" (so "bonus", "class", "this" survive unfolded).
-    Used by `_normalize_special_token` (B10c-mand3 Part 3a) to make
-    Special-cell/`class_features[].name` matching plural-insensitive: the
-    fighter's printed feature heading is "Bonus Feats:" but its own
-    Special cell reads "Bonus feat"."""
+    """Singularize `word` for matching purposes: "ies" -> "y" ("abilities"
+    -> "ability"), a sibilant-stem "es" is dropped ("classes" -> "class",
+    "boxes" -> "box"), otherwise a trailing plural "s" is stripped except
+    when the word ends in "ss", "us", or "is" (so "bonus", "class", "this"
+    survive unfolded). Used by `_normalize_special_token` (B10c-mand3 Part
+    3a) to make Special-cell/`class_features[].name` matching
+    plural-insensitive: the fighter's printed feature heading is "Bonus
+    Feats:" but its own Special cell reads "Bonus feat"; the rogue's is
+    "Special Abilities:" against a Special cell reading "Special ability"
+    (B10c-mand8 -- the naive "strip one s" fold left "abilitie" vs
+    "ability" unmatched, which is what kept the rogue in `human/`)."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("es") and word[:-2].endswith(("ss", "x", "z", "ch", "sh")):
+        return word[:-2]
+    # Known gap: an "-oes" plural ("heroes") falls through to the plain
+    # strip below and yields "heroe" -- harmless for matching, since both
+    # sides go through the same fold, and no 3.5e class feature is named
+    # that way.
     if word.endswith("s") and not word.endswith(("ss", "us", "is")):
         return word[:-1]
     return word
+
+
+#: Words that mark a TIERED class feature sharing its stem with a lesser
+#: one -- "Greater Rage"/"Rage", "Improved Evasion"/"Evasion", "Improved
+#: Uncanny Dodge"/"Uncanny Dodge", "Mighty Rage", "Tireless Rage". Each of
+#: these is its own printed Class Features heading, so a Special token
+#: carrying one of them must match a `class_features` entry of its own;
+#: `_special_token_matches_feature` refuses to let it fall through to the
+#: base feature's entry (B10c-mand8 review finding).
+_TIER_MODIFIER_WORDS = frozenset(
+    {"greater", "improved", "lesser", "mighty", "tireless", "superior", "mass", "advanced"}
+)
+
+
+def _special_token_matches_feature(normalized_token: str, normalized_feature_name: str) -> bool:
+    """Whether a level table's Special-column token (already through
+    `_normalize_special_token`) is described by a `class_features[].name`
+    (likewise normalized). True when the feature name appears in the token
+    as a whole-word sequence -- so "summon familiar" (the sorcerer's/
+    wizard's Special cell) matches the feature the printed Class Features
+    heading names simply "Familiar" -- UNLESS one of the token's leftover
+    words is a tier modifier (`_TIER_MODIFIER_WORDS`): "greater rage" must
+    NOT be satisfied by a "Rage" entry, since "Greater Rage" is its own
+    printed heading and a record missing it would otherwise validate.
+    Word-boundary containment, not substring, so "feat" never matches
+    inside "defeat"; and only THIS direction -- a feature name longer than
+    the token ("inspire courage" for a truncated cell "courage") never
+    matches, so a truncated cell still errors. An empty name on either side
+    never matches. (B10c-mand8: replaces the earlier one-way `startswith`
+    prefix test, which required the feature name to be a PREFIX of the
+    token even though the prompt correctly names features from the printed
+    headings -- "Familiar", not "Summon Familiar".)"""
+    if not normalized_token or not normalized_feature_name:
+        return False
+    if f" {normalized_feature_name} " not in f" {normalized_token} ":
+        return False
+    token_words = normalized_token.split(" ")
+    feature_words = normalized_feature_name.split(" ")
+    # Leftover words = the token's words with ONE occurrence of the feature's
+    # word sequence removed (it is present as a whole-word run, checked above).
+    for i in range(len(token_words) - len(feature_words) + 1):
+        if token_words[i : i + len(feature_words)] == feature_words:
+            leftover = token_words[:i] + token_words[i + len(feature_words) :]
+            break
+    else:  # pragma: no cover -- unreachable given the containment check above
+        return False
+    return not any(word in _TIER_MODIFIER_WORDS for word in leftover)
 
 
 def _normalize_special_token(token: str) -> str:
@@ -736,14 +796,15 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
                     seen_tokens[normalized_token] = (level, token)
 
         # A feature name that normalizes to the empty string (e.g. a
-        # stray "(Ex)") is skipped here -- `"anything".startswith("")` is
-        # always true and would make every distinct token match vacuously.
+        # stray "(Ex)") is rejected by `_special_token_matches_feature`
+        # itself -- an empty name would otherwise be contained in every
+        # token and make every distinct token match vacuously.
         normalized_feature_names = [
             _normalize_special_token(feature_name) for feature_name, _level, _f in feature_entries
         ]
         for normalized_token, (level, token) in seen_tokens.items():
             matched = any(
-                normalized_feature_name and normalized_token.startswith(normalized_feature_name)
+                _special_token_matches_feature(normalized_token, normalized_feature_name)
                 for normalized_feature_name in normalized_feature_names
             )
             if not matched:
