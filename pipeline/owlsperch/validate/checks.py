@@ -357,6 +357,29 @@ def _parse_level_cell(cell: str) -> int | None:
 #: `check_class_fields`.
 _SPELL_COLUMN_RE = re.compile(r"per day|known|points", re.IGNORECASE)
 
+#: The slot ordinal at the end of a "Spells per Day <slot>" column header:
+#: "0" or "1st".."9th" -- used by `_spell_slot_levels` (B10c-mand10).
+_SPELL_SLOT_RE = re.compile(r"per day\s+(\d+)(?:st|nd|rd|th)?\s*$", re.IGNORECASE)
+
+#: A base caster whose per-day progression reaches this spell level (or
+#: higher) is a full caster with cantrips/orisons in 3.5e, so its level
+#: table MUST also carry a level-0 spells-per-day column. Paladins and
+#: rangers top out at 4th and have no 0-level column; bards (6th),
+#: clerics, druids, sorcerers and wizards (9th) all do.
+_SPELL_LEVEL_REQUIRING_ZERO_COLUMN = 5
+
+
+def _spell_slot_levels(columns: list[Any]) -> set[int]:
+    """The spell levels named by a level table's "Spells per Day <slot>"
+    columns -- {0, 1, 2, ...} -- ignoring any other column."""
+    levels: set[int] = set()
+    for column in columns:
+        if isinstance(column, str):
+            match = _SPELL_SLOT_RE.search(column)
+            if match:
+                levels.add(int(match.group(1)))
+    return levels
+
 
 def _find_column(columns: list[Any], keyword: str) -> int | None:
     """Index of the first column whose header contains `keyword`
@@ -686,6 +709,23 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
             f"{name}: spellcasting is set but level_table {level_table_id!r} has no "
             f"spells-per-day/known column (columns: {columns!r})"
         )
+
+    # B10c-mand10: a base caster whose per-day progression reaches 5th-level
+    # spells has 0-level spells too, so its table must carry the "Spells per
+    # Day 0" column -- the real-corpus miss this catches is the cleric
+    # (Table 3-6) whose orisons column the text layer dropped entirely, which
+    # no other check noticed since the 1st..9th columns were all present.
+    if isinstance(spellcasting, dict) and fields.get("class_type") == "base":
+        slot_levels = _spell_slot_levels(columns)
+        if (
+            slot_levels
+            and max(slot_levels) >= _SPELL_LEVEL_REQUIRING_ZERO_COLUMN
+            and 0 not in slot_levels
+        ):
+            errors.append(
+                f"{name}: level_table {level_table_id!r} reaches {max(slot_levels)}th-level "
+                f"spells per day but has no 'Spells per Day 0' column (columns: {columns!r})"
+            )
 
     level_idx = _find_column(columns, "level")
     bab_idx = _find_column(columns, "attack")
