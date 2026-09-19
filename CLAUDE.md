@@ -229,6 +229,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   and poppler's bbox output carries no font signal to distinguish them --
   so this pass does not try to strip them; that stays the extraction
   prompt's "drop a Special token with no printed feature heading" rule.
+  Batch B10c-mand9 fixes the rotated-block test (step 1) that used to drop
+  a class table's narrow spells-per-day columns: `is_vertical_block` now
+  judges only lines of at least `VERTICAL_MIN_LINE_CHARS` (2) characters and
+  never drops a block with no line long enough to judge, since a SINGLE
+  glyph is taller than it is wide in horizontal text too. A column whose
+  every cell is one digit (PHB p.56 Table 3-18: The Wizard's "Spells per
+  Day" 0 and 1st columns, p.32 Table 3-6: The Cleric's 0 column) was
+  therefore read as sideways marginalia and dropped whole, losing each
+  level row's leading spell cell (and p.32's `0` header); sibling columns
+  holding an em dash or a two-glyph `+1` were wider than tall and never
+  affected, which is why only the leftmost spell columns went missing.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size

@@ -740,3 +740,54 @@ def test_phb_page_32_cleric_table_reassembles_corpus() -> None:
         footnote_lines = [line for line in lines if footnote_text in line]
         assert len(footnote_lines) == 1, footnote_lines
         assert "\t" not in footnote_lines[0], footnote_lines[0]
+
+
+@pytest.mark.corpus
+def test_phb_class_table_leading_spell_cells_corpus() -> None:
+    """Regression for B10c-mand9: a class table's narrow "Spells per Day"
+    columns whose cells are each a single digit (PHB p.56's Table 3-18: The
+    Wizard 0/1st columns, p.32's Table 3-6: The Cleric 0 column) used to be
+    dropped wholesale as rotated marginalia, since a lone digit is taller
+    than it is wide (see `owlsperch.text.columns`'s module docstring, step
+    1). Those cells must survive."""
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+
+    entries = load_manifest(default_manifest_path())
+    book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(32, 32)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(56, 56)) == 0
+
+        # The wizard table's 2nd-level row: its Will save (+3) is followed
+        # by the 0-level and 1st-level spells-per-day cells (4 and 2).
+        wizard_lines = (data_dir / "text" / book_id / "p0056.txt").read_text().splitlines()
+        row_2nd = next((line for line in wizard_lines if line.startswith("2nd\t")), None)
+        assert row_2nd is not None, wizard_lines
+        cells = row_2nd.split("\t")
+        will_index = cells.index("+3")
+        assert cells[will_index + 1 : will_index + 3] == ["4", "2"], row_2nd
+
+        # The cleric table's header keeps its "0" spells-per-day column,
+        # and the 1st-level row's 0-level count (3) precedes its 1st-level
+        # count (1+1).
+        cleric_lines = (data_dir / "text" / book_id / "p0032.txt").read_text().splitlines()
+        header = next((line for line in cleric_lines if "\tSpecial\t" in line), None)
+        assert header is not None, cleric_lines
+        header_cells = header.split("\t")
+        special_index = header_cells.index("Special")
+        assert header_cells[special_index + 1 : special_index + 3] == ["0", "1st"], header
+        row_1st = next((line for line in cleric_lines if line.startswith("1st\t")), None)
+        assert row_1st is not None, cleric_lines
+        cleric_cells = row_1st.split("\t")
+        assert cleric_cells[cleric_cells.index("1+1") - 1] == "3", row_1st
