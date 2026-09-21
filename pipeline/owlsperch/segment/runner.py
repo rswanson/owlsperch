@@ -128,6 +128,23 @@ Per book:
    unchanged (its text may still hold the same grid -- the extraction
    prompt's pre-heading attribution rule resolves that, as it already does
    for every other shared-page overlap).
+11. (Batch B10c-mand21) The same end cap also strands a class's own
+   class-structural TAIL sections. On the real PHB p0040 the fighter's own
+   "Dwarf Fighter Starting Package" CONTINUES past "MONK" (its Feat:/Bonus
+   Feat:/Gear:/Gold: lines) and its whole "Human Fighter Starting Package"
+   is printed after that heading too, so both were in no record at all. So
+   `_class_own_tail_indices` scans the same bounded window
+   `[end_index, page_cap_index)` and adds back (a) any run headed by a
+   class-structural heading NAMING this class ("<Race> <Title> Starting
+   Package", "Ex-<Title>" -- `owlsperch.supersede.is_class_owned_fragment`,
+   minus the three generic headings every class prints), up to the next
+   printed heading, and (b) the continuation of a Starting Package section
+   the cut fell inside (the cut heading itself does not close it; every
+   other heading does). Only package-shaped paragraphs are collected -- a
+   label-led run-in or a grid -- so the next class's interleaved body prose
+   is skipped rather than ending the run, and a different class's own
+   structural heading ("Human Monk Starting Package") stays out entirely.
+   As in point 10, the next class's own start index is unchanged.
 """
 
 from __future__ import annotations
@@ -150,7 +167,7 @@ from owlsperch.manifest import (
     status_for,
 )
 from owlsperch.segment.anchors import Kind
-from owlsperch.segment.headings import Paragraph, compute_body_median
+from owlsperch.segment.headings import Paragraph, compute_body_median, is_heading
 from owlsperch.segment.splitter import KindHint, RawSegment, build_segments
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import load_toc
@@ -742,6 +759,207 @@ def _class_own_table_indices(
     return frozenset(extra)
 
 
+#: The normalized tail of a "<Race> <Title> Starting Package" heading --
+#: the same literal `owlsperch.supersede` matches on, in the same
+#: `normalize_heading` form (punctuation and whitespace deleted).
+_STARTING_PACKAGE_TAIL = "startingpackage"
+
+#: A Starting Package BODY paragraph's own first line: the PHB prints every
+#: one of them as a run of short printed labels ("Armor: ...", "Weapons:
+#: ...", "Skill Selection: ...", "Feat: ...", "Gear: ...", "Gold: ..."),
+#: never as ordinary prose. A generic label test rather than an enumerated
+#: list, so a package printing an unexpected label still matches; ordinary
+#: body prose ("Dotted across the landscape are monasteries -- small,
+#: walled cloisters ...") has no such early colon, and keeping it out is
+#: exactly what this is for (see `_class_own_tail_indices`).
+_PACKAGE_BODY_LABEL_RE = re.compile(r"^[A-Z][A-Za-z’'()\- ]{0,28}:")
+
+#: A class LEVEL table's own header row ("Level<TAB>Attack Bonus<TAB>..."),
+#: in the tab-joined form `owlsperch.text.columns` writes a grid as. WHICH
+#: class a stranded level table belongs to is decided by its printed
+#: caption, in `_class_own_table_indices` (B10c-mand18), so the tail pass
+#: below never collects one on its own: a neighbouring class's level table
+#: routinely lands in the same window (the real PHB's rogue table inside
+#: the ranger's window, its wizard table inside the sorcerer's).
+_LEVEL_TABLE_ROW_RE = re.compile(r"^[ \t]*Level\t", re.MULTILINE)
+
+
+def _is_level_table_paragraph(text: str) -> bool:
+    return _LEVEL_TABLE_ROW_RE.search(text) is not None
+
+
+#: Every printed Starting Package ends with its own "Gold: NdN gp." line
+#: (run into the end of its last paragraph), which is what BOUNDS a
+#: collected package run in `_class_own_tail_indices`: without it, the NEXT
+#: class's own package body paragraphs -- which reading order routinely
+#: prints BEFORE that class's own package heading on a shared page, the
+#: same bleed `_back_extend_start_index` documents -- would be collected as
+#: this class's continuation.
+_GOLD_LABEL_RE = re.compile(r"\bGold:")
+
+
+def _first_line(text: str) -> str:
+    """A paragraph's first non-blank line (a printed heading is always a
+    single line, so this is the line every heading test below reads)."""
+    for line in text.strip().splitlines():
+        if line.strip():
+            return line
+    return ""
+
+
+def _is_package_body_paragraph(text: str) -> bool:
+    """Whether a paragraph looks like part of a printed Starting Package's
+    BODY -- a label-led run-in paragraph (`_PACKAGE_BODY_LABEL_RE`) or the
+    package's own printed skill grid."""
+    return _is_table_paragraph(text) or bool(_PACKAGE_BODY_LABEL_RE.match(_first_line(text)))
+
+
+def _is_own_starting_package_heading(text: str, class_title: str) -> bool:
+    """Whether a paragraph's own heading line is one of THIS class's
+    printed "<Race> <Title> Starting Package" headings."""
+    from owlsperch.supersede import (  # lazy: see `_supersede_segments_in_span`.
+        is_class_owned_fragment,
+        normalize_heading,
+    )
+
+    first = _first_line(text)
+    if not normalize_heading(first).endswith(_STARTING_PACKAGE_TAIL):
+        return False
+    return is_class_owned_fragment(first, "rules_section", class_title)
+
+
+def _is_own_class_structural_heading(text: str, class_title: str) -> bool:
+    """Whether a paragraph's own heading line is a class-structural heading
+    that NAMES this class -- "<Race> <Title> Starting Package",
+    "Ex-<Title>", or the class title itself (`owlsperch.supersede.
+    is_class_owned_fragment`, the same predicate the supersede pass scopes
+    itself by).
+
+    The three GENERIC class-structural headings every class prints ("Game
+    Rule Information", "Class Skills", "Class Features") are deliberately
+    excluded here: past this class's own end cap they are, if anything, the
+    NEXT class's, and nothing in their wording says otherwise."""
+    from owlsperch.supersede import (  # lazy: see `_supersede_segments_in_span`.
+        CLASS_STRUCTURAL_HEADINGS,
+        is_class_owned_fragment,
+        normalize_heading,
+    )
+
+    first = _first_line(text)
+    if normalize_heading(first) in CLASS_STRUCTURAL_HEADINGS:
+        return False
+    return is_class_owned_fragment(first, "rules_section", class_title)
+
+
+def _class_own_tail_indices(
+    paragraphs: list[Paragraph],
+    *,
+    heading: str,
+    text_start_index: int,
+    end_index: int,
+    page_cap_index: int,
+    body_median: float,
+) -> frozenset[int]:
+    """B10c-mand21: the indices of THIS class's own class-structural TAIL
+    sections sitting at or past its end cap, which would otherwise be lost
+    from its text entirely -- the same rescue `_class_own_table_indices`
+    performs for a stranded level table, applied to the sections a printed
+    class entry ends with.
+
+    The real PHB p0040's paragraph order is [0] "Table 3-9: The Fighter",
+    [1] "MONK" (the next class's heading, and so the fighter's end cap),
+    [2] the fighter's own level grid, [3] the CONTINUATION of the fighter's
+    own "Dwarf Fighter Starting Package" (its Feat:/Bonus Feat:/Gear:/Gold:
+    lines -- that section's heading and first paragraph are back on p0039,
+    inside the span), [4] "Human Fighter Starting Package", [5]/[7]/[8]
+    that package's own body, skill grid and Feat:/Gear:/Gold: lines, with
+    the monk's own opening flavor prose printed in between at [6].
+    Everything from [3] on was in no record at all: `class:phb1:fighter`
+    had half a Dwarf Fighter Starting Package and no Human one.
+
+    So, over the same bounded window `[end_index, page_cap_index)`
+    `_class_own_table_indices` uses (never past the span's own D2-extended
+    page range), this adds back:
+
+    (a) any paragraph run headed by a class-structural heading NAMING this
+        class (`_is_own_class_structural_heading`): the heading itself plus
+        the package-body paragraphs after it (`_is_package_body_paragraph`),
+        ending at this class's own printed "Gold: NdN gp." line or the next
+        printed heading, whichever comes first (an "Ex-<Title>" run, which
+        prints no such line, ends at the next heading). A DIFFERENT class's
+        own structural heading ("Human Monk Starting Package") never starts
+        a run, and closes an open one, so it and its body stay out.
+    (b) the CONTINUATION of a section the cut fell inside: when the last
+        printed heading before the cut, within this span's own text, is one
+        of this class's own Starting Package headings, collection starts
+        open at the window's first paragraph and is bounded the same way --
+        up to AND INCLUDING the first paragraph carrying a `Gold:` label.
+        The cut heading itself (the next class's own, at exactly
+        `end_index`) is what stranded that continuation, so it alone does
+        not close the run; every other heading in the window does.
+
+    That `Gold:` bound is what keeps a run from running on into the NEXT
+    class's own package body paragraphs, which reading order routinely
+    prints BEFORE that class's own package heading on a shared page (the
+    same bleed `_back_extend_start_index` documents).
+
+    Only package-shaped paragraphs are collected -- a label-led run-in or a
+    grid -- so non-package prose inside a run, e.g. the next class's own
+    opening flavor prose, which reading order interleaves with the package
+    on the shared page, is SKIPPED rather than ending the run (the real
+    p0040's [6]: skipping it, instead of stopping there, is what still
+    brings [7]-[8], the rest of the Human Fighter package, back, up to its
+    own Gold line). A class LEVEL table (`_is_level_table_paragraph`) is
+    never collected here -- which class a stranded one belongs to is
+    decided by its printed caption in `_class_own_table_indices`, and a
+    neighbouring class's routinely lands in this window (the real PHB's
+    rogue table inside the ranger's window, its wizard table inside the
+    sorcerer's). A paragraph that is a class's own opening flavor run-in
+    (`_is_class_flavor_paragraph`, which B10c-mand6 deliberately gives to
+    exactly one class) is never collected either.
+
+    As with `_class_own_table_indices`, the NEXT class's own start index is
+    deliberately unchanged: its back-extended text may still contain these
+    paragraphs, and the extraction prompt's own pre-heading attribution
+    rule resolves that the way it already does for every other shared-page
+    overlap."""
+    if end_index >= page_cap_index:
+        return frozenset()
+
+    # (b) Does the cut fall INSIDE one of this class's own Starting Package
+    # sections? -- i.e. is the last printed heading before it, within this
+    # span's own text, that section's own heading?
+    collecting = False
+    gold_bounded = False
+    for i in range(end_index - 1, text_start_index - 1, -1):
+        if not is_heading(paragraphs[i], body_median):
+            continue
+        collecting = _is_own_starting_package_heading(paragraphs[i].text, heading)
+        gold_bounded = collecting
+        break
+
+    extra: set[int] = set()
+    for i in range(end_index, page_cap_index):
+        text = paragraphs[i].text
+        if is_heading(paragraphs[i], body_median):
+            if _is_own_class_structural_heading(text, heading):
+                extra.add(i)
+                collecting = True
+                gold_bounded = _is_own_starting_package_heading(text, heading)
+            elif i != end_index:
+                collecting = False
+            continue
+        if not collecting or _is_class_flavor_paragraph(text):
+            continue
+        if _is_package_body_paragraph(text) and not _is_level_table_paragraph(text):
+            extra.add(i)
+            if gold_bounded and _GOLD_LABEL_RE.search(text):
+                # The package's own printed last line -- everything after
+                # it belongs to whatever comes next, not to this run.
+                collecting = False
+    return frozenset(extra)
+
+
 @dataclass(frozen=True)
 class _ClassSpan:
     """One toc-driven class/prestige_class candidate (batch B10c, design
@@ -977,6 +1195,10 @@ def _run_class_pass(
         summary.class_note = "no toc -- no class/prestige_class segments"
         return
 
+    # Computed here rather than passed in: this pass also runs standalone
+    # (`--kinds class`), where no `build_segments` call has computed it.
+    body_median = compute_body_median(paragraphs)
+
     last_page = max(_discover_text_pages(text_dir, None), default=None)
     if last_page is None:
         return
@@ -1081,12 +1303,24 @@ def _run_class_pass(
         # "Table 3-9: The Fighter", then "MONK", then the fighter's grid),
         # leaving the class with no table at all. Pull its own table
         # paragraph(s) back in -- see `_class_own_table_indices`.
+        # B10c-mand21: the same end cap also strands this class's own
+        # class-structural TAIL sections (PHB p0040 prints the rest of the
+        # fighter's Dwarf Fighter Starting Package, and its whole Human
+        # Fighter Starting Package, after "MONK"). Pull those back in too
+        # -- see `_class_own_tail_indices`.
         extra_indices = _class_own_table_indices(
             paragraphs,
             heading=span.heading,
             text_start_index=text_start_index,
             end_index=end_index,
             page_cap_index=page_cap_index,
+        ) | _class_own_tail_indices(
+            paragraphs,
+            heading=span.heading,
+            text_start_index=text_start_index,
+            end_index=end_index,
+            page_cap_index=page_cap_index,
+            body_median=body_median,
         )
 
         _write_class_segment(
