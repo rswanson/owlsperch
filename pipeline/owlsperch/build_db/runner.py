@@ -74,14 +74,33 @@ precedence (B11) and macro eligibility (B22) are future work.
    loaded: for every `class`/`prestige_class` record, `fields.source_pages`
    (falling back to `min(pages)..max(pages)` when absent) gives its whole
    entry's pdf page span. Every `rules_section`/`table` record of the SAME
-   book whose OWN pages fall entirely inside that span is a fragment the
-   class record replaces -- it's set `canonical = 0`, `superseded_by =
+   book whose OWN pages fall entirely inside that span AND (batch
+   B10c-mand11) that the class owns BY NAME is a
+   fragment the class record replaces. Owned by name means EITHER
+   `owlsperch.supersede.is_class_owned_fragment(name, type, <class name>)`
+   -- the shared
+   predicate the segmenter's own stamp pass uses: the class name itself,
+   "Game Rule Information", "Class Skills", "Class Features",
+   "Ex-<Title>", "<Race> <Title> Starting Package", or any `table` -- OR
+   (this pass has the class RECORD in hand, unlike the segmenter) the
+   record's normalized name being one of that class record's own printed
+   headings: `_class_owned_names`, i.e. every `fields.class_features[]
+   .name`, every `fields.description_sections[].heading`, and the class's
+   own `name`. So the druid's own "Wild Shape"/"Venom Immunity"
+   `rules_section` records are superseded, while a sidebar on the same
+   pages is not. Such a record is set `canonical = 0`,
+   `superseded_by =
    <class record id>` (a `records` column derived at build time, like
    `toc_category`; no record file is ever touched). The one exception: a
    `table` record OWNED by some class (its id is in that class's own
    `tables` array, or its own `fields.parent_record` names a class/
    prestige_class record) is NEVER superseded this way -- otherwise a
    class's own progression table would disappear from its own page. A
+   printed SIDEBAR sharing a class's pages ("Familiars", "Alternative
+   Animal Companions", "The Paladin's Mount", "School Specialization", ...)
+   matches neither B10c-mand11 rule and stays canonical -- before that,
+   page span alone demoted it and it
+   existed in no canonical record at all. A
    record already superseded by an earlier class in the same pass is left
    alone (first class wins; spans aren't expected to overlap in practice).
    `run_build_db` prints how many records were superseded as one
@@ -143,6 +162,7 @@ from owlsperch.build_db.precedence import (
     write_unmatched_overrides,
 )
 from owlsperch.manifest import ManifestEntry, default_manifest_path, load_manifest, status_for
+from owlsperch.supersede import is_class_owned_fragment, normalize_heading
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import entry_for_page, load_toc
 from owlsperch.toc.parser import Toc
@@ -638,6 +658,59 @@ def _load_records(
             result.counts_by_type[type_dir] = result.counts_by_type.get(type_dir, 0) + 1
 
 
+#: Normalized flavor/section headings every class prints (B10c-mand11):
+#: never used as class-specific ownership evidence by `_class_owned_names`.
+_GENERIC_CLASS_SECTION_HEADINGS: frozenset[str] = frozenset(
+    normalize_heading(h)
+    for h in (
+        "Adventures",
+        "Characteristics",
+        "Alignment",
+        "Religion",
+        "Background",
+        "Races",
+        "Other Classes",
+        "Role",
+        "Abilities",
+        "Classes",
+        "Game Rule Information",
+        "Class Skills",
+        "Class Features",
+    )
+)
+
+
+def _class_owned_names(class_record: Mapping[str, Any]) -> set[str]:
+    """Batch B10c-mand11: the normalized (`owlsperch.supersede.
+    normalize_heading`) set of printed headings ONE class record owns by
+    name -- its own `name`, every `fields.class_features[].name`, and every
+    `fields.description_sections[].heading`. A fragment record inside the
+    class's page span whose own name is in this set is that class's own
+    printed feature/section (e.g. the druid's "Wild Shape", written by the
+    extractor as a separate `rules_section` before class records existed),
+    so it is superseded even though its heading isn't class-structural on
+    its own. Built once per class record. A parenthetical suffix the book
+    prints on a feature heading ("Wild Shape (Su)") is normalized away, so
+    it matches the record named plainly."""
+    names = {normalize_heading(str(class_record.get("name", "")))}
+    fields = class_record.get("fields")
+    if isinstance(fields, Mapping):
+        for feature in fields.get("class_features") or []:
+            if isinstance(feature, Mapping):
+                names.add(normalize_heading(str(feature.get("name", ""))))
+        for section in fields.get("description_sections") or []:
+            if isinstance(section, Mapping):
+                names.add(normalize_heading(str(section.get("heading", ""))))
+    names.discard("")
+    # Every class prints the same flavor run-in headings (Adventures,
+    # Alignment, Races, ...). A class span runs one page past its toc end,
+    # so the NEXT class's own "Alignment"/"Races" fragment on the shared
+    # page would otherwise be demoted under the PREVIOUS class's id
+    # (first class wins). Those generic headings are never class-specific
+    # evidence of ownership, so they are excluded here.
+    return names - _GENERIC_CLASS_SECTION_HEADINGS
+
+
 def _apply_superseding(conn: sqlite3.Connection) -> int:
     """Design decision D11's superseding pass, run once after every record
     is loaded: for every `class`/`prestige_class` record, mark
@@ -647,11 +720,27 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
     `min(pages)..max(pages)` when absent) -- EXCEPT a `table` record the
     class itself owns (its id in the class's own `tables` array, or its own
     `fields.parent_record` naming a class/prestige_class record of this
-    book), which must never disappear from its own class's page. A record
+    book), which must never disappear from its own class's page, and --
+    batch B10c-mand11 -- EXCEPT a record the class doesn't own by NAME.
+    Unlike the segmenter's own stamp pass, this one has the class RECORD in
+    hand, so it decides per record on either of two things: the shared
+    `owlsperch.supersede.is_class_owned_fragment(name, type, <class name>)`
+    predicate (the class title, "Game Rule Information", "Class Skills",
+    "Class Features", "Ex-<Title>", "<Race> <Title> Starting Package", or
+    any `table`), OR the record's normalized `name` appearing in that class
+    record's own printed heading set (`_class_owned_names`: every
+    `fields.class_features[].name`, every `fields.description_sections[]
+    .heading`, and the class's own `name`). So "Wild Shape" or "Venom
+    Immunity" inside the druid's span -- a class feature the druid record
+    itself describes -- is demoted, while a printed sidebar sharing the same
+    pages ("Familiars", "Alternative Animal Companions", "The Paladin's
+    Mount") stays canonical; page span alone demoted both, leaving the
+    sidebars in no canonical record at all. Every `table` in the span still
+    passes the predicate, so the table rule above is unchanged. A record
     already superseded by an earlier class is left alone. Returns how many
     records were newly superseded."""
     class_rows = conn.execute(
-        "SELECT id, book_id, json FROM records WHERE type IN ('class', 'prestige_class')"
+        "SELECT id, book_id, name, json FROM records WHERE type IN ('class', 'prestige_class')"
     ).fetchall()
 
     # Every class/prestige_class id per book, and every table id any class
@@ -660,7 +749,7 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
     # the book, not just whichever one is being processed right now.
     class_ids_by_book: dict[str, set[str]] = {}
     owned_table_ids_by_book: dict[str, set[str]] = {}
-    for class_id, book_id, class_json in class_rows:
+    for class_id, book_id, _class_name, class_json in class_rows:
         class_ids_by_book.setdefault(book_id, set()).add(class_id)
         class_record = json.loads(class_json)
         owned = class_record.get("tables")
@@ -670,7 +759,7 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
             )
 
     superseded = 0
-    for class_id, book_id, class_json in class_rows:
+    for class_id, book_id, class_name, class_json in class_rows:
         class_record = json.loads(class_json)
         class_fields = class_record.get("fields")
         source_pages = class_fields.get("source_pages") if isinstance(class_fields, dict) else None
@@ -691,14 +780,25 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
 
         owned_table_ids = owned_table_ids_by_book.get(book_id, set())
         class_ids = class_ids_by_book.get(book_id, set())
+        # B10c-mand11: built once per class record, not per candidate.
+        owned_names = _class_owned_names(class_record)
 
         candidates = conn.execute(
-            "SELECT id, type, json FROM records WHERE book_id = ? AND type IN "
+            "SELECT id, type, name, json FROM records WHERE book_id = ? AND type IN "
             "('rules_section', 'table') AND superseded_by IS NULL AND id != ?",
             (book_id, class_id),
         ).fetchall()
-        for candidate_id, candidate_type, candidate_json in candidates:
+        for candidate_id, candidate_type, candidate_name, candidate_json in candidates:
             if candidate_id in owned_table_ids:
+                continue
+            # B10c-mand11: only a fragment this class owns BY NAME is its to
+            # swallow -- class-structural, or one of its own printed
+            # feature/section headings. A sidebar sharing its pages stays
+            # canonical.
+            if (
+                not is_class_owned_fragment(candidate_name, candidate_type, class_name)
+                and normalize_heading(candidate_name) not in owned_names
+            ):
                 continue
             candidate = json.loads(candidate_json)
             if candidate_type == "table":

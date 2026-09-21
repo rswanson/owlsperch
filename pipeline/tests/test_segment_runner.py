@@ -1262,6 +1262,147 @@ def test_class_span_release_moves_a_fragments_claimed_record_to_superseded(
     assert json.loads(fragment_path.read_text()) == updated
 
 
+# ---------------------------------------------------------------------------
+# Batch B10c-mand11: the stamp pass is scoped by heading, not page span
+# alone -- a printed sidebar inside a class's own pages is left completely
+# alone (not stamped, claims not released), so its content stays canonical.
+# ---------------------------------------------------------------------------
+
+
+def _sidebar_toc_entries() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "Chapter 3: Classes",
+            "level": 1,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 3,
+            "path": ["Chapter 3: Classes"],
+            "category": "classes",
+        },
+        {
+            "title": "Barbarian",
+            "level": 2,
+            "printed_page": 2,
+            "pdf_page_start": 2,
+            "pdf_page_end": 2,
+            "path": ["Chapter 3: Classes", "Barbarian"],
+            "category": "classes",
+        },
+    ]
+
+
+def _write_sidebar_book(data_dir: Path, book_id: str = "book") -> None:
+    """One class (Barbarian, toc pdf page 2, so its span is pages 2-3 after
+    D2's one-page extension) whose span also contains page 3's printed
+    "FAMILIARS" sidebar -- the shape of the real PHB defect (the sorcerer's
+    span swallowing p0053's FAMILIARS sidebar)."""
+    _write_book(
+        data_dir,
+        book_id,
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("BARBARIAN"),
+                _para(
+                    "Hit Die: d12. A barbarian is a fierce warrior, savage and strong in "
+                    "battle here.",
+                    line_count=3,
+                ),
+                _para("CLASS SKILLS"),
+                _para(
+                    "The barbarian's class skills are listed here for every ability.", line_count=3
+                ),
+            ],
+            3: [
+                _para("FAMILIARS"),
+                _para(
+                    "A familiar is a magical beast that resembles a small animal and is "
+                    "unusually tough and intelligent.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(data_dir, book_id, _sidebar_toc_entries())
+
+
+def test_class_span_leaves_a_sidebar_segment_inside_it_live(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_sidebar_book(data_dir)
+
+    summary = segment_book(_entry("book"), data_dir=data_dir)
+
+    segments = {s["seg_id"]: s for s in _segment_files(data_dir, "book")}
+    by_heading = {s["heading"]: s for s in segments.values() if s["kind_hint"] == "rules_section"}
+
+    # Class-structural fragments inside the span are still stamped ...
+    assert by_heading["BARBARIAN"]["superseded_by"] == "book-class-p0002"
+    assert by_heading["CLASS SKILLS"]["superseded_by"] == "book-class-p0002"
+    # ... and the printed sidebar, whose pages fall entirely inside the very
+    # same span, is left completely alone.
+    familiars = by_heading["FAMILIARS"]
+    assert familiars["pages"] == [3]
+    assert familiars["superseded_by"] is None
+
+    assert summary.superseded == 2
+    assert summary.left_live == 1
+    assert "1 in-span segment(s) left live" in summary.render()
+
+
+def test_class_span_does_not_release_a_sidebar_segments_claims(tmp_path: Path) -> None:
+    """The other half of B10c-mand11: a sidebar left live keeps its own
+    record claim, and its record file is never moved into `superseded/` --
+    that move is exactly what left the real PHB's sidebars in no canonical
+    record at all."""
+    data_dir = tmp_path / "data"
+    _write_sidebar_book(data_dir)
+
+    # First pass: no toc yet, so nothing is stamped and the sidebar
+    # fragment gets its record claim the way extraction would have.
+    (data_dir / "toc" / "book.json").unlink()
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    seg_dir = data_dir / "segments" / "book"
+    sidebar_path = next(
+        p for p in seg_dir.glob("*.json") if json.loads(p.read_text())["heading"] == "FAMILIARS"
+    )
+    sidebar = json.loads(sidebar_path.read_text())
+
+    record_rel_path = "records/book/rules_section/familiars.json"
+    record_path = data_dir / record_rel_path
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "extraction": {
+                    "tier": "haiku",
+                    "model": "claude-haiku-4-5",
+                    "segment_id": sidebar["seg_id"],
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                }
+            }
+        )
+    )
+    sidebar["records"] = [record_rel_path]
+    sidebar["status"] = "done"
+    sidebar["outcome"] = "validated"
+    sidebar_path.write_text(json.dumps(sidebar))
+
+    # Now the toc appears and the class span is discovered.
+    _write_toc(data_dir, "book", _sidebar_toc_entries())
+    summary = segment_book(_entry("book"), data_dir=data_dir)
+
+    assert summary.left_live == 1
+    updated = json.loads(sidebar_path.read_text())
+    assert updated["superseded_by"] is None
+    assert updated["records"] == [record_rel_path]
+    assert updated["released_records"] == []
+    assert updated["status"] == "done"
+    assert record_path.is_file()
+    assert not (data_dir / "superseded").exists()
+
+
 def test_class_segmentation_is_additive_and_idempotent(tmp_path: Path) -> None:
     """A plain (non `--force`) rerun both leaves every existing segment's
     bookkeeping alone and doesn't re-stamp/duplicate anything (design

@@ -260,8 +260,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   existing segments), spanning the entry's own pdf pages extended ONE page
   past `pdf_page_end` (a class's last column routinely spills onto the page
   the toc assigns to the next class). Every OTHER segment whose `pages`
-  fall entirely inside that span then gets `superseded_by` stamped in
-  place (not deleted) if not already set. This whole pass is additive and
+  fall entirely inside that span AND (batch B10c-mand11) whose own
+  `(heading, kind_hint)` is class-structural for that class's title
+  (`owlsperch.supersede.is_class_owned_fragment`) then gets `superseded_by`
+  stamped in place (not deleted) if not already set; one that is NOT
+  class-structural (a printed sidebar like "FAMILIARS", or the NEXT class's
+  own heading fragment on a shared page, which is then left for that
+  class's own span to stamp) is left COMPLETELY alone -- not stamped, no
+  claims released -- and counted in the summary's own "N in-span segment(s)
+  left live" line. This whole pass is additive and
   idempotent, which is what makes a plain (non `--force`) `owlsperch
   segment <book_id>` do the entire job on a book that already has segments:
   the handful of class segments get written and every existing
@@ -352,8 +359,27 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   Player's Handbook" into "Glibness" -- leaving a heading alone when fewer
   than 3 entries exist or no n-gram qualifies.
 
-- `pipeline/owlsperch/supersede.py` (batch B10c-mand2) -- `release_segment_
-  claims(segment, *, data_dir)`, the shared helper behind both the
+- `pipeline/owlsperch/supersede.py` (batch B10c-mand2, plus B10c-mand11) --
+  `is_class_owned_fragment(heading, kind_hint, class_title)` is the shared,
+  pure predicate that decides the SCOPE of superseding for all three places
+  that used to go by page span alone (the class-span stamp pass above,
+  `build-db`'s `_apply_superseding`, and `queue audit`'s
+  `wrongly_superseded` restore): True for any `table`, and for a
+  `rules_section` whose whole heading -- case/punctuation/whitespace-
+  insensitively, with any parenthetical qualifier stripped first so a
+  RECORD name like "Class Features (Barbarian)" reads the same as a
+  segment's own bare heading -- is the class title (plural-tolerant, since
+  PHB prints "WIZARDS" for the toc's "Wizard"), `game rule information`,
+  `class skills`, `class features`, `ex-<title>` (plural-tolerant), or ends
+  with `<title> starting package`; False for everything else, notably every
+  printed sidebar inside a class's own pages (FAMILIARS, ARCANE SPELLS AND
+  ARMOR, SCHOOL SPECIALIZATION, LEVEL ADVANCEMENT, THE PALADIN'S MOUNT,
+  SAMPLE PALADIN'S MOUNTS, THE DRUID'S ANIMAL COMPANION, ALTERNATIVE ANIMAL
+  COMPANIONS -- note that "THE PALADIN'S MOUNT" NAMES the class and still
+  fails, since every match is on the WHOLE heading, never a substring) and
+  for every other kind (a spell/feat fragment stranded in a class's span is
+  never class-owned). `release_segment_
+  claims(segment, *, data_dir)` is the shared helper behind both the
   class-span stamp pass above and `queue audit --fix` below: for ONE
   superseded segment, every path in its `records` + `pending_records`
   (deduplicated by resolved path) is MOVED (`os.replace`, never deleted)
@@ -885,9 +911,34 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   left completely untouched (`action: "left_in_human"`); this is `queue
   audit --fix`'s retroactive counterpart to the class-span pass's
   release-at-stamp-time behavior, for exactly the segments stamped before
-  that behavior existed. `runner.py` wires all of it (including `queue
+  that behavior existed. Batch B10c-mand11 adds a FOURTH pass,
+  `wrongly_superseded`, the retroactive counterpart to that batch's stamp-
+  pass scoping: every segment whose `superseded_by` names a class/
+  prestige_class segment of the same book whose own `(heading, kind_hint)`
+  FAILS `owlsperch.supersede.is_class_owned_fragment` for that class
+  segment's `heading` (a `superseded_by` naming a segment this book has no
+  file for, or one that isn't a class at all, is hand-made and left
+  entirely alone). Such a segment is EXCLUDED from `superseded_claims` --
+  that pass would release the very claims this one restores -- and
+  `fix_book` restores it (`action: "restored"`): clear `superseded_by`, move
+  each `released_records` entry's file back (`os.replace`) from its
+  `moved_to` to its original `records/<book_id>/` path, put every restored
+  path back in the segment's own `records`, and leave `status`/`outcome`/
+  `tier`/`attempts` exactly as they are (those records had already passed
+  validation before the wrong stamp). A destination that already exists is
+  never overwritten -- that file stays under `superseded/`, is reported in
+  the entry's own `blocked` list with a reason, keeps its
+  `released_records` entry, and the segment KEEPS its `superseded_by`
+  stamp so it stays in `wrongly_superseded` and the next `--fix` retries
+  it once the collision is cleared -- and a segment in
+  `human/` is reported but left completely untouched, like everywhere else
+  here. A second `--fix` is a no-op (the restored segment no longer carries
+  `superseded_by`), and `queue summary`'s `superseded` count drops for it
+  on its own, since that count just reads `superseded_by`. `runner.py`
+  wires all of it (including `queue
   audit [--fix]`, whose non-JSON `--fix` output now also prints a "`N`
-  claim(s) released, `M` record file(s) moved to superseded/" line) into
+  claim(s) released, `M` record file(s) moved to superseded/" line and a
+  "`N` segment(s) un-superseded, `M` record file(s) restored" line) into
   the CLI. Batch B10c-mand3 (Part 8): `queue reset --hard` resets a
   segment's `tier` via `ladder.starting_tier(segment.kind_hint)` rather
   than unconditionally to haiku, so a hard-reset `class`/`prestige_class`
@@ -1040,12 +1091,32 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `class`/`prestige_class` record, `fields.source_pages` (falling back to
   `min(pages)..max(pages)`) gives its whole entry's pdf page span, and
   every `rules_section`/`table` record of the SAME book whose own `pages`
-  fall entirely inside that span gets `canonical = 0`/`superseded_by =
-  <class id>` set -- EXCEPT a `table` owned by some class in that book
+  fall entirely inside that span AND (batch B10c-mand11) that the class owns
+  BY NAME gets `canonical = 0`/`superseded_by = <class id>` set. Owned by
+  name means EITHER `owlsperch.supersede.is_class_owned_fragment(name, type,
+  <class record name>)` -- the same predicate the segmenter's own stamp pass
+  uses, read here against the record's `name`/`type` -- OR (this pass, unlike
+  the segmenter, has the class RECORD in hand) the record's normalized name
+  being one of that class record's own printed headings: `_class_owned_names`
+  = every `fields.class_features[].name`, every `fields.
+  description_sections[].heading`, and the class's own `name`, all through
+  `owlsperch.supersede.normalize_heading` (parentheticals dropped, so a
+  printed "Wild Shape (Su)" feature matches a record plainly named "Wild
+  Shape"), built once per class record. That second rule is what demotes the
+  druid's own "Wild Shape"/"Venom Immunity" `rules_section` records --
+  extracted as separate sections before class records existed -- while
+  leaving a sidebar on the same pages canonical. EXCEPT a `table` owned by
+  some class in that book
   (its id in that class's own `tables` array, or its own
   `fields.parent_record` naming a class/prestige_class record), which is
   never superseded -- otherwise a class's own progression table would
-  disappear from its own page (the most likely bug this pass could have).
+  disappear from its own page (the most likely bug this pass could have);
+  every other `table` in the span still passes the predicate, so only
+  `rules_section` records are newly spared -- a printed sidebar sharing a
+  class's pages ("Familiars", "Alternative Animal Companions", "The
+  Paladin's Mount", "School Specialization", ...), which page span alone
+  demoted to `canonical = 0`, leaving that content in no canonical record at
+  all.
   A record already superseded by an earlier class is left alone. Printed
   as one informational line (never a WARNING -- superseding is expected).
   Batch B10c-mand2: belt-and-braces against a record file left behind (or

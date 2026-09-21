@@ -50,8 +50,13 @@ Per book:
    no usable toc file.
 8. (Batch B10c) For each class/prestige_class span just discovered, every
    OTHER segment of the same book whose `pages` fall entirely inside that
-   span gets `superseded_by` set to the class segment's id (if not already
-   set) -- an in-place stamp, not a delete/rewrite, so a plain (non-`--force`)
+   span AND (batch B10c-mand11) whose own `(heading, kind_hint)` is
+   class-structural for that class's title (`owlsperch.supersede.
+   is_class_owned_fragment` -- the class title itself, "Game Rule
+   Information", "Class Skills", "Class Features", "Ex-<Title>", "<Race>
+   <Title> Starting Package", or any `table`) gets `superseded_by` set to
+   the class segment's id (if not already set) -- an in-place stamp, not a
+   delete/rewrite, so a plain (non-`--force`)
    `owlsperch segment <book_id>` run both writes the handful of new class
    segments AND stamps every existing class-chapter fragment segment,
    without touching their own `outcome`/`attempts` bookkeeping. (Batch
@@ -68,7 +73,17 @@ Per book:
    skipped entirely by this whole pass (stamp AND release), which is
    exactly why `owlsperch queue audit --fix` exists as a separate,
    retroactive path for segments stamped before this release-at-stamp-time
-   behavior existed.
+   behavior existed. (Batch B10c-mand11) A segment inside the span whose
+   heading is NOT class-structural is left COMPLETELY alone -- not
+   stamped, claims not released -- and counted in the summary's own
+   "N in-span segment(s) left live" line: page span alone used to swallow
+   printed SIDEBARS sharing a class's pages (the real PHB's "FAMILIARS",
+   "THE PALADIN'S MOUNT", "SCHOOL SPECIALIZATION", ...) into no canonical
+   record at all. Since the predicate is per-class, a fragment that is the
+   NEXT class's own heading on a shared page is now left for that class's
+   own span to stamp instead of being claimed by whichever span ran first.
+   `owlsperch queue audit`'s `wrongly_superseded` pass is the retroactive
+   counterpart, for data stamped before this scoping existed.
 9. (Batch B10c-mand6) A class/prestige_class span's TEXT is back-extended
    from its own heading paragraph to the top of the heading's own page
    (`_back_extend_start_index`) -- the real corpus's column
@@ -301,6 +316,14 @@ class BookSegmentSummary:
     #: stamped `superseded_by` this run -- 0 whenever `superseded` is 0, and
     #: also 0 for a run that stamps segments holding no claims at all.
     released: int = 0
+    #: Batch B10c-mand11: how many segments fell entirely inside a class
+    #: span this run and were still LEFT LIVE, because their own heading
+    #: isn't class-structural for that class (`owlsperch.supersede.
+    #: is_class_owned_fragment`) -- a printed sidebar like "FAMILIARS".
+    #: Counted once per segment across every span (a segment one span
+    #: leaves live can be stamped by a later span that does own it, and
+    #: then isn't counted here at all).
+    left_live: int = 0
     #: Batch B10c: set (instead of left "") when the book has records but
     #: no usable `toc/<book_id>.json` -- printed as a second summary line
     #: rather than replacing the main one, since ordinary segmentation still
@@ -318,6 +341,11 @@ class BookSegmentSummary:
             lines.append(f"{self.book_id}: {self.superseded} segment(s) marked superseded_by")
         if self.released:
             lines.append(f"{self.book_id}: {self.released} record claim(s) released")
+        if self.left_live:
+            lines.append(
+                f"{self.book_id}: {self.left_live} in-span segment(s) left live"
+                " (not class-structural)"
+            )
         if self.class_note:
             lines.append(f"{self.book_id}: {self.class_note}")
         return "\n".join(lines)
@@ -715,45 +743,58 @@ def _supersede_segments_in_span(
     start: int,
     end: int,
     *,
+    class_title: str,
     data_dir: Path,
-) -> tuple[int, int]:
+) -> tuple[set[str], int, set[str]]:
     """Stamp `superseded_by = class_seg_id` on every OTHER segment of
-    `book_id` whose `pages` fall ENTIRELY inside `[start, end]`, in place --
-    every other field (`outcome`, `attempts`, `tier`, ...) is preserved
-    except `records`/`pending_records`, which are RELEASED (batch
-    B10c-mand2, `owlsperch.supersede.release_segment_claims`): moved to
-    `superseded/<book_id>/<type>/<file>.json` and cleared, so the class
-    segment being stamped in for it is free to claim the same path (most
-    often a level table sharing the class's own printed title, and so the
-    same slug/id/path) without `owlsperch.queue.complete`'s ownership guard
-    refusing it as a collision. Idempotent: a segment that already carries a
+    `book_id` whose `pages` fall ENTIRELY inside `[start, end]` AND whose
+    own `(heading, kind_hint)` is class-structural for `class_title`
+    (batch B10c-mand11, `owlsperch.supersede.is_class_owned_fragment`) --
+    an in-place stamp, so every other field (`outcome`, `attempts`,
+    `tier`, ...) is preserved except `records`/`pending_records`, which are
+    RELEASED (batch B10c-mand2, `owlsperch.supersede.
+    release_segment_claims`): moved to `superseded/<book_id>/<type>/
+    <file>.json` and cleared, so the class segment being stamped in for it
+    is free to claim the same path (most often a level table sharing the
+    class's own printed title, and so the same slug/id/path) without
+    `owlsperch.queue.complete`'s ownership guard refusing it as a
+    collision. A segment inside the span that is NOT class-structural (a
+    printed sidebar, or the NEXT class's own heading fragment on a shared
+    page) is left COMPLETELY alone -- not stamped, claims not released --
+    so it stays canonical, and so the class span that does own it gets its
+    own chance to stamp it. Idempotent: a segment that already carries a
     `superseded_by` (from this or an earlier class span) is left completely
     untouched -- its claims, if any, were already released the first time
     it was stamped (or need `owlsperch queue audit --fix`'s retroactive pass
-    if it predates this behavior entirely). Returns `(segments newly
-    stamped, record claims released)`."""
+    if it predates this behavior entirely). Returns `(seg_ids newly
+    stamped, record claims released, seg_ids left live by the predicate)`."""
     # Lazy import: `owlsperch.supersede` imports from `owlsperch.queue.
     # common`, which imports `Segment` from this module at module scope --
     # a module-level import here would be circular. By call time this
     # module is fully loaded, so a local import is safe (same pattern as
     # `_write_class_segment`/`_write_one_segment`'s `starting_tier` import).
-    from owlsperch.supersede import release_segment_claims
+    from owlsperch.supersede import is_class_owned_fragment, release_segment_claims
 
-    stamped = 0
+    stamped: set[str] = set()
     released = 0
+    left_live: set[str] = set()
     for path in sorted(out_dir.glob(f"{book_id}-*.json")):
         if path.stem == class_seg_id:
             continue
         segment = Segment.model_validate_json(path.read_text())
         if segment.seg_id == class_seg_id or segment.superseded_by is not None:
             continue
-        if segment.pages and all(start <= p <= end for p in segment.pages):
-            segment.superseded_by = class_seg_id
-            newly_released = release_segment_claims(segment, data_dir=data_dir)
-            released += len(newly_released)
-            atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
-            stamped += 1
-    return stamped, released
+        if not segment.pages or not all(start <= p <= end for p in segment.pages):
+            continue
+        if not is_class_owned_fragment(segment.heading, segment.kind_hint, class_title):
+            left_live.add(segment.seg_id)
+            continue
+        segment.superseded_by = class_seg_id
+        newly_released = release_segment_claims(segment, data_dir=data_dir)
+        released += len(newly_released)
+        atomic_write_text(path, segment.model_dump_json(indent=2) + "\n")
+        stamped.add(segment.seg_id)
+    return stamped, released, left_live
 
 
 #: `segment --kinds` only accepts these two, since every other kind comes
@@ -908,14 +949,31 @@ def _run_class_pass(
 
     superseded_total = 0
     released_total = 0
+    # B10c-mand11: a segment one span leaves live (not class-structural for
+    # THAT class) can still be stamped by a LATER span that does own it --
+    # the two classes sharing a page case, e.g. PHB p0050's "ROGUE"
+    # fragment sitting inside ranger's own one-page extension. So the
+    # reported count is the set difference, resolved after every span has
+    # had its turn, not a per-span sum.
+    left_live_ids: set[str] = set()
+    stamped_ids: set[str] = set()
     for span in spans_to_write:
-        stamped, released = _supersede_segments_in_span(
-            out_dir, entry.book_id, span.seg_id, span.start, span.end, data_dir=data_dir
+        stamped, released, left_live = _supersede_segments_in_span(
+            out_dir,
+            entry.book_id,
+            span.seg_id,
+            span.start,
+            span.end,
+            class_title=span.heading,
+            data_dir=data_dir,
         )
-        superseded_total += stamped
+        superseded_total += len(stamped)
         released_total += released
+        left_live_ids |= left_live
+        stamped_ids |= stamped
     summary.superseded = superseded_total
     summary.released = released_total
+    summary.left_live = len(left_live_ids - stamped_ids)
 
 
 def segment_book(
