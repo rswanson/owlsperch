@@ -717,7 +717,17 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   page 404s and any table naming it as `parent_record` becomes a dangling
   parent), `build-db --strict` exits 1, and `find_bump_candidates` will not
   offer it for a `--bump-compatible` migration. The fix is always to
-  re-extract the segment, never to loosen the check.
+  re-extract the segment, never to loosen the check. Batch B10c-mand16
+  adds a fourth `check_class_segment_coverage` rule for the 2026-09-21
+  class quality judgement's finding D -- a printed "Abilities:" run-in
+  inside the new `_game_rule_information_window` (from the "GAME RULE
+  INFORMATION" heading paragraph to the "Class Skills" heading or the
+  next ALL-CAPS heading, whichever comes first) must be recorded as a
+  `description_sections[].heading` normalizing to "Abilities" -- which
+  the real corpus calibration (a new `abilities` key in
+  `_EXPECTED_CORPUS_FAILURES`) confirms fails exactly the six classes
+  extracted before the B10c-mand13 prompt rule existed (barbarian,
+  fighter, monk, ranger, rogue, wizard).
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -760,7 +770,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   rule; feat's `NAME [TYPE]` heading and `Prerequisite:`/`Benefit:`/
   `Normal:`/`Special:` marker-splitting rules; rules_section's `topic`/
   `parent_section`/`chapter` rules, its table-of-contents/index-fragment
-  `no_content` guidance, and (B10 retrospective) a rule that a GENERIC,
+  `no_content` guidance, its (batch B10c-mand16, finding B) rule that a
+  segment printing SEVERAL grids (e.g. the FAMILIARS sidebar's own
+  progression grid AND its separate "Familiar | Special" list) writes each
+  one as its own `table` record, in printed order, never inlined as
+  markdown/prose -- a two-column label/value grid whose right cells are
+  full sentences still counts, and (B10 retrospective) a rule that a GENERIC,
   cross-chapter heading (e.g. "Class Features") must have its record `name`
   qualified with the enclosing entity (`Class Features (Barbarian)`, never
   the bare heading) since `slug`/`id` derive from `name` and an unqualified
