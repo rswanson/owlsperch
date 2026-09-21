@@ -791,3 +791,112 @@ def test_phb_class_table_leading_spell_cells_corpus() -> None:
         assert row_1st is not None, cleric_lines
         cleric_cells = row_1st.split("\t")
         assert cleric_cells[cleric_cells.index("1+1") - 1] == "3", row_1st
+
+
+@pytest.mark.corpus
+def test_phb_boxed_sidebars_corpus() -> None:
+    """Regression for B10c-mand15's three sidebar defects (see
+    `owlsperch.text.columns`'s module docstring, steps 2b/2c/4a), all in
+    boxed sidebars that share a page with class text:
+
+    A. PHB p.37 "THE DRUID'S ANIMAL COMPANION" -- the grid's "Improved
+       evasion" cell arrives as a lone block 2.3pt wider than its own
+       column, and used to be emitted after the whole table instead of on
+       its printed 15th-17th row.
+    B. PHB pp.53-54 "FAMILIARS" -- the 10-row `Familiar | Special` grid has
+       exactly one gap per row, so it never became a table group and came
+       out as a run-on sentence with the Snake row's label after its value.
+    C. PHB p.46 "THE PALADIN'S MOUNT" -- a boxed sidebar spanning both body
+       columns narrows the gutter enough that both columns merged into one
+       cluster, so the sidebar opened with its right column's mid-sentence
+       continuation.
+    """
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+
+    entries = load_manifest(default_manifest_path())
+    book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(37, 37)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(46, 46)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(53, 54)) == 0
+
+        def _lines(page: int) -> list[str]:
+            return (data_dir / "text" / book_id / f"p{page:04d}.txt").read_text().splitlines()
+
+        # (A) "Improved evasion" is a cell of the 15th-17th row, not a line
+        # of its own, and the 18th-20th row does NOT claim it.
+        p37 = _lines(37)
+        row_15th = next((line for line in p37 if line.startswith("15th–17th\t")), None)
+        assert row_15th is not None, p37
+        assert row_15th.split("\t")[-1] == "Improved evasion", row_15th
+        row_18th = next((line for line in p37 if line.startswith("18th–20th\t")), None)
+        assert row_18th is not None, p37
+        assert "Improved evasion" not in row_18th, row_18th
+        assert not any(line.strip() == "Improved evasion" for line in p37), p37
+
+        # (C) the druid and paladin sidebars open at their own heading and
+        # first printed sentence, not at the right column's continuation.
+        druid_sidebar = next(i for i, line in enumerate(p37) if "ANIMAL COMPANION" in line)
+        assert p37[druid_sidebar + 2].startswith("A druid’s animal companion is different"), p37[
+            druid_sidebar : druid_sidebar + 4
+        ]
+
+        p46 = _lines(46)
+        mount_sidebar = next(i for i, line in enumerate(p46) if "PALADIN’S MOUNT" in line)
+        assert p46[mount_sidebar + 2].startswith("The paladin’s mount is superior"), p46[
+            mount_sidebar : mount_sidebar + 4
+        ]
+        # ...and the right column's continuation is no longer FIRST.
+        mid_sentence = next(
+            i for i, line in enumerate(p46) if line.startswith("mount must be within 5 feet")
+        )
+        assert mid_sentence > mount_sidebar, (mount_sidebar, mid_sentence)
+
+        # (B) the FAMILIARS `Familiar | Special` grid is a tab-joined group
+        # of 10 animal rows, each label with its own value.
+        p53 = _lines(53)
+        assert "Familiar\tSpecial" in p53, p53
+        familiar_rows = {
+            line.split("\t")[0]: line.split("\t")[1]
+            for line in p53
+            if len(line.split("\t")) == 2 and line.split("\t")[0] in _FAMILIAR_NAMES
+        }
+        assert sorted(familiar_rows) == sorted(_FAMILIAR_NAMES), sorted(familiar_rows)
+        assert familiar_rows["Snake 2"] == "Master gains a +3 bonus on Bluff checks"
+        assert familiar_rows["Raven 1"] == "Master gains a +3 bonus on Appraise checks"
+
+        # ...and p53's FAMILIARS sidebar opens with its own intro, while its
+        # p54 continuation still carries the master-class-level grid.
+        familiars = next(i for i, line in enumerate(p53) if line.strip() == "FAMILIARS")
+        assert p53[familiars + 2].startswith("Familiars are magically linked"), p53[
+            familiars : familiars + 4
+        ]
+        p54 = _lines(54)
+        assert any(line.startswith("19th–20th\t") for line in p54), p54
+
+
+#: The FAMILIARS sidebar's own 10 familiar names, as PHB p.53 prints them
+#: (the two footnoted ones carry their marker in the same cell).
+_FAMILIAR_NAMES = [
+    "Bat",
+    "Cat",
+    "Hawk",
+    "Lizard",
+    "Owl",
+    "Rat",
+    "Raven 1",
+    "Snake 2",
+    "Toad",
+    "Weasel",
+]

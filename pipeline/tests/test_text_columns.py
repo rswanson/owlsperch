@@ -1003,3 +1003,251 @@ def test_multi_character_rotated_line_is_still_vertical(tmp_path: Path) -> None:
 
     assert is_vertical_block(page.blocks[1]) is True
     assert [_block_text(item) for item in order_blocks(page)] == ["BODY"]
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand15: boxed sidebars sharing a page with class text
+# ---------------------------------------------------------------------------
+
+#: PHB p.37's own geometry for the druid's animal-companion sidebar grid:
+#: 9 rows (a 2-line header plus 7 level bands) at a ~9.9pt pitch, ~8pt
+#: lines.
+_SIDEBAR_GRID_Y_START = 220.9
+_SIDEBAR_GRID_ROW_PITCH = 9.9
+_SIDEBAR_GRID_LINE_HEIGHT = 8.0
+
+
+def _sidebar_grid_row_y(row: int) -> tuple[float, float]:
+    y_min = _SIDEBAR_GRID_Y_START + row * _SIDEBAR_GRID_ROW_PITCH
+    return y_min, y_min + _SIDEBAR_GRID_LINE_HEIGHT
+
+
+def _sidebar_grid_column_block(x_min: float, x_max: float, cells: dict[int, str]) -> str:
+    """One per-column block of a sidebar progression grid, holding only the
+    rows in `cells` (a column printed for a subset of rows, as PHB p.37's
+    Special column is)."""
+    rows = sorted(cells)
+    lines = []
+    for row in rows:
+        y_min, y_max = _sidebar_grid_row_y(row)
+        lines.append(
+            f'<line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">'
+            f'<word xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{cells[row]}</word>'
+            f"</line>"
+        )
+    block_y_min, _ = _sidebar_grid_row_y(rows[0])
+    _, block_y_max = _sidebar_grid_row_y(rows[-1])
+    return (
+        f'<flow><block xMin="{x_min}" yMin="{block_y_min}" xMax="{x_max}" '
+        f'yMax="{block_y_max}">{"".join(lines)}</block></flow>'
+    )
+
+
+def test_orphan_cell_wider_than_its_column_lands_in_its_own_row(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand15 finding A, PHB p.37 "THE DRUID'S
+    # ANIMAL COMPANION"): the grid's last Special cell ("Improved evasion",
+    # printed on the 15th-17th band) arrives from poppler as a lone
+    # single-cell block, and it is 2.3pt WIDER than every cell the Special
+    # column block itself holds. Step 2b used to reject it for overhanging
+    # the group's x span by those 2.3pt, so it was emitted as a standalone
+    # paragraph after the whole table and the extractor had to guess a row.
+    levels = ["Class/Level", "1st-2nd", "3rd-5th", "6th-8th", "9th-11th"]
+    levels += ["12th-14th", "15th-17th", "18th-20th"]
+    body = _sidebar_grid_column_block(76.6, 110.2, dict(enumerate(levels)))
+    body += _sidebar_grid_column_block(
+        120.4, 216.3, {row: ("Bonus HD" if row == 0 else f"+{2 * row - 2}") for row in range(8)}
+    )
+    body += _sidebar_grid_column_block(
+        228.8, 250.2, {row: ("Tricks" if row == 0 else str(row)) for row in range(8)}
+    )
+    # The Special column block, printed only for the first four level bands.
+    body += _sidebar_grid_column_block(
+        257.5,
+        315.0,
+        {0: "Special", 1: "Link, share spells", 2: "Evasion", 3: "Devotion", 4: "Multiattack"},
+    )
+    # ...and the orphan cell, on the 15th-17th row, wider than the column.
+    orphan_y_min, orphan_y_max = _sidebar_grid_row_y(6)
+    orphan_box = f'xMin="257.5" yMin="{orphan_y_min}" xMax="317.3" yMax="{orphan_y_max}"'
+    body += f"""
+    <flow>
+      <block {orphan_box}>
+        <line {orphan_box}>
+          <word {orphan_box}>Improved evasion</word>
+        </line>
+      </block>
+    </flow>
+    """
+    page = _parse_page(tmp_path, "sidebar_grid_orphan_cell.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    rows = table_groups[0].rows
+    assert len(rows) == 8
+    assert rows[6].cells == ["15th-17th", "+10", "6", "Improved evasion"], rows[6].cells
+    assert rows[7].cells == ["18th-20th", "+12", "7"], rows[7].cells
+
+    # ...and it is no longer a loose block of its own anywhere on the page.
+    assert not any(
+        isinstance(item, Block) and "Improved evasion" in item.lines[0].text for item in ordered
+    )
+
+
+#: PHB p.53's own geometry for the FAMILIARS sidebar's `Familiar | Special`
+#: grid: a label column at x 76.6 and a value column at x 121.8, ~9.9pt row
+#: pitch, ~8pt lines.
+_FAMILIAR_ROWS = [
+    ("Familiar", 103.9, "Special"),
+    ("Bat", 87.7, "Master gains a +3 bonus on Listen checks"),
+    ("Cat", 87.8, "Master gains a +3 bonus on Move Silently checks"),
+    ("Hawk", 95.7, "Master gains a +3 bonus on Spot checks in bright light"),
+    ("Lizard", 97.3, "Master gains a +3 bonus on Climb checks"),
+    ("Owl", 90.1, "Master gains a +3 bonus on Spot checks in shadows"),
+    ("Rat", 87.6, "Master gains a +2 bonus on Fortitude saves"),
+    ("Raven 1", 99.4, "Master gains a +3 bonus on Appraise checks"),
+    ("Snake 2", 99.0, "Master gains a +3 bonus on Bluff checks"),
+    ("Toad", 93.4, "Master gains +3 hit points"),
+    ("Weasel", 100.4, "Master gains a +2 bonus on Reflex saves"),
+]
+
+
+def _label_value_grid_block() -> str:
+    """The shape `pdftotext` emits for the PHB's FAMILIARS `Familiar |
+    Special` grid: ONE block, with the label and the value of each row as
+    two separate `<line>`s at the same y, plus a two-line footnote."""
+    lines = []
+    y = 565.1
+    for label, label_x_max, value in _FAMILIAR_ROWS:
+        y_max = y + _SIDEBAR_GRID_LINE_HEIGHT
+        lines.append(_line_of_words(y, y_max, [(76.6, label_x_max, label)]))
+        value_words: list[tuple[float, float, str]] = []
+        x = 121.8
+        for token in value.split(" "):
+            x_max = x + max(len(token) * 5.5, 8.0)
+            value_words.append((x, x_max, token))
+            x = x_max + 3.0
+        lines.append(_line_of_words(y, y_max, value_words))
+        y += _SIDEBAR_GRID_ROW_PITCH
+    for footnote in ["1 A raven familiar can speak one language", "2 Tiny viper."]:
+        y_max = y + _SIDEBAR_GRID_LINE_HEIGHT
+        words: list[tuple[float, float, str]] = []
+        x = 76.6
+        for token in footnote.split(" "):
+            x_max = x + max(len(token) * 5.5, 8.0)
+            words.append((x, x_max, token))
+            x = x_max + 3.0
+        lines.append(_line_of_words(y, y_max, words))
+        y += _SIDEBAR_GRID_ROW_PITCH
+    return (
+        f'<flow><block xMin="76.6" yMin="565.1" xMax="306.1" '
+        f'yMax="{y - _SIDEBAR_GRID_ROW_PITCH + _SIDEBAR_GRID_LINE_HEIGHT}">'
+        f"{''.join(lines)}</block></flow>"
+    )
+
+
+def test_two_column_label_value_grid_becomes_a_table_group(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand15 finding B, PHB pp.53-54's
+    # FAMILIARS sidebar): a two-column grid whose every row is a one-word
+    # animal name beside a whole sentence. Every row has exactly ONE large
+    # gap, so step 2a's `TABLE_MIN_GAPS_PER_ROW` (2) could never see it and
+    # the grid came out as one run-on sentence with the Snake row's label
+    # after its value. Step 2c must emit it as a table group with all 10
+    # animal rows intact.
+    page = _parse_page(tmp_path, "familiar_label_value_grid.html", _label_value_grid_block())
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1, [item for item in ordered]
+    rows = table_groups[0].rows
+    assert rows[0].text == "Familiar\tSpecial"
+    animal_rows = [row for row in rows if len(row.cells) == 2][1:]
+    assert len(animal_rows) == 10, [row.cells for row in rows]
+    assert animal_rows[0].text == "Bat\tMaster gains a +3 bonus on Listen checks"
+    assert animal_rows[7].text == "Snake 2\tMaster gains a +3 bonus on Bluff checks"
+    assert animal_rows[9].text == "Weasel\tMaster gains a +2 bonus on Reflex saves"
+    # The footnotes below the grid stay single-cell rows, not tab-joined.
+    footnotes = [row for row in rows if len(row.cells) == 1]
+    assert [row.cells[0] for row in footnotes] == [
+        "1 A raven familiar can speak one language",
+        "2 Tiny viper.",
+    ]
+
+
+def test_ragged_prose_with_a_few_aligned_gaps_is_not_a_label_value_grid(tmp_path: Path) -> None:
+    # The false positive step 2c's gappy-row-fraction guard exists for
+    # (PHB p.28's bard column): prose flowed around an illustration, whose
+    # ragged right edge and one embedded caption produce a handful of
+    # accidentally aligned wide gaps among dozens of ordinary lines. Only
+    # 3 of 12 rows carry a gap, so this must stay one prose block.
+    rows: list[list[tuple[float, float, str]]] = []
+    for row_idx in range(12):
+        words: list[tuple[float, float, str]] = []
+        x = 310.0
+        for word_idx in range(6):
+            x_max = x + 30.0
+            words.append((x, x_max, f"w{row_idx}_{word_idx}"))
+            x = x_max + 4.0
+        if row_idx in {3, 7, 11}:
+            # One extra word after a wide gap, at a consistent x position.
+            words.append((x + 40.0, x + 70.0, f"tail{row_idx}"))
+        rows.append(words)
+    page = _parse_page(
+        tmp_path, "ragged_prose_gaps.html", _wide_block_of_rows(rows, y_start=51.5, row_height=9.9)
+    )
+
+    ordered = order_blocks(page)
+
+    assert len(ordered) == 1
+    assert isinstance(ordered[0], Block)
+    assert not any("\t" in line.text for line in ordered[0].lines)
+
+
+def _narrow_gutter_block(x_min: float, y_min: float, x_max: float, y_max: float, text: str) -> str:
+    """Like `_block`, but with a realistic ~8pt word height (rather than
+    12pt) -- the column-gutter thresholds of steps 4/4a are multiples of the
+    run's median word height, so a fixture reproducing a real narrow gutter
+    needs the real text size too."""
+    line_y_max = min(y_min + 8.0, y_max)
+    return f"""
+    <flow>
+      <block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">
+        <line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{line_y_max}">
+          <word xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{line_y_max}">{text}</word>
+        </line>
+      </block>
+    </flow>
+    """
+
+
+def test_boxed_sidebar_columns_read_left_then_right(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand15 finding C, PHB p.46 "THE
+    # PALADIN'S MOUNT"): a boxed sidebar spanning both body columns sits
+    # slightly wider than the body text, narrowing the gutter between the
+    # two columns to ~9.6pt -- under step 4's
+    # `COLUMN_GAP_HEIGHT_FACTOR` * word height (12pt). The greedy chain then
+    # merged both columns into ONE cluster, which orders purely by y, so the
+    # sidebar's right-column continuation (y 196.4, just below the box's
+    # top) was emitted BEFORE its own left-column intro (y 206.3) and the
+    # sidebar opened mid-sentence. Step 4a must split that cluster at the
+    # gutter.
+    body = _narrow_gutter_block(34.0, 51.5, 274.2, 155.3, "LEFT_BODY")
+    body += _narrow_gutter_block(292.1, 53.7, 454.3, 64.5, "RIGHT_HEADING")
+    body += _narrow_gutter_block(301.1, 66.5, 541.3, 138.8, "RIGHT_BODY")
+    body += _narrow_gutter_block(39.6, 193.1, 164.0, 203.9, "SIDEBAR_HEADING")
+    body += _narrow_gutter_block(39.6, 206.3, 282.4, 293.3, "SIDEBAR_INTRO")
+    body += _narrow_gutter_block(293.1, 196.4, 535.9, 471.4, "SIDEBAR_RIGHT")
+    page = _parse_page(tmp_path, "boxed_sidebar_narrow_gutter.html", body)
+
+    texts = [_block_text(item) for item in order_blocks(page)]
+
+    assert texts == [
+        "LEFT_BODY",
+        "SIDEBAR_HEADING",
+        "SIDEBAR_INTRO",
+        "RIGHT_HEADING",
+        "RIGHT_BODY",
+        "SIDEBAR_RIGHT",
+    ]
