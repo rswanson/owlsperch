@@ -431,21 +431,33 @@ def test_force_removes_stale_segment_files_in_processed_range(tmp_path: Path) ->
 
 
 def test_pages_option_limits_range(tmp_path: Path) -> None:
+    # Batch B10c-mand19: `--pages` restricts which segments are written by
+    # each segment's own FIRST page -- not which pages the paragraph stream
+    # is built from.
     data_dir = tmp_path / "data"
     _write_book(
         data_dir,
         "book",
         {
-            1: [_para("Page one body text runs on for a while here.", line_count=3)],
-            2: [_para("Page two body text runs on for a while here too.", line_count=3)],
+            1: [
+                _para("PAGE ONE SECTION"),
+                _para("Page one body text runs on for a while here.", line_count=3),
+            ],
+            2: [
+                _para("PAGE TWO SECTION"),
+                _para("Page two body text runs on for a while here too.", line_count=3),
+            ],
         },
     )
 
     summary = segment_book(_entry("book"), data_dir=data_dir, page_range=(1, 1))
 
     segments = _segment_files(data_dir, "book")
-    assert all(seg["pages"] == [1] for seg in segments)
+    assert all(min(seg["pages"]) == 1 for seg in segments)
     assert summary.written == len(segments)
+    # Page 2 is outside the PROCESSED range, so its (deliberate) lack of a
+    # segment is not a coverage gap this run is responsible for.
+    assert summary.uncovered_pages == []
 
 
 def test_run_segment_all_skips_book_with_no_text_dir(tmp_path: Path) -> None:
@@ -2215,3 +2227,336 @@ def test_rulebook_never_produces_errata_anchor_even_with_page_reference(tmp_path
     segments = _segment_files(data_dir, "book")
     assert _by_kind(segments, "errata_entry") == []
     assert _by_kind(segments, "update_entry") == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand19: `--pages A-B` builds from the WHOLE-BOOK paragraph
+# stream and restricts only which segments are written/deleted (by each
+# segment's own first page), plus the coverage warning firing for every kind
+# of run.
+# ---------------------------------------------------------------------------
+
+
+def _write_mand19_book(data_dir: Path, book_id: str = "book") -> None:
+    """A three-page book with:
+
+    * a class span covering pages 1-3 (toc pdf pages 1-2, extended by one
+      under design decision D2),
+    * a printed SIDEBAR section that starts on page 2 and continues onto
+      page 3 (non-class-structural, so the class pass leaves it live), and
+    * a further section starting on page 3.
+
+    That's the exact shape the real phb1 defect had: `--pages 3-3` used to
+    both truncate the class segment down to page 3 and re-cut the page-2
+    sidebar into a headingless page-top fragment.
+    """
+    _write_book(
+        data_dir,
+        book_id,
+        {
+            1: [
+                _para("SABLE KNIGHT"),
+                _para(
+                    "Hit Die: d10. A sable knight is a sworn defender of the realm and its people.",
+                    line_count=3,
+                ),
+            ],
+            2: [
+                _para(
+                    "The sable knight's oath continues to bind them through every trial they face.",
+                    line_count=3,
+                ),
+                _para("FAMILIARS"),
+                _para(
+                    "A familiar is a magical beast that resembles a small animal and is "
+                    "unusually tough.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para(
+                    "The familiar grants its master a bonus that improves as the master "
+                    "gains levels.",
+                    line_count=3,
+                ),
+                _para("PAGE THREE SECTION"),
+                _para(
+                    "A section that begins on the third page and belongs entirely to it alone.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        book_id,
+        [
+            {
+                "title": "Chapter 3: Classes",
+                "level": 1,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 3,
+                "path": ["Chapter 3: Classes"],
+                "category": "classes",
+            },
+            {
+                "title": "Sable Knight",
+                "level": 2,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 2,
+                "path": ["Chapter 3: Classes", "Sable Knight"],
+                "category": "classes",
+            },
+        ],
+    )
+
+
+def _seg_by_heading(data_dir: Path, book_id: str, heading: str) -> Path:
+    seg_dir = data_dir / "segments" / book_id
+    matches = [
+        p for p in sorted(seg_dir.glob("*.json")) if json.loads(p.read_text())["heading"] == heading
+    ]
+    assert len(matches) == 1, f"expected exactly one {heading!r} segment, got {matches}"
+    return matches[0]
+
+
+def test_pages_run_leaves_segments_starting_before_the_range_untouched(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_mand19_book(data_dir)
+    entry = _entry("book")
+
+    segment_book(entry, data_dir=data_dir)
+
+    class_path = data_dir / "segments" / "book" / "book-class-p0001.json"
+    assert json.loads(class_path.read_text())["pages"] == [1, 2, 3]
+    sidebar_path = _seg_by_heading(data_dir, "book", "FAMILIARS")
+    assert json.loads(sidebar_path.read_text())["pages"] == [2, 3]
+    page_three_path = _seg_by_heading(data_dir, "book", "PAGE THREE SECTION")
+
+    class_before = class_path.read_bytes()
+    sidebar_before = sidebar_path.read_bytes()
+    # A sentinel in the page-3 segment proves it really was rewritten.
+    page_three_path.write_text(page_three_path.read_text().replace('"pending"', '"SENTINEL"'))
+
+    summary = segment_book(entry, data_dir=data_dir, force=True, page_range=(3, 3))
+
+    # The class segment (first page 1) and the sidebar (first page 2) are
+    # byte-identical: neither deleted, nor re-cut, nor truncated.
+    assert class_path.read_bytes() == class_before
+    assert sidebar_path.read_bytes() == sidebar_before
+    # Only the page-3 segment was rewritten -- and it still has a heading.
+    assert "SENTINEL" not in page_three_path.read_text()
+    assert json.loads(page_three_path.read_text())["pages"] == [3]
+    assert summary.written == 1
+    assert summary.uncovered_pages == []
+
+
+def test_pages_run_rewrites_a_section_with_its_next_page_continuation(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_mand19_book(data_dir)
+    entry = _entry("book")
+
+    segment_book(entry, data_dir=data_dir)
+    class_before = (data_dir / "segments" / "book" / "book-class-p0001.json").read_bytes()
+    sidebar_path = _seg_by_heading(data_dir, "book", "FAMILIARS")
+    sidebar_path.write_text(sidebar_path.read_text().replace('"pending"', '"SENTINEL"'))
+
+    summary = segment_book(entry, data_dir=data_dir, force=True, page_range=(2, 2))
+
+    # The page-2 section is rewritten WHOLE -- its page-3 continuation
+    # included, even though page 3 is outside the range.
+    sidebar = json.loads(sidebar_path.read_text())
+    assert "SENTINEL" not in sidebar_path.read_text()
+    assert sidebar["pages"] == [2, 3]
+    assert sidebar["heading"] == "FAMILIARS"
+    assert "improves as the master" in sidebar["text"]
+    # ... and the class segment, starting on page 1, is still untouched.
+    assert (data_dir / "segments" / "book" / "book-class-p0001.json").read_bytes() == class_before
+    assert summary.uncovered_pages == []
+
+
+def test_pages_run_warns_about_a_page_left_with_no_segment(tmp_path: Path) -> None:
+    # The real phb1 damage: `--pages 53-53` left pdf page 54 in no segment
+    # at all, silently. The page-2 text here belongs to a segment whose
+    # first page is 1, which a `--pages 2-2` run deliberately does not
+    # write -- so page 2 really is uncovered, and must be reported.
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [
+                _para("ONLY SECTION"),
+                _para("Body text that starts on page one and keeps going.", line_count=3),
+            ],
+            2: [_para("The very same section continues on page two here.", line_count=3)],
+        },
+    )
+
+    summary = segment_book(_entry("book"), data_dir=data_dir, page_range=(2, 2))
+
+    assert summary.written == 0
+    assert summary.uncovered_pages == [2]
+    # Exactly one report of it, on the summary's own `warning:` line.
+    rendered = summary.render()
+    assert "warning: book: page(s) with text but no segment coverage: 2" in rendered
+    assert rendered.count("no segment coverage") == 1
+
+
+def test_kinds_run_also_reports_coverage_gaps(tmp_path: Path) -> None:
+    # B10c-mand19: a `--kinds class` run produces no `build_segments`
+    # output of its own, so the coverage check reads the segment files off
+    # disk -- which is what lets it run here at all.
+    data_dir = tmp_path / "data"
+    _write_mand19_book(data_dir)
+
+    summary = segment_book(_entry("book"), data_dir=data_dir, kinds=frozenset({"class"}))
+
+    # Only the class segment exists (pages 1-3), so nothing is uncovered.
+    assert summary.uncovered_pages == []
+
+    # Delete it, then re-run without --force: now no segment covers anything.
+    (data_dir / "segments" / "book" / "book-class-p0001.json").unlink()
+    summary = segment_book(
+        _entry("book"), data_dir=data_dir, kinds=frozenset({"class"}), force=False
+    )
+    assert summary.uncovered_pages == []  # the class pass rewrote it
+
+    for path in (data_dir / "segments" / "book").glob("*.json"):
+        path.unlink()
+    (data_dir / "toc" / "book.json").unlink()
+    summary = segment_book(_entry("book"), data_dir=data_dir, kinds=frozenset({"class"}))
+    assert summary.uncovered_pages == [1, 2, 3]
+    assert "warning: book: page(s) with text but no segment coverage: 1, 2, 3" in summary.render()
+
+
+def test_coverage_counts_a_segment_parked_in_the_human_inbox(tmp_path: Path) -> None:
+    # B10c-mand19 review follow-up: a segment the escalation ladder moved to
+    # `human/<book_id>/` still covers its pages perfectly well -- it awaits a
+    # human extraction decision, it isn't missing -- so it must not be
+    # reported as a coverage gap.
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [
+                _para("ONLY SECTION"),
+                _para("Body text that starts on page one and keeps going here.", line_count=3),
+            ]
+        },
+    )
+    entry = _entry("book")
+    segment_book(entry, data_dir=data_dir)
+
+    seg_path = data_dir / "segments" / "book" / "book-p0001-01.json"
+    human_dir = data_dir / "human" / "book"
+    human_dir.mkdir(parents=True)
+    seg_path.rename(human_dir / seg_path.name)
+    # An unmatched-override file (B11) lives in a subdirectory and must not
+    # be parsed as a segment by the coverage scan.
+    (human_dir / "overrides").mkdir()
+    (human_dir / "overrides" / "book-whatever.json").write_text('{"not": "a segment"}')
+
+    summary = segment_book(entry, data_dir=data_dir)
+
+    assert summary.uncovered_pages == []
+    assert "no segment coverage" not in summary.render()
+
+
+def test_pages_run_restamps_a_fragment_inside_an_out_of_range_class_span(
+    tmp_path: Path,
+) -> None:
+    # B10c-mand19 review follow-up: the supersede pass runs for every span
+    # with a segment file on disk, not only the spans this run wrote -- so a
+    # `--force --pages` run that re-cuts a class-structural fragment inside
+    # an out-of-range class span stamps it again in the SAME run.
+    data_dir = tmp_path / "data"
+    _write_mand19_book(data_dir)
+    # An extra, class-STRUCTURAL section ("Ex-<Title>") entirely on page 3 --
+    # inside the Sable Knight span (pdf pages 1-3), but not on the span's own
+    # first page.
+    text_dir = data_dir / "text" / "book"
+    page_three = (text_dir / "p0003.txt").read_text().rstrip("\n")
+    (text_dir / "p0003.txt").write_text(
+        page_three + "\n\nEX-SABLE KNIGHTS\n\nA knight who breaks the oath loses "
+        "every granted power until atonement.\n"
+    )
+    meta = json.loads((text_dir / "p0003.meta.json").read_text())
+    meta += [
+        {"kind": "prose", "median_word_height": 10.0, "max_word_height": 10.0, "line_count": 1},
+        {"kind": "prose", "median_word_height": 10.0, "max_word_height": 10.0, "line_count": 3},
+    ]
+    (text_dir / "p0003.meta.json").write_text(json.dumps(meta))
+    entry = _entry("book")
+
+    segment_book(entry, data_dir=data_dir)
+
+    fragment = _seg_by_heading(data_dir, "book", "EX-SABLE KNIGHTS")
+    assert json.loads(fragment.read_text())["pages"] == [3]
+    assert json.loads(fragment.read_text())["superseded_by"] == "book-class-p0001"
+    class_path = data_dir / "segments" / "book" / "book-class-p0001.json"
+    class_before = class_path.read_bytes()
+
+    # Page 3 is inside the class's span but is NOT the span's own first page,
+    # so the class segment itself is untouched -- while the fragment is
+    # deleted, re-cut, and must come back stamped in this very same run.
+    summary = segment_book(entry, data_dir=data_dir, force=True, page_range=(3, 3))
+
+    assert class_path.read_bytes() == class_before
+    fragment = _seg_by_heading(data_dir, "book", "EX-SABLE KNIGHTS")
+    assert json.loads(fragment.read_text())["superseded_by"] == "book-class-p0001"
+    assert summary.superseded >= 1
+
+
+@pytest.mark.corpus
+def test_phb1_real_corpus_pages_run_preserves_overlapping_segments(tmp_path: Path) -> None:
+    """The real-corpus regression this batch exists for.
+
+    Copies the real phb1 `text/`, `toc/` and `segments/` into a temp data
+    dir (never touching `$OWLSPERCH_DATA` itself) and runs the two page
+    ranges that did the damage:
+
+    * `--force --pages 46-46` must leave the paladin class segment (pdf
+      pages 43-47) byte-identical -- it used to come back truncated to
+      page 46 alone -- and leave every page 43-47 covered.
+    * `--force --pages 53-53` must write a FAMILIARS-headed segment
+      spanning pages 53 AND 54 -- it used to be cut off at page 53, with
+      page 54's own segments deleted and never recreated.
+    """
+    import shutil
+
+    from owlsperch.text.runner import default_data_dir
+
+    real_data = default_data_dir()
+    src_text = real_data / "text" / "phb1"
+    src_toc = real_data / "toc" / "phb1.json"
+    src_segments = real_data / "segments" / "phb1"
+    if not (src_text.is_dir() and src_toc.is_file() and src_segments.is_dir()):
+        pytest.skip(f"real phb1 text/toc/segments not present under {real_data}")
+
+    data_dir = tmp_path / "data"
+    shutil.copytree(src_text, data_dir / "text" / "phb1")
+    (data_dir / "toc").mkdir(parents=True)
+    shutil.copy(src_toc, data_dir / "toc" / "phb1.json")
+    shutil.copytree(src_segments, data_dir / "segments" / "phb1")
+
+    paladin = data_dir / "segments" / "phb1" / "phb1-class-p0043.json"
+    if not paladin.is_file():
+        pytest.skip("phb1 paladin class segment not present in the real corpus")
+    paladin_before = paladin.read_bytes()
+    assert json.loads(paladin_before)["pages"] == [43, 44, 45, 46, 47]
+
+    assert run_segment("phb1", data_dir=data_dir, force=True, page_range=(46, 46)) == 0
+
+    assert paladin.read_bytes() == paladin_before
+    covered = {page for seg in _segment_files(data_dir, "phb1") for page in seg["pages"]}
+    assert set(range(43, 48)) <= covered
+
+    assert run_segment("phb1", data_dir=data_dir, force=True, page_range=(53, 53)) == 0
+
+    familiars = [seg for seg in _segment_files(data_dir, "phb1") if seg["heading"] == "FAMILIARS"]
+    assert len(familiars) == 1
+    assert familiars[0]["pages"] == [53, 54]

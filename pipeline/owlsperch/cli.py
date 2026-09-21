@@ -99,7 +99,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=_parse_pages,
         default=None,
         metavar="A-B",
-        help="Limit segmentation to PDF page range A-B (1-based, inclusive).",
+        help=(
+            "Only write (and, with --force, delete) segments whose FIRST "
+            "page falls in PDF page range A-B (1-based, inclusive). "
+            "Segmentation itself always runs over the whole book, so a "
+            "segment starting inside the range is written WHOLE -- "
+            "including whatever pages it continues onto past B -- and one "
+            "starting before A is left untouched even when it spans into "
+            "the range."
+        ),
     )
     segment_parser.add_argument(
         "--kinds",
