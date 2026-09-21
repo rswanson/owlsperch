@@ -293,12 +293,75 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   invent a word); 9 of the 11 class-level-table pages are byte-identical,
   p.40 gains its orphan `Bonus feat` Special cells inside their own rows,
   and p.53's sorcerer table is untouched while the FAMILIARS grid below it
-  becomes a table group. Still out of scope: a
+  becomes a table group. Batch B10c-mand22 fixes two more defects the
+  judgement's round 4 found. (1) A new step 2d folds a DETACHED COLUMN back
+  into its table: a whole printed column can arrive as one or more blocks
+  standing wholly CLEAR of the table's own x span rather than as the orphan
+  single cells step 2b absorbs (PHB p.41's Table 3-10: The Monk emits its
+  "Unarmored Speed Bonus" column as three blocks 23.8pt right of the grid's
+  last column, so the extractor reattached it at the wrong offset and 18 of
+  the monk's 20 cells were wrong on the site). Once every table group
+  exists -- after step 2a/2c, since on p.41 the grid is a single-block
+  table, not a step-2 clique, which is why step 2b's clique-relative
+  absorb could never see it -- a leftover block joins a group when it is
+  not prose-like/label:value-like, its x-extent lies wholly right of the
+  group's `x_max` (or left of its `x_min`) by at most
+  `DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR` (4.0) median word heights, and
+  every one of its non-blank lines y-aligns with a DISTINCT row. The blocks
+  passing on one side must read as ONE column, so only the largest subset of
+  them whose x-extents mutually overlap is kept (rejecting the side outright
+  would let one coincidentally aligned fragment cost the real column its
+  attachment); that subset is accepted only when it carries at least
+  `DETACHED_COLUMN_MIN_LINES` (3) cells covering at least
+  `DETACHED_COLUMN_MIN_ROW_FRACTION` (50%) of the group's rows (a real
+  column has a cell in nearly every row, which keeps a stray marginal note
+  out) and when NOTHING row-aligned sits immediately beyond it on that side,
+  within one column gap -- the signature of a table printed as two
+  side-by-side HALVES, which is how PHB p.112's Table 7-1: Random Starting
+  Gold prints, and whose second half's own `Class` column otherwise folded
+  into the first half's grid as a bogus third column while its (prose-like,
+  never-a-candidate) `Amount` column stayed loose beside it. Each covered row
+  is padded out to the group's own width before the cell is appended (or
+  prepended), so it lands at the column's real index even on a wrapped
+  continuation row. (2) A new step 3a splits each RUN into horizontal
+  BANDS at any band of whitespace running its full width and at least
+  `HORIZONTAL_BAND_GAP_HEIGHT_FACTOR` (4.0) median word heights tall, and
+  clusters each band into columns on its own. Step 4a's per-column repair is
+  right, but the run it repairs can stack two unrelated layouts -- body text
+  above a full-width boxed sidebar -- so the body's right column landed
+  INSIDE the sidebar (PHB p.46 put "Human Paladin Starting Package" and its
+  Armor/Weapons body between "THE PALADIN'S MOUNT" and the rest of that
+  sidebar, a regression from step 4a). A full-width gap alone is not
+  evidence, though: a full-width ILLUSTRATION gap breaks both columns of an
+  ordinary two-column region at the same y too, and reading that band by band
+  splits the paragraph continuing down the left column. So each band is
+  column-clustered and every adjacent pair whose column partitions AGREE --
+  same column count, each column's two edges within
+  `COLUMN_BAND_MATCH_HEIGHT_FACTOR` (0.5) median word heights of its
+  counterpart's -- is merged straight back (to a fixpoint). A sidebar's box
+  insets and widens its columns past that (p.46's start 5.6pt right and run
+  8.2pt further; pp.57/58/74 do not even share a column count); a figure gap
+  leaves them identical. The partition test, not the 4.0 factor, is the
+  safety -- across the PHB the cut fires on 30 pages, none with agreeing
+  partitions (7 are the sidebar pages, the other 23 page-number or
+  single-column bands), so the figure-gap case is pinned by a synthetic test
+  rather than the corpus.
+  Measured scope of 2d/3a: 14 more of the 322 pages change, again all with
+  an identical whitespace-token multiset -- step 2d rebuilds the 7 grids
+  that lost a column to loose paragraphs (pp.41, 42, 63, 73, 220, 261,
+  264) and step 3a reorders the 7 boxed-sidebar pages (pp.37, 46, 53, 54,
+  57, 58, 74); 10 of the 11 class-level-table pages are byte-identical
+  (p.41 gains its speed-bonus column, and p.53's sorcerer table is again
+  untouched while a body paragraph above FAMILIARS is reunited with its own
+  continuation). Still out of scope (unchanged by mand22): a
   table group is a column break for the whole page even when only one
   column wide, so a grid inside a sidebar's left column still cuts the page
-  at its own `yMin` -- the sidebar now opens in printed order, but its right
-  column is emitted before the grid rather than after the left column's
-  text below it.
+  at its own `yMin` -- the sidebar now opens at its own heading with no body
+  text inside it, but its right column is emitted before the grid rather
+  than after the left column's text below it. Letting a narrow table group
+  take part in column clustering is the fuller fix and was measured, not
+  shipped: it reorders 48 further PHB pages, class-level-table pages among
+  them.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size

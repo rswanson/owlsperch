@@ -231,6 +231,56 @@ Algorithm (per page):
     can only turn a block that used to flatten into prose into a table
     group.
 
+2d. **Fold a detached column back into its table** (B10c-mand22). A whole
+    printed column can arrive from poppler as one or more blocks standing
+    CLEAR of the table's own x span, rather than as the orphan single cells
+    step 2b absorbs: PHB p.41's Table 3-10: The Monk emits its "Unarmored
+    Speed Bonus" column as three blocks at x 540-562, 23.8pt (3.0 line
+    heights) right of the grid's last claimed column at x 516.3, covering
+    levels 2nd-16th, 17th and 18th-20th respectively. Step 2b cannot take
+    them: `_block_fits_group` requires a block's x-extent to sit INSIDE the
+    clique's own base span (bar `TABLE_ABSORB_X_OVERHANG_HEIGHT_FACTOR`, one
+    line height), and these sit wholly outside it; the tallest of them fails
+    its y-center-within-the-group's-y-span test too, spanning as it does
+    fifteen rows rather than one. Left there, the column was emitted as
+    loose paragraphs after the whole table and the extractor reattached it
+    at the wrong offset (18 of the monk's 20 cells came out wrong).
+
+    So, once every table group exists -- after step 2a/2c, since the group
+    this applies to on p.41 is a single-block table, not a step-2 clique --
+    each leftover block is tested against each group: not prose-like or
+    label:value-like (steps 1a/1b again), its x-extent wholly right of the
+    group's `x_max` or wholly left of its `x_min` by at most
+    `DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR` (4.0) of the group's own median
+    word height, and every one of its non-blank lines y-aligned (within
+    `TABLE_ROW_FRACTION` of that height) with a DISTINCT row of the group.
+    The blocks that pass on one side have to read as ONE printed column, so
+    only the largest subset of them whose x-extents all overlap each other is
+    kept (pairwise-overlapping intervals on a line always share a point, so
+    that is just the endpoint the most of them cover) -- taking the largest
+    subset rather than rejecting the side outright keeps one coincidentally
+    aligned fragment at some other x from costing the real column its
+    attachment. That subset is accepted only when it carries at least
+    `DETACHED_COLUMN_MIN_LINES` (3) cells and they cover at least
+    `DETACHED_COLUMN_MIN_ROW_FRACTION` (50%) of the group's rows -- a real
+    column has a cell in nearly every row of its table, which is what keeps a
+    stray marginal note out -- and only when NOTHING ELSE lies further out on
+    that same side overlapping the group's own y span. That last guard is what
+    tells a detached column from a table printed as two side-by-side HALVES:
+    PHB p.112's Table 7-1: Random Starting Gold prints Barbarian-Fighter in
+    one half and Paladin-Wizard beside it, and the second half's own `Class`
+    column y-aligns with six of the first half's seven rows well enough to
+    pass every other test here, while its `Amount` column (prose-like, so
+    never a candidate) would have stayed behind as a loose block beside a
+    bogus three-column grid. Nothing at all sits beyond p.41's monk speed
+    column, which is what a real detached column looks like.
+
+    Each row the column covers is then padded out to the group's own width
+    with empty strings and the cell appended (or, for a left-hand column,
+    prepended), so the new cell lands at the column's real index even on a row
+    poppler emitted with fewer cells -- a wrapped continuation of the row
+    above it.
+
 3. **Split the page into runs at wide blocks and table groups.** The *text
    area* width is the span from the minimum `xMin` to the maximum `xMax`
    across all non-vertical blocks. Any remaining (non-table) block whose
@@ -242,8 +292,42 @@ Algorithm (per page):
    final order is: run 1 in column order, break 1, run 2 in column order,
    break 2, ... (a page with no breaks is one run).
 
-4. **Cluster each run's blocks into columns by x-position.** Within a run,
-   blocks are sorted by `xMin` and merged left to right: a block joins the
+3a. **Split each run into horizontal bands** (B10c-mand22). A run can stack
+    two regions with unrelated column layouts -- ordinary body text above a
+    full-width BOXED SIDEBAR, on every page where one shares a page with
+    class text (PHB pp.37, 46, 53, 54, 57, 58). Step 4 clusters the whole
+    run at once, so the body's left column and the sidebar's left column
+    become one column and the body's right column and the sidebar's right
+    column another; emitting left column then right column then drops the
+    body's right column INTO the middle of the sidebar. On p.46 that put
+    the "Human Paladin Starting Package" heading and its Armor/Weapons body
+    between "THE PALADIN'S MOUNT" and the rest of that sidebar -- a
+    regression from step 4a, which before it existed left the sidebar
+    contiguous (if right-column-first).
+
+    So a run is first cut into bands at every band of whitespace running
+    its FULL width -- a y-interval inside the run's y span that none of its
+    blocks overlaps -- at least `HORIZONTAL_BAND_GAP_HEIGHT_FACTOR` (4.0)
+    times the run's median word glyph height tall. That alone is not enough:
+    a full-width ILLUSTRATION gap breaks both columns of an ordinary
+    two-column region at the same y just as well, and reading such a page
+    band by band would emit left-top, right-top, left-bottom, right-bottom --
+    splitting the paragraph that continues down the left column past the
+    figure. So each band is column-clustered (steps 4/4a) and every adjacent
+    pair whose column partitions AGREE is merged straight back together
+    (`_partitions_agree`, to a fixpoint): the same number of columns, each
+    one's left and right edge within `COLUMN_BAND_MATCH_HEIGHT_FACTOR` (0.5)
+    median word heights of its counterpart's. A boxed sidebar's box insets
+    and widens its own columns past that (p.46's sidebar starts 5.6pt right
+    of the body's left column and runs 8.2pt further; pp.57, 58 and 74 do not
+    even have the same column COUNT), while a figure gap leaves the very same
+    columns above and below it. The partition test, not the 4.0 factor, is
+    what makes this safe -- over the whole Player's Handbook the whitespace
+    cut fires on 30 pages, the partition test merges 23 of them back, and the
+    7 that stay apart are exactly the boxed-sidebar pages.
+
+4. **Cluster each band's blocks into columns by x-position.** Within a
+   band (step 3a), blocks are sorted by `xMin` and merged left to right: a block joins the
    current column if its `xMin` is within `COLUMN_GAP_HEIGHT_FACTOR` (1.5)
    times the run's median word glyph height of that column's rightmost
    extent so far; otherwise a horizontal gap that wide is a real column
@@ -293,17 +377,32 @@ Algorithm (per page):
    inside their own level rows, and p.53's own sorcerer table is unchanged
    while the FAMILIARS grid below it becomes a table group.
 
+   Measured scope of steps 2d/3a together (B10c-mand22): 14 more of the 322
+   pages change, again every one with an identical whitespace-token
+   multiset. Step 2d rebuilds the 7 grids that used to lose a column to
+   loose paragraphs (pp.41, 42, 63, 73, 220, 261, 264); step 3a
+   reorders the 7 pages carrying a boxed sidebar (pp.37, 46, 53, 54, 57,
+   58, 74), each of which now emits its body band complete before the
+   sidebar's. Of the 11 class-level-table pages, 10 are byte-identical;
+   p.41 (Table 3-10: The Monk) gains its Unarmored Speed Bonus column, and
+   p.53's own sorcerer table is again unchanged while a body paragraph
+   above the FAMILIARS sidebar is reunited with its own continuation.
+
 5. **Emit columns left to right, each column's blocks top to bottom**
-   (sorted by `yMin`), then continue with the next run after its wide
-   block or table group. Known remaining limitation (B10c-mand15): a table
-   group is a column break for the WHOLE page, even when it is only as wide
-   as one column, so a grid printed inside a boxed sidebar's left column
-   still cuts the page in two at its own `yMin` -- the sidebar's right
-   column is emitted in the run above the grid rather than after the left
-   column's own text below it. The sidebar now *opens* in printed order,
-   which is what the extraction prompt needs; making a narrow table group
-   participate in column clustering instead of breaking the page would be
-   the fuller fix.
+   (sorted by `yMin`), then continue with the next band, and with the next
+   run after its wide block or table group. Known remaining limitation
+   (B10c-mand15, still open after B10c-mand22): a table group is a column
+   break for the WHOLE page, even when it is only as wide as one column, so
+   a grid printed inside a boxed sidebar's left column still cuts the page
+   in two at its own `yMin` -- the sidebar's right column is emitted in the
+   run above the grid rather than after the left column's own text below
+   it. Step 3a now keeps BODY text out of the sidebar entirely, and the
+   sidebar opens at its own heading and first printed sentence, which is
+   what the extraction prompt needs; making a narrow table group take part
+   in column clustering instead of breaking the page is still the fuller
+   fix, and is deliberately not done here -- measured against the whole
+   Player's Handbook it reorders 48 further pages, class-level-table pages
+   among them, which is a redesign rather than a repair.
 
 **Emitting a table group.** A table group's member blocks' lines (for a
 step-2 multi-block table group) or one block's own lines (for a step-2a
@@ -324,7 +423,7 @@ prose.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from owlsperch.text.bbox import Block, Line, Page, Word
 
@@ -454,6 +553,33 @@ LABEL_GRID_MAX_MEDIAN_LABEL_WORDS = 3
 #: ordinary lines.
 LABEL_GRID_MIN_GAPPY_ROW_FRACTION = 0.50
 
+#: A detached column (step 2d, B10c-mand22) may sit at most this multiple of
+#: the group's own median word height clear of the group's x span. PHB p.41's
+#: Table 3-10 "Unarmored Speed Bonus" column stands 3.0 line heights off the
+#: grid's last claimed column.
+DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR = 4.0
+
+#: A detached column must carry at least this many lines (step 2d) -- fewer
+#: is a stray marginal note, not a printed column.
+DETACHED_COLUMN_MIN_LINES = 3
+
+#: ...and must cover at least this fraction of the group's own rows (step
+#: 2d): a real column has a cell in (nearly) every row of its table, which is
+#: what keeps an unrelated neighbouring block from being folded in.
+DETACHED_COLUMN_MIN_ROW_FRACTION = 0.5
+
+#: A run splits into horizontal bands (step 3a, B10c-mand22) at any band of
+#: whitespace running its full width that is at least this multiple of the
+#: run's median word glyph height tall.
+HORIZONTAL_BAND_GAP_HEIGHT_FACTOR = 4.0
+
+#: Two horizontal bands (step 3a, B10c-mand22) describe the same printed
+#: columns when every column's left and right edge is within this multiple of
+#: the run's median word glyph height of its counterpart's -- a boxed
+#: sidebar's box insets and widens its own columns by more than that, a
+#: full-width illustration gap leaves them exactly where they were.
+COLUMN_BAND_MATCH_HEIGHT_FACTOR = 0.5
+
 #: A column cluster wider than `WIDE_BLOCK_FRACTION` of the text area is two
 #: or more columns the greedy left-to-right chain bridged across a narrow
 #: gutter; it is split at its widest internal valley provided that valley is
@@ -517,9 +643,12 @@ def _is_label_value_block(block: Block) -> bool:
 @dataclass(frozen=True)
 class TableRow:
     """One row of a detected `TableGroup`: its cell texts, already ordered
-    left to right."""
+    left to right, plus the y-center its own source lines sat at
+    (B10c-mand22, so step 2d can tell which row a detached column's line
+    belongs to; 0.0 when unknown)."""
 
     cells: list[str] = field(default_factory=list)
+    y_center: float = 0.0
 
     @property
     def text(self) -> str:
@@ -540,6 +669,13 @@ class TableGroup:
     #: keeps cell text, not the source `Word` bboxes.
     median_word_height: float = 0.0
     max_word_height: float = 0.0
+    #: The rest of the group's own bounding box (B10c-mand22), which step 2d
+    #: needs in full: `x_min`/`x_max` to measure a detached column's
+    #: horizontal gap, and `y_min`/`y_max` to see whether some further-out
+    #: block overlaps the group's own rows (the side-by-side-halves guard).
+    x_min: float = 0.0
+    x_max: float = 0.0
+    y_max: float = 0.0
 
 
 def _text_area_width(blocks: list[Block]) -> float:
@@ -633,13 +769,16 @@ def _build_table_group(member_blocks: list[Block]) -> TableGroup:
     lines: list[Line] = [
         line for block in member_blocks for line in block.lines if line.text.strip()
     ]
-    y_min = min(b.y_min for b in member_blocks)
+    x_min, x_max, y_min, y_max = _group_extent(member_blocks)
     if not lines:
-        return TableGroup(rows=[], y_min=y_min)
+        return TableGroup(rows=[], y_min=y_min, x_min=x_min, x_max=x_max, y_max=y_max)
 
     row_clusters = _cluster_lines_into_rows(lines)
     rows = [
-        TableRow(cells=[ln.text for ln in sorted(cluster, key=lambda ln: ln.x_min)])
+        TableRow(
+            cells=[ln.text for ln in sorted(cluster, key=lambda ln: ln.x_min)],
+            y_center=_median([(ln.y_min + ln.y_max) / 2 for ln in cluster], default=0.0),
+        )
         for cluster in row_clusters
     ]
     all_words = [w for line in lines for w in line.words if w.text]
@@ -651,6 +790,9 @@ def _build_table_group(member_blocks: list[Block]) -> TableGroup:
         y_min=y_min,
         median_word_height=median_word_height,
         max_word_height=max_word_height,
+        x_min=x_min,
+        x_max=x_max,
+        y_max=y_max,
     )
 
 
@@ -856,9 +998,12 @@ def _build_single_block_table_or_prose_split(
 
     gappy = set(gappy_row_indices)
     rows = [
-        TableRow(cells=_split_words_at(words, confirmed_splits))
-        if i in gappy
-        else TableRow(cells=[" ".join(w.text for w in words)])
+        TableRow(
+            cells=_split_words_at(words, confirmed_splits)
+            if i in gappy
+            else [" ".join(w.text for w in words)],
+            y_center=_median([(w.y_min + w.y_max) / 2 for w in words], default=0.0),
+        )
         for i, words in enumerate(rows_words)
     ]
     all_words = [word for row in rows_words for word in row]
@@ -868,6 +1013,9 @@ def _build_single_block_table_or_prose_split(
         y_min=block.y_min,
         median_word_height=median_height,
         max_word_height=max_height,
+        x_min=block.x_min,
+        x_max=block.x_max,
+        y_max=block.y_max,
     )
 
 
@@ -1222,7 +1370,188 @@ def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[B
     return table_groups, pool
 
 
+def _detached_column_cells(block: Block, group: TableGroup, tolerance: float) -> dict[int, str]:
+    """Map each of `block`'s non-blank lines onto the index of the `group`
+    row it y-aligns with (step 2d). Empty when some line aligns with no row
+    within `tolerance`, or when two of them land on the same row -- a
+    printed column has exactly one cell per row it covers, so either is
+    evidence `block` is something else entirely."""
+    lines = [line for line in block.lines if line.text.strip()]
+    if not lines or not group.rows:
+        return {}
+    mapped: dict[int, str] = {}
+    for line in lines:
+        y_center = (line.y_min + line.y_max) / 2
+        best = min(range(len(group.rows)), key=lambda i: abs(group.rows[i].y_center - y_center))
+        if abs(group.rows[best].y_center - y_center) > tolerance or best in mapped:
+            return {}
+        mapped[best] = line.text
+    return mapped
+
+
+def _largest_mutually_overlapping(
+    candidates: list[tuple[int, Block, dict[int, str]]],
+) -> list[tuple[int, Block, dict[int, str]]]:
+    """The largest subset of `candidates` whose x-extents all overlap each
+    other -- the one printed column among them (step 2d).
+
+    Pairwise-overlapping intervals on a line always share a common point
+    (Helly's theorem in one dimension), so the largest such subset is simply
+    the candidates covering whichever endpoint the most of them cover. Taking
+    the largest subset rather than rejecting the whole side is what keeps one
+    stray fragment, aligned by coincidence at some other x, from costing the
+    real column its attachment."""
+    best: list[tuple[int, Block, dict[int, str]]] = []
+    for _, seed, _ in candidates:
+        for edge in (seed.x_min, seed.x_max):
+            subset = [c for c in candidates if c[1].x_min <= edge <= c[1].x_max]
+            if len(subset) > len(best):
+                best = subset
+    return best
+
+
+def _further_out_block_aligns_with_rows(
+    group: TableGroup,
+    pool: list[Block],
+    chosen: list[tuple[int, Block, dict[int, str]]],
+    tolerance: float,
+    column_gap: float,
+    *,
+    on_right: bool,
+) -> bool:
+    """Whether some block `chosen` does not include sits immediately BEYOND it
+    on the same side -- no column gutter (`column_gap`) between them -- and is
+    itself row-aligned with at least `DETACHED_COLUMN_MIN_LINES` of `group`'s
+    rows (step 2d).
+
+    That is the signature of a table printed as two side-by-side HALVES: PHB
+    p.112's Table 7-1: Random Starting Gold prints classes Barbarian-Fighter
+    in one half and Paladin-Wizard beside it, and the second half's own
+    `Class` column y-aligns with six of the first half's seven rows well
+    enough to pass every other test here -- while its `Amount` column
+    (prose-like, so never a candidate at all) would stay behind, leaving a
+    bogus three-column grid. Requiring the further-out block to be ROW-ALIGNED
+    too, not merely present, is what keeps this from rejecting a legitimate
+    detached column just because the next prose column of a three-column page
+    happens to overlap the grid's y range (PHB pp.63, 261) or a page number
+    sits below it (p.220); and requiring it to sit within a column gap of the
+    candidate -- p.112's `Amount` column is 8.3pt from its own `Class` column,
+    the two halves of one printed table -- is what keeps an UNRELATED table
+    further across the page from doing so (p.264's "Hit Points | Duration"
+    grid, 33.4pt beyond the polymorph table's own `Example` column, happens to
+    align with 4 of its 9 rows). Nothing at all sits beyond p.41's monk speed
+    column, which is what a real detached column looks like."""
+    chosen_indices = {index for index, _, _ in chosen}
+    edge = (
+        max(block.x_max for _, block, _ in chosen)
+        if on_right
+        else min(block.x_min for _, block, _ in chosen)
+    )
+    for index, block in enumerate(pool):
+        if index in chosen_indices:
+            continue
+        gap = block.x_min - edge if on_right else edge - block.x_max
+        if gap < 0 or gap > column_gap:
+            continue
+        if len(_detached_column_cells(block, group, tolerance)) >= DETACHED_COLUMN_MIN_LINES:
+            return True
+    return False
+
+
+def _attach_detached_column(
+    group: TableGroup, pool: list[Block], *, on_right: bool
+) -> tuple[TableGroup, list[Block]] | None:
+    """Fold a DETACHED COLUMN of `group` -- one or more leftover blocks
+    standing clear of its x span, whose every line y-aligns with a distinct
+    row -- back into those rows (see module docstring, step 2d). Returns the
+    rebuilt group and the pool the claimed blocks were removed from, or
+    `None` when nothing on this side qualifies."""
+    if not group.rows:
+        return None
+    height = group.median_word_height or 1.0
+    max_gap = DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR * height
+    tolerance = TABLE_ROW_FRACTION * height
+
+    candidates: list[tuple[int, Block, dict[int, str]]] = []
+    for index, block in enumerate(pool):
+        if _is_prose_like_block(block) or _is_label_value_block(block):
+            continue
+        gap = block.x_min - group.x_max if on_right else group.x_min - block.x_max
+        if gap < 0 or gap > max_gap:
+            continue
+        mapped = _detached_column_cells(block, group, tolerance)
+        if mapped:
+            candidates.append((index, block, mapped))
+    if not candidates:
+        return None
+
+    # The blocks have to read as ONE printed column, so keep only the largest
+    # mutually x-overlapping subset of them.
+    chosen = _largest_mutually_overlapping(candidates)
+
+    cells: dict[int, str] = {}
+    for _, _, mapped in chosen:
+        for row_index, text in mapped.items():
+            if row_index in cells:
+                return None
+            cells[row_index] = text
+    if len(cells) < DETACHED_COLUMN_MIN_LINES:
+        return None
+    if len(cells) < DETACHED_COLUMN_MIN_ROW_FRACTION * len(group.rows):
+        return None
+    column_gap = COLUMN_GAP_HEIGHT_FACTOR * height
+    if _further_out_block_aligns_with_rows(
+        group, pool, chosen, tolerance, column_gap, on_right=on_right
+    ):
+        return None
+
+    # Pad every row this column covers out to the group's own width first, so
+    # the new cell lands at the column's real index even on a row poppler
+    # emitted with fewer cells (a wrapped continuation of the row above it).
+    width = max(len(row.cells) for row in group.rows)
+    first, last = min(cells), max(cells)
+    rows = [
+        replace(row, cells=_row_with_detached_cell(row.cells, cells.get(i, ""), width, on_right))
+        if first <= i <= last
+        else row
+        for i, row in enumerate(group.rows)
+    ]
+
+    claimed = {index for index, _, _ in chosen}
+    return (
+        replace(
+            group,
+            rows=rows,
+            x_min=min(group.x_min, *(block.x_min for _, block, _ in chosen)),
+            x_max=max(group.x_max, *(block.x_max for _, block, _ in chosen)),
+        ),
+        [block for i, block in enumerate(pool) if i not in claimed],
+    )
+
+
+def _row_with_detached_cell(cells: list[str], cell: str, width: int, on_right: bool) -> list[str]:
+    padded = [*cells, *[""] * (width - len(cells))]
+    return [*padded, cell] if on_right else [cell, *padded]
+
+
+def _attach_detached_columns(
+    groups: list[TableGroup], pool: list[Block]
+) -> tuple[list[TableGroup], list[Block]]:
+    """Fold every detached column back into the table group it belongs to
+    (step 2d), returning the rebuilt groups and what is left of `pool`."""
+    result: list[TableGroup] = []
+    for group in groups:
+        for on_right in (True, False):
+            attached = _attach_detached_column(group, pool, on_right=on_right)
+            if attached is not None:
+                group, pool = attached
+        result.append(group)
+    return result, pool
+
+
 def _run_median_word_height(blocks: list[Block]) -> float:
+    """The median word glyph height across `blocks` -- the run's own text
+    size, which every column/band threshold is expressed as a multiple of."""
     heights = [
         word.y_max - word.y_min
         for block in blocks
@@ -1280,37 +1609,129 @@ def _split_over_wide_cluster(
     ]
 
 
-def _cluster_columns(blocks: list[Block], wide_threshold: float) -> list[Block]:
-    """Cluster `blocks` into left-to-right columns by a gap-based split of
-    their x-extents (see step 4), returning them concatenated column by
-    column, top to bottom within each column. The split threshold is
-    relative to the run's own text size, which is what lets this handle any
-    number of columns (one, two, three, four, ...) rather than assuming
-    two. Any cluster the greedy pass over-merged across a narrow gutter is
-    then repaired by `_split_over_wide_cluster` (step 4a)."""
-    if not blocks:
-        return []
+def _split_at_whitespace_bands(blocks: list[Block], band_gap: float) -> list[list[Block]]:
+    """Cut a run at every band of whitespace running its FULL width and at
+    least `band_gap` tall (see module docstring, step 3a) -- a y-interval
+    inside the run's y span that none of its blocks overlaps."""
+    if len(blocks) < 2:
+        return [blocks]
+    ordered = sorted(blocks, key=lambda b: b.y_min)
+    bands: list[list[Block]] = [[ordered[0]]]
+    reach = ordered[0].y_max
+    for block in ordered[1:]:
+        if block.y_min - reach >= band_gap:
+            bands.append([block])
+        else:
+            bands[-1].append(block)
+        reach = max(reach, block.y_max)
+    return bands
 
-    median_word_height = _run_median_word_height(blocks)
-    threshold = median_word_height * COLUMN_GAP_HEIGHT_FACTOR
-    min_valley = median_word_height * COLUMN_VALLEY_GAP_HEIGHT_FACTOR
 
+@dataclass(frozen=True)
+class _ColumnMetrics:
+    """The three run-relative lengths steps 4/4a/3a measure against, derived
+    once per run from its own median word glyph height."""
+
+    gap: float
+    wide_threshold: float
+    min_valley: float
+    band_match_tolerance: float
+
+
+def _column_clusters(blocks: list[Block], metrics: _ColumnMetrics) -> list[list[Block]]:
+    """One band's blocks grouped into left-to-right columns: the greedy
+    x-extent chain of step 4, each over-merged cluster then repaired by step
+    4a's valley split."""
     ordered = sorted(blocks, key=lambda b: b.x_min)
     clusters: list[list[Block]] = [[ordered[0]]]
     cluster_max_x: list[float] = [ordered[0].x_max]
     for block in ordered[1:]:
-        gap = block.x_min - cluster_max_x[-1]
-        if gap >= threshold:
+        if block.x_min - cluster_max_x[-1] >= metrics.gap:
             clusters.append([block])
             cluster_max_x.append(block.x_max)
         else:
             clusters[-1].append(block)
             cluster_max_x[-1] = max(cluster_max_x[-1], block.x_max)
 
-    result: list[Block] = []
+    columns: list[list[Block]] = []
     for cluster in clusters:
-        for piece in _split_over_wide_cluster(cluster, wide_threshold, min_valley):
-            result.extend(sorted(piece, key=lambda b: b.y_min))
+        columns.extend(
+            _split_over_wide_cluster(cluster, metrics.wide_threshold, metrics.min_valley)
+        )
+    return columns
+
+
+def _column_spans(columns: list[list[Block]]) -> list[tuple[float, float]]:
+    return [(min(b.x_min for b in c), max(b.x_max for b in c)) for c in columns]
+
+
+def _partitions_agree(
+    a: list[tuple[float, float]], b: list[tuple[float, float]], tolerance: float
+) -> bool:
+    """Whether two bands' column partitions describe the SAME printed columns
+    (see module docstring, step 3a): the same number of them, each one's left
+    and right edge within `tolerance` of its counterpart's.
+
+    This is what tells a boxed sidebar from a full-width illustration gap. A
+    sidebar's box insets and widens its own columns -- PHB p.46's sidebar
+    starts 5.6pt right of the body's left column and runs 8.2pt further --
+    while a figure gap leaves the very same columns above and below it, so
+    merging the two bands back together is not just safe there but required:
+    a paragraph continuing down the left column past the figure must stay
+    with its own column, not be read band by band."""
+    if len(a) != len(b):
+        return False
+    return all(
+        abs(x_a - x_b) <= tolerance and abs(y_a - y_b) <= tolerance
+        for (x_a, y_a), (x_b, y_b) in zip(a, b, strict=True)
+    )
+
+
+def _bands_with_distinct_partitions(
+    bands: list[list[Block]], metrics: _ColumnMetrics
+) -> list[list[Block]]:
+    """Merge back every pair of adjacent bands whose column partitions agree
+    (`_partitions_agree`), to a fixpoint -- so step 3a only ever keeps apart
+    bands that are really laid out differently (see step 3a)."""
+    merged = True
+    while merged and len(bands) > 1:
+        merged = False
+        spans = [_column_spans(_column_clusters(band, metrics)) for band in bands]
+        for i in range(len(bands) - 1):
+            if _partitions_agree(spans[i], spans[i + 1], metrics.band_match_tolerance):
+                bands = [*bands[:i], [*bands[i], *bands[i + 1]], *bands[i + 2 :]]
+                merged = True
+                break
+    return bands
+
+
+def _cluster_columns(blocks: list[Block], wide_threshold: float) -> list[Block]:
+    """Order one run's blocks: cut it into horizontal bands whose column
+    layouts actually differ (step 3a), then emit each band's columns left to
+    right, each column's blocks top to bottom (steps 4/4a). The thresholds
+    are relative to the run's own text size, which is what lets this handle
+    any number of columns (one, two, three, four, ...) rather than assuming
+    two."""
+    if not blocks:
+        return []
+
+    median_word_height = _run_median_word_height(blocks)
+    metrics = _ColumnMetrics(
+        gap=median_word_height * COLUMN_GAP_HEIGHT_FACTOR,
+        wide_threshold=wide_threshold,
+        min_valley=median_word_height * COLUMN_VALLEY_GAP_HEIGHT_FACTOR,
+        band_match_tolerance=median_word_height * COLUMN_BAND_MATCH_HEIGHT_FACTOR,
+    )
+
+    bands = _split_at_whitespace_bands(
+        blocks, median_word_height * HORIZONTAL_BAND_GAP_HEIGHT_FACTOR
+    )
+    bands = _bands_with_distinct_partitions(bands, metrics)
+
+    result: list[Block] = []
+    for band in bands:
+        for column in _column_clusters(band, metrics):
+            result.extend(sorted(column, key=lambda b: b.y_min))
     return result
 
 
@@ -1337,20 +1758,19 @@ def order_blocks(page: Page) -> list[Block | TableGroup]:
         else:
             other_blocks.append(block)
 
+    groups, other_blocks = _attach_detached_columns(
+        [*table_groups, *single_block_tables], other_blocks
+    )
+
     combined: list[tuple[float, Block | TableGroup]] = []
     combined.extend((b.y_min, b) for b in other_blocks)
-    combined.extend((tg.y_min, tg) for tg in table_groups)
-    combined.extend((tg.y_min, tg) for tg in single_block_tables)
+    combined.extend((tg.y_min, tg) for tg in groups)
     combined.sort(key=lambda item: item[0])
 
     result: list[Block | TableGroup] = []
     run: list[Block] = []
     for _, item in combined:
-        if isinstance(item, TableGroup):
-            result.extend(_cluster_columns(run, wide_threshold))
-            result.append(item)
-            run = []
-        elif item.width > wide_threshold:
+        if isinstance(item, TableGroup) or item.width > wide_threshold:
             result.extend(_cluster_columns(run, wide_threshold))
             result.append(item)
             run = []
