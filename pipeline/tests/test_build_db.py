@@ -17,7 +17,8 @@ from typing import Any
 
 import yaml
 
-from owlsperch.build_db.runner import build_db, flatten_fields, run_build_db
+from owlsperch.build_db.runner import _class_owned_names, build_db, flatten_fields, run_build_db
+from owlsperch.supersede import normalize_heading
 
 
 def _repo_schemas_dir() -> Path:
@@ -1371,7 +1372,7 @@ def test_build_db_leaves_a_sidebar_inside_a_class_span_canonical(tmp_path: Path)
 def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path) -> None:
     """Batch B10c-mand11 (follow-up): this pass has the class RECORD in
     hand, so a fragment named after one of the class's own printed
-    feature/section headings ("Wild Shape", "Adventures") is superseded even
+    feature/section headings ("Wild Shape", "Ex-Testclasses") is superseded even
     though the heading isn't class-structural on its own -- while a printed
     sidebar on the same pages ("Familiars") still stays canonical. A
     parenthetical suffix on the printed feature heading ("Wild Shape (Su)")
@@ -1392,7 +1393,7 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
         {"name": "Venom Immunity (Ex)", "level": 2, "text_md": "You resist poison."},
     ]
     class_record["fields"]["description_sections"] = [
-        {"heading": "Adventures", "text_md": "Why a testclass adventures."}
+        {"heading": "Ex-Testclasses", "text_md": "A testclass who strays loses it all."}
     ]
     _write_record(data_dir, "book", "class", "testclass", class_record)
     _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
@@ -1400,7 +1401,7 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
     for slug, name, seg_id in (
         ("wild-shape", "Wild Shape", "book-p0003-01"),
         ("venom-immunity", "Venom Immunity", "book-p0003-02"),
-        ("adventures", "Adventures", "book-p0003-03"),
+        ("ex-testclasses", "Ex-Testclasses", "book-p0003-03"),
         ("familiars", "Familiars", "book-p0003-04"),
     ):
         _write_record(
@@ -1415,12 +1416,12 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
         data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
     )
     assert result.skipped_invalid == 0, result.skipped
-    # Wild Shape + Venom Immunity + Adventures -- never Familiars.
+    # Wild Shape + Venom Immunity + Ex-Testclasses -- never Familiars.
     assert result.superseded == 3
 
     conn = _connect(result.db_path)
     try:
-        for slug in ("wild-shape", "venom-immunity", "adventures"):
+        for slug in ("wild-shape", "venom-immunity", "ex-testclasses"):
             row = conn.execute(
                 "SELECT canonical, superseded_by FROM records WHERE id = ?",
                 (f"rules_section:book:{slug}",),
@@ -1438,27 +1439,47 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
         conn.close()
 
 
+def test_class_owned_names_excludes_generic_flavor_headings() -> None:
+    """A class's "Alignment"/"Races"/... description headings are printed
+    by every class, so they must not let one class demote its neighbour's
+    same-named fragment on a shared page (B10c-mand11 review finding)."""
+    record = {
+        "name": "Testclass",
+        "fields": {
+            "class_features": [{"name": "Wild Shape (Su)"}],
+            "description_sections": [
+                {"heading": "Alignment"},
+                {"heading": "Races"},
+                {"heading": "Other Classes"},
+                {"heading": "Ex-Testclasses"},
+            ],
+        },
+    }
+    names = _class_owned_names(record)
+    assert normalize_heading("Wild Shape") in names
+    assert normalize_heading("Ex-Testclasses") in names
+    for generic in ("Alignment", "Races", "Other Classes", "Class Features"):
+        assert normalize_heading(generic) not in names
+
+
 def test_class_owned_names_collects_every_printed_heading() -> None:
     """The name set is built once per class record, from its own `name`,
     every `class_features[].name`, and every `description_sections[]
     .heading` -- all normalized (parentheticals dropped, case and
     punctuation folded)."""
-    from owlsperch.build_db.runner import _class_owned_names
-
     class_record = _valid_class_record()
     class_record["fields"]["class_features"] = [
         {"name": "Wild Shape (Su)", "level": 1, "text_md": "..."},
     ]
     class_record["fields"]["description_sections"] = [
-        {"heading": "Adventures", "text_md": "..."},
-        {"heading": "Alignment", "text_md": "..."},
+        {"heading": "Ex-Testclasses", "text_md": "..."},
+        {"heading": "Alignment", "text_md": "..."},  # generic: excluded
     ]
 
     assert _class_owned_names(class_record) == {
         "testclass",
         "wildshape",
-        "adventures",
-        "alignment",
+        "extestclasses",
     }
     # A class record with neither list (a bare prestige-class shape) still
     # yields just its own name, never an empty-string entry.

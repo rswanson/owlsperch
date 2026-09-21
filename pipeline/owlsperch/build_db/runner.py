@@ -658,6 +658,28 @@ def _load_records(
             result.counts_by_type[type_dir] = result.counts_by_type.get(type_dir, 0) + 1
 
 
+#: Normalized flavor/section headings every class prints (B10c-mand11):
+#: never used as class-specific ownership evidence by `_class_owned_names`.
+_GENERIC_CLASS_SECTION_HEADINGS: frozenset[str] = frozenset(
+    normalize_heading(h)
+    for h in (
+        "Adventures",
+        "Characteristics",
+        "Alignment",
+        "Religion",
+        "Background",
+        "Races",
+        "Other Classes",
+        "Role",
+        "Abilities",
+        "Classes",
+        "Game Rule Information",
+        "Class Skills",
+        "Class Features",
+    )
+)
+
+
 def _class_owned_names(class_record: Mapping[str, Any]) -> set[str]:
     """Batch B10c-mand11: the normalized (`owlsperch.supersede.
     normalize_heading`) set of printed headings ONE class record owns by
@@ -680,7 +702,13 @@ def _class_owned_names(class_record: Mapping[str, Any]) -> set[str]:
             if isinstance(section, Mapping):
                 names.add(normalize_heading(str(section.get("heading", ""))))
     names.discard("")
-    return names
+    # Every class prints the same flavor run-in headings (Adventures,
+    # Alignment, Races, ...). A class span runs one page past its toc end,
+    # so the NEXT class's own "Alignment"/"Races" fragment on the shared
+    # page would otherwise be demoted under the PREVIOUS class's id
+    # (first class wins). Those generic headings are never class-specific
+    # evidence of ownership, so they are excluded here.
+    return names - _GENERIC_CLASS_SECTION_HEADINGS
 
 
 def _apply_superseding(conn: sqlite3.Connection) -> int:

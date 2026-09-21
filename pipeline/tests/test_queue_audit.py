@@ -984,7 +984,10 @@ def test_fix_book_never_overwrites_an_existing_destination(tmp_path: Path) -> No
     assert (data_dir / "superseded" / "book" / "rules_section" / "familiars.json").is_file()
 
     restored = _read_segment(data_dir, "book", "book-p0053-03")
-    assert restored["superseded_by"] is None
+    # Still stamped: a blocked entry must be retried by a later --fix, so
+    # the segment stays in `wrongly_superseded` rather than silently
+    # dropping out with its file stranded under superseded/.
+    assert restored["superseded_by"] == "book-class-p0052"
     assert restored["records"] == []
     assert restored["released_records"] == [
         {
@@ -992,6 +995,12 @@ def test_fix_book_never_overwrites_an_existing_destination(tmp_path: Path) -> No
             "moved_to": "superseded/book/rules_section/familiars.json",
         }
     ]
+    # Once the collision is cleared, the next --fix restores it.
+    live.unlink()
+    results = fix_book("book", data_dir=data_dir)
+    assert results[0]["blocked"] == []
+    assert results[0]["restored_paths"] == ["records/book/rules_section/familiars.json"]
+    assert _read_segment(data_dir, "book", "book-p0053-03")["superseded_by"] is None
 
 
 def test_fix_book_leaves_a_wrongly_superseded_segment_in_human_untouched(tmp_path: Path) -> None:

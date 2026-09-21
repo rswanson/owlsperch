@@ -834,8 +834,10 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `tier`/`attempts` exactly as they are (those records had already passed
   validation before the wrong stamp). A destination that already exists is
   never overwritten -- that file stays under `superseded/`, is reported in
-  the entry's own `blocked` list with a reason, and keeps its
-  `released_records` entry so the pointer isn't lost -- and a segment in
+  the entry's own `blocked` list with a reason, keeps its
+  `released_records` entry, and the segment KEEPS its `superseded_by`
+  stamp so it stays in `wrongly_superseded` and the next `--fix` retries
+  it once the collision is cleared -- and a segment in
   `human/` is reported but left completely untouched, like everywhere else
   here. A second `--fix` is a no-op (the restored segment no longer carries
   `superseded_by`), and `queue summary`'s `superseded` count drops for it

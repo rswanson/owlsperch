@@ -552,7 +552,13 @@ def _restore_segment(
         if entry.path not in segment.records:
             segment.records = [*segment.records, entry.path]
 
-    segment.superseded_by = None
+    # A blocked entry keeps the segment stamped: clearing `superseded_by`
+    # here would drop it out of `wrongly_superseded` on the next run and
+    # leave the stranded file under `superseded/` unreported forever.
+    # Leaving the stamp in place makes the next `--fix` retry it once the
+    # collision at the destination is cleared.
+    if not blocked:
+        segment.superseded_by = None
     segment.released_records = kept
     return restored, moved, blocked
 
