@@ -401,7 +401,18 @@ _SEGMENT_5: dict[str, Any] = {
     "printed_pages": [5],
     "kind_hint": "class",
     "heading": "Fixture Mage",
-    "text": "Fixture Mage\n\nHit Die: d4.",
+    # (batch B10c-mand20) The level table's own grid must be traceable to
+    # this segment's own text -- `_CLASS_TABLE` below is this class's
+    # `level_table`, so its cells must actually appear here.
+    "text": (
+        "Fixture Mage\n\nHit Die: d4.\n\n"
+        "Table 1: The Fixture Mage\n"
+        "Level\tBase Attack Bonus\tFort Save\tRef Save\tWill Save\tSpecial\t"
+        "Spells per Day 1st\n"
+        "1st\t+0\t+0\t+0\t+2\tArcane bond\t1\n"
+        "2nd\t+1\t+0\t+0\t+3\t-\t2\n"
+        "3rd\t+1\t+1\t+1\t+3\tBonus feat\t3"
+    ),
     "status": "pending",
     "tier": "sonnet",
     "attempts": [],

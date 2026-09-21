@@ -58,7 +58,9 @@ def _write_manifest(tmp_path: Path) -> Path:
     return path
 
 
-def _write_segment(data_dir: Path, book_id: str, seg_id: str, pages: list[int]) -> None:
+def _write_segment(
+    data_dir: Path, book_id: str, seg_id: str, pages: list[int], *, text: str | None = None
+) -> None:
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
     segment = {
@@ -68,7 +70,7 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, pages: list[int]) 
         "printed_pages": pages,
         "kind_hint": "spell",
         "heading": "Test Spell",
-        "text": "Test Spell\n\nEvocation Level: Sor/Wiz 3.",
+        "text": text if text is not None else "Test Spell\n\nEvocation Level: Sor/Wiz 3.",
         "status": "pending",
         "tier": "haiku",
         "attempts": [],
@@ -312,7 +314,18 @@ def built_data_dir(tmp_path: Path) -> Path:
     manifest_path = _write_manifest(tmp_path)
     _write_toc(data_dir, "book-a")
 
-    _write_segment(data_dir, "book-a", "book-a-p0001-01", [1])
+    _write_segment(
+        data_dir,
+        "book-a",
+        "book-a-p0001-01",
+        [1],
+        # (B10c-mand20) this segment also owns `table-1-1-sable-ranks`
+        # below -- its own grid must be traceable to this segment's text.
+        text=(
+            "Test Spell\n\nEvocation Level: Sor/Wiz 3.\n\n"
+            "Table 1-1: Sable Ranks\nRank\tTitle\n1\tInitiate\n2\tAdept"
+        ),
+    )
     _write_segment(data_dir, "book-b", "book-b-p0001-01", [1])
     _write_segment(data_dir, "book-a-errata", "book-a-errata-p0001-01", [1])
 

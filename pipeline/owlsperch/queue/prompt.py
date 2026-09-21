@@ -952,6 +952,17 @@ def _table_convention_lines(
         "`fields.parent_record`, never inlined as markdown inside",
         "`text_md`.",
         "",
+        "A `table` record may ONLY be written from a grid whose cells are",
+        "present in THIS segment's own text -- never invented, even to",
+        "satisfy the rule above. If a printed grid is referenced here but",
+        "the grid itself is not present (this segment is cut before it",
+        "reaches the table), write the entity's own record WITHOUT that",
+        "table (omit its id from `tables`) and say so in your reply's",
+        "`notes` -- do NOT answer `needs_context` for a missing table alone,",
+        "since that discards the entity record you already extracted",
+        "correctly; reserve `needs_context` for when the ENTITY ITSELF is",
+        "truncated.",
+        "",
     ]
     if "table" not in registry.types:
         return lines

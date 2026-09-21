@@ -1465,11 +1465,218 @@ def check_class_segment_coverage(
     return errors
 
 
-#: Segment-aware checks (B10c-mand12), keyed by type name. Like
-#: `TYPE_CONTEXT_CHECKS` these are dispatched by
+# ---------------------------------------------------------------------------
+# Batch B10c-mand20 (judge round 4, blocker 1): a `table` record's own
+# `check_table_fields` only checks INTERNAL shape (row/column lengths,
+# empty-cell-style consistency) -- nothing checked that a printed grid a
+# table record claims to transcribe actually appears in its owning
+# segment's own text. A haiku extractor handed a truncated rules_section
+# segment (`phb1-p0046-02`, 639 characters -- the sidebar's opening
+# paragraph only) INVENTED a whole plausible-looking progression grid to
+# satisfy the "each printed grid is its own table" prompt rule instead of
+# answering `needs_context`: `table:phb1:the-paladins-mount` passed schema
+# and `check_table_fields` while its "Natural Armor Adj." values and its
+# "Regeneration 1/round"/"Immunity to magic sleep and animal friendship"
+# Special entries appear nowhere in the book at all. This section adds the
+# segment-aware check that catches it.
+# ---------------------------------------------------------------------------
+
+#: Superscript footnote digits/marks (or a dagger/double-dagger note
+#: marker) that can appear glued to a printed table cell -- stripped before
+#: comparing a cell against the owning segment's own text. A footnote
+#: reference printed as a bare, non-superscript digit glued directly onto a
+#: word (e.g. PHB p.163's "Additional" table printing "Obstacle1", with the
+#: footnote text itself elsewhere in the segment) is NOT covered by this --
+#: it's handled by `_table_cell_matches_text`'s prefix-tolerant token match
+#: instead, since stripping a bare trailing digit here would just as easily
+#: eat a real value like a table's "1st" row label.
+_FOOTNOTE_MARK_CHARS = "¹²³⁰⁴⁵⁶⁷⁸⁹†‡"
+
+#: Curly quotes/apostrophes and prime marks folded to their plain ASCII
+#: equivalent before comparison (B10c-mand20 review finding 1) -- a cell's
+#: own JSON string and the segment's own extracted text don't always agree
+#: on which glyph a printed apostrophe/quote became.
+_QUOTE_FOLD_TABLE = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "‛": "'",
+        "′": "'",
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "″": '"',
+    }
+)
+
+
+def _normalize_table_text(text: str) -> str:
+    """The shared comparison form for `check_table_cells_in_segment`: fold
+    every dash-like character (`slugify`'s own `Pd`-category rule, plus the
+    Unicode minus -- the same fold `_normalize_cell` uses) to a plain `-`,
+    drop footnote superscript marks (`_FOOTNOTE_MARK_CHARS`), fold curly
+    quotes/primes to their ASCII equivalent (`_QUOTE_FOLD_TABLE`), casefold,
+    collapse a space right after a `/` (B10c-mand20 review finding 1: the
+    real PHB barbarian's iterative-attack cell "+18/+13/+8/+3" is
+    reconstructed with a stray space after each slash, "+18/ +13/ +8/ +3"),
+    and collapse ALL remaining whitespace -- including a paragraph break --
+    to a single space, so a cell can be compared against the segment's
+    whole text as one line regardless of where a printed line break
+    falls."""
+    folded = "".join(
+        "-" if unicodedata.category(ch) == "Pd" or ch == _UNICODE_MINUS else ch for ch in text
+    )
+    folded = "".join(ch for ch in folded if ch not in _FOOTNOTE_MARK_CHARS)
+    folded = folded.translate(_QUOTE_FOLD_TABLE)
+    folded = folded.casefold()
+    folded = re.sub(r"/\s+", "/", folded)
+    return re.sub(r"\s+", " ", folded).strip()
+
+
+#: A cell's alphanumeric "words", for the token-subsequence fallback below.
+_TABLE_CELL_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+#: A cell has a "real word" -- and so is eligible for the token-subsequence
+#: fallback below -- only once it contains an alphabetic run of at least
+#: this many letters. A short/numeric cell ("3rd", "+18/+13/+8/+3", "1st")
+#: never does, and is instead held to a literal-substring match: the
+#: fallback's per-token match is prefix-tolerant in both directions (needed
+#: for a real word split across a footnote-glued digit, see below), which
+#: over a whole-table-text token stream lets a short numeric cell like
+#: "3rd" match a `startswith` hit on an unrelated "3" token (e.g. from
+#: "Table 3-12") -- vacuous, and the exact real-corpus gap the B10c-mand20
+#: review found: `familiar-progression`'s invented "1st-2nd"/"3rd-4th"/...
+#: row labels only partly failed under the old rule.
+_ALPHA_WORD_RE = re.compile(r"[a-z]{3,}")
+
+
+def _table_cell_matches_text(cell: str, normalized_text: str, text_tokens: list[str]) -> bool:
+    """Whether one table cell (a header or a row cell) is supported by the
+    owning segment's own text.
+
+    A cell that normalizes to nothing, or to ONLY dash-placeholder
+    characters (`_DASH_PLACEHOLDER_CHARS` -- "no printed value"), always
+    passes -- there's nothing to check it against. Otherwise it passes when
+    its own normalized form appears as a literal substring of the
+    segment's (also normalized, whitespace-collapsed) text.
+
+    A cell with no "real word" -- no alphabetic run of >= 3 letters
+    (`_ALPHA_WORD_RE`), i.e. a short or purely numeric cell -- is held to
+    THAT test alone: nothing else is tight enough to check a value this
+    short without becoming vacuous (see `_ALPHA_WORD_RE`'s own docstring).
+
+    A cell WITH a real word additionally passes when every one of its
+    alphanumeric tokens (`_TABLE_CELL_TOKEN_RE`) appears, in the SAME order
+    (not necessarily contiguous), somewhere in the segment's own token
+    stream. This is what a real, correctly-extracted word cell needs when
+    its printed form doesn't survive as one contiguous run of text: a
+    stacked two-line header merged into one column per the prompt's own
+    rule (e.g. "Base" + "Attack Bonus" -> "Base Attack Bonus"), or a
+    footnote printed as a bare digit glued onto a word with no space and no
+    superscript codepoint (PHB p.163's "Obstacle1", whose footnote note the
+    extractor correctly folds into the cell as "Obstacle (may require a
+    skill check)" -- caught by the per-token match being prefix-tolerant in
+    EITHER direction, so the cell token "obstacle" matches the text token
+    "obstacle1"). Token order is required only WITHIN one cell, not across
+    the whole table, so this stays tight enough to still fail a genuinely
+    invented cell -- calibrated against every real table in the corpus,
+    see `check_table_cells_in_segment`."""
+    normalized_cell = _normalize_table_text(cell).strip(" .,;:")
+    if not normalized_cell or all(ch in _DASH_PLACEHOLDER_CHARS for ch in normalized_cell):
+        return True
+    if normalized_cell in normalized_text:
+        return True
+    if not _ALPHA_WORD_RE.search(normalized_cell):
+        return False
+    cell_tokens = _TABLE_CELL_TOKEN_RE.findall(normalized_cell)
+    if not cell_tokens:
+        return True
+    remaining = iter(text_tokens)
+    for token in cell_tokens:
+        for candidate in remaining:
+            if candidate == token or candidate.startswith(token) or token.startswith(candidate):
+                break
+        else:
+            return False
+    return True
+
+
+def check_table_cells_in_segment(
+    record: dict[str, Any], segment: dict[str, Any] | None
+) -> list[str]:
+    """(B10c-mand20): every non-empty `table` cell -- every `columns`
+    header and every `rows` cell -- must be traceable to the OWNING
+    SEGMENT's own text, not merely schema-shaped (see the module comment
+    above for the real-corpus defect this exists to catch).
+
+    Skipped silently -- same convention as `check_class_segment_coverage`
+    -- when there is no segment, no segment `text`, no usable `fields`, or
+    no cells to check at all. One combined error per table (never one per
+    cell, which would let a single bad table dominate a `validate --json`
+    run's error list), naming the first 3 offending cells in printed order
+    plus the total offending/checked count, e.g. "The Paladin's Mount: 28
+    of 30 cells are not in the owning segment's text (e.g. 'Paladin
+    Level', 'Bonus HD', 'Natural Armor Adj.')".
+
+    Calibrated against every real `table` record under phb1 (65 tables):
+    besides the fabricated Paladin's Mount, this also catches
+    `familiar-progression` -- its "Master Class Level" header and
+    "1st-2nd"/"3rd-4th"/... row labels are a generic D&D level-bracket
+    guess for a table the segment's own text never reaches (it ends mid-
+    description, before the real numeric grid), the same failure mode as
+    the Paladin's Mount with mostly-blank data cells instead of invented
+    ones -- left here as a second real finding, not suppressed. Every
+    other real table passes, including the ones that need the widened
+    normalization above (e.g. `additional`'s footnote-folded "Obstacle
+    (may require a skill check)" cell)."""
+    if segment is None:
+        return []
+    text = segment.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return []
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return []
+
+    name_raw = record.get("name")
+    name = name_raw if isinstance(name_raw, str) and name_raw.strip() else record.get("id")
+
+    cells: list[str] = []
+    columns = fields.get("columns")
+    if isinstance(columns, list):
+        cells.extend(cell for cell in columns if isinstance(cell, str))
+    rows = fields.get("rows")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, list):
+                cells.extend(cell for cell in row if isinstance(cell, str))
+    if not cells:
+        return []
+
+    normalized_text = _normalize_table_text(text)
+    text_tokens = _TABLE_CELL_TOKEN_RE.findall(normalized_text)
+
+    offenders = [
+        cell for cell in cells if not _table_cell_matches_text(cell, normalized_text, text_tokens)
+    ]
+    if not offenders:
+        return []
+
+    examples = ", ".join(repr(cell) for cell in offenders[:3])
+    return [
+        f"{name}: {len(offenders)} of {len(cells)} cells are not in the owning "
+        f"segment's text (e.g. {examples})"
+    ]
+
+
+#: Segment-aware checks (B10c-mand12, plus B10c-mand20's table check),
+#: keyed by type name. Like `TYPE_CONTEXT_CHECKS` these are dispatched by
 #: `owlsperch.validate.runner.validate_record`, which already resolves the
 #: originating segment for `check_pages_within_segment`.
 TYPE_SEGMENT_CHECKS: dict[str, Callable[[dict[str, Any], dict[str, Any] | None], list[str]]] = {
     "class": check_class_segment_coverage,
     "prestige_class": check_class_segment_coverage,
+    "table": check_table_cells_in_segment,
 }
