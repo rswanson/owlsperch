@@ -48,12 +48,21 @@
         "name": "Spells",
         "level": 1,
         "text_md": "A sable adept casts arcane spells drawn from the sable adept spell list."
+      },
+      {
+        "name": "Bonus Spells",
+        "level": 1,
+        "text_md": "A sable adept with a high Intelligence score gains bonus spells per day, as normal for a prepared caster."
       }
     ],
     "description_sections": [
       {
         "heading": "Adventures",
         "text_md": "Sable adepts adventure to expand their private catalog of shadow-lore, rarely for gold or glory."
+      },
+      {
+        "heading": "Abilities",
+        "text_md": "Intelligence determines the power of a sable adept's spells, since she draws on quiet study rather than raw force."
       }
     ],
     "weapon_and_armor_proficiency": "A sable adept is proficient with all simple weapons, but not with any armor or shields.",

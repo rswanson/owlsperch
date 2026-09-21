@@ -586,6 +586,187 @@ def test_prestige_class_prompt_alignment_is_verbatim(tmp_path: Path) -> None:
     assert 'heading: "Alignment"' in text
 
 
+# ---------------------------------------------------------------------------
+# Batch B10c-mand13: five class-quality-judgement (2026-09-18) prompt rules --
+# coverage completeness (Ex-<Class>/Abilities), run-in Class Features
+# headings as their own entries, verbatim/complete feature text, sidebars
+# extracted separately, and the second-table convention covering every
+# owned table, not only the level table.
+# ---------------------------------------------------------------------------
+
+
+def test_class_prompt_requires_ex_class_and_abilities_sections(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="class", heading="Paladin")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "coverage" in text.lower()
+    assert "`Ex-<Class>`" in text
+    assert '`heading: "Abilities"`' in text
+
+
+def test_prestige_class_prompt_requires_ex_entry_and_abilities_sections(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "coverage" in text.lower()
+    assert "`Ex-<Entry>`" in text
+    assert '`heading: "Abilities"`' in text
+
+
+def test_class_prompt_run_in_class_features_headings_are_own_entries(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="class", heading="Cleric")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "bold run-in heading" in text
+    assert "Deity, Domains, and Domain Spells" in text
+    assert "Spontaneous Casting" in text
+    assert "never nested as a paragraph" in text
+
+
+def test_prestige_class_prompt_run_in_class_features_headings_are_own_entries(
+    tmp_path: Path,
+) -> None:
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "bold run-in heading" in text
+    assert "never nested as a paragraph" in text
+
+
+def test_class_prompt_feature_text_is_complete_and_verbatim(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="class", heading="Bard")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "COMPLETE printed text" in text
+    assert "Never condense, paraphrase, reorder, or drop" in text
+    assert "never silently" in text.lower()
+    assert "correct a printed typo" in text
+
+
+def test_prestige_class_prompt_feature_text_is_complete_and_verbatim(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "COMPLETE printed text" in text
+    assert "Never condense, paraphrase, reorder, or drop" in text
+
+
+def test_class_prompt_sidebars_are_not_this_classs_content(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="class", heading="Druid")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "titled sidebar" in text.lower()
+    assert "FAMILIARS" in text
+    assert "THE PALADIN'S MOUNT" in text
+    assert "extracted" in text and "by its own segment" in text.replace("\n", " ")
+    assert "do not write" in text
+    assert "UNTITLED grid" in text
+
+
+def test_prestige_class_prompt_sidebars_are_not_this_entrys_content(tmp_path: Path) -> None:
+    segment = _segment(kind_hint="prestige_class", heading="Sable Knight")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "titled sidebar" in text.lower()
+    assert "extracted" in text and "by its own segment" in text.replace("\n", " ")
+    assert "do not write" in text
+    assert "UNTITLED grid" in text
+
+
+def test_class_prompt_second_table_convention_is_not_limited_to_level_table(
+    tmp_path: Path,
+) -> None:
+    """Judge finding 5's follow-up: the "Tables belonging to this entity"
+    convention must not read as limited to a class's own level-progression
+    table."""
+    segment = _segment(kind_hint="class", heading="Bard")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "not only a class's level-progression table" in text
+    assert "secondary" in text and "titled table" in text
+
+
+def test_table_prompt_folds_footnote_into_caption_and_keeps_header_order(
+    tmp_path: Path,
+) -> None:
+    segment = _segment(kind_hint="table", heading="Table 3-10: The Monk")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    assert "footnote" in text.lower()
+    assert "folded into this table's own `caption`" in text
+    assert '"Unarmored Speed Bonus"' in text
+
+
 def test_prompt_says_extraction_values_are_placeholders(tmp_path: Path) -> None:
     segment = _segment()
     manifest_path = _write_manifest(tmp_path)
