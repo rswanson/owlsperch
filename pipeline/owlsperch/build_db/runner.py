@@ -162,7 +162,11 @@ from owlsperch.build_db.precedence import (
     write_unmatched_overrides,
 )
 from owlsperch.manifest import ManifestEntry, default_manifest_path, load_manifest, status_for
-from owlsperch.supersede import is_class_owned_fragment, normalize_heading
+from owlsperch.supersede import (
+    GENERIC_CLASS_SECTION_HEADINGS,
+    is_class_owned_fragment,
+    normalize_heading,
+)
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import entry_for_page, load_toc
 from owlsperch.toc.parser import Toc
@@ -658,28 +662,6 @@ def _load_records(
             result.counts_by_type[type_dir] = result.counts_by_type.get(type_dir, 0) + 1
 
 
-#: Normalized flavor/section headings every class prints (B10c-mand11):
-#: never used as class-specific ownership evidence by `_class_owned_names`.
-_GENERIC_CLASS_SECTION_HEADINGS: frozenset[str] = frozenset(
-    normalize_heading(h)
-    for h in (
-        "Adventures",
-        "Characteristics",
-        "Alignment",
-        "Religion",
-        "Background",
-        "Races",
-        "Other Classes",
-        "Role",
-        "Abilities",
-        "Classes",
-        "Game Rule Information",
-        "Class Skills",
-        "Class Features",
-    )
-)
-
-
 def _class_owned_names(class_record: Mapping[str, Any]) -> set[str]:
     """Batch B10c-mand11: the normalized (`owlsperch.supersede.
     normalize_heading`) set of printed headings ONE class record owns by
@@ -707,8 +689,10 @@ def _class_owned_names(class_record: Mapping[str, Any]) -> set[str]:
     # so the NEXT class's own "Alignment"/"Races" fragment on the shared
     # page would otherwise be demoted under the PREVIOUS class's id
     # (first class wins). Those generic headings are never class-specific
-    # evidence of ownership, so they are excluded here.
-    return names - _GENERIC_CLASS_SECTION_HEADINGS
+    # evidence of ownership, so they are excluded here -- from the one
+    # shared set in `owlsperch.supersede`, which
+    # `build_db.precedence._class_heading_names` subtracts too (B10c-mand17).
+    return names - GENERIC_CLASS_SECTION_HEADINGS
 
 
 def _apply_superseding(conn: sqlite3.Connection) -> int:

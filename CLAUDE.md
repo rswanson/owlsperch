@@ -1171,8 +1171,45 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   slugify(target_name)`, appending the entry's id to every match's
   `applied_overrides`), else, if `target_page` is given, PAGE (records
   whose own `pages` contain it, narrowed to a normalized-name overlap when
-  more than one, or accepted outright when exactly one) -- an entry
-  matching neither is written to `human/<book_id>/overrides/<entry-
+  more than one, or accepted outright when exactly one) -- then, batch
+  B10c-mand17 (the 2026-09-21 class-quality judgement's finding E: a class
+  record absorbs its own feature-level `rules_section` fragments, so four
+  PHB errata entries -- the druid's Wild Shape/A Thousand Faces/Animal
+  Companion, the paladin's Special Mount -- matched nothing at all and
+  their corrections never reached the class page), two FALLBACKS when no
+  live record matched AT ALL -- an AMBIGUOUS live page match (two same-page
+  candidates whose names overlap the target) still stays unmatched and
+  reported, never falls through to a class-level apply: (a) the same NAME-then-PAGE match run over the
+  target book's SUPERSEDED records (`superseded_by` set, so outside every
+  pool), each hit resolved to whatever superseded it (`_superseding_root`
+  -- walked and cycle-guarded like `_root_of`, and only counted when that
+  root is itself a live non-override record, so no dangling
+  `applied_overrides` id is ever written), and failing that (b) a UNIQUE
+  same-book `class`/`prestige_class` record whose own
+  `fields.class_features[].name` or `fields.description_sections[].heading`
+  normalizes (`owlsperch.supersede.normalize_heading`, parentheticals
+  dropped -- so "Special Mount (Sp)" matches a bare "Special Mount") to
+  `target_name`, narrowed to classes whose own `pages` contain
+  `target_page` when the entry gives one (the real "Animal Companion
+  (p. 36)" case: the druid and the ranger both print that feature, the page
+  picks the druid) and with `owlsperch.supersede`'s shared
+  `GENERIC_CLASS_SECTION_HEADINGS` set subtracted first -- the same
+  frozenset `build_db.runner._class_owned_names` subtracts, moved into
+  `supersede.py` by B10c-mand17 so both callers share one definition -- so
+  a heading every class prints ("Alignment", "Class Features") is never
+  ownership evidence; `fields.class_skills` is deliberately NOT consulted (a
+  class listing "Listen" as a class skill is not the target of an erratum
+  correcting the Listen skill); (a) is deliberately tried first,
+  since when both hit they name the same class record (the fragment was
+  superseded BY that class precisely because the class owns a feature of
+  that name) and the fragment's own stored `superseded_by` is the harder
+  evidence of which record absorbed that printed text; a heading several
+  classes print ("Spells"), or a heading with no `target_page` to narrow by,
+  resolves to nothing rather than to an arbitrary one of them, and the superseded fragment itself is never written to (it stays
+  outside the pool, so only the superseding record's own
+  `applied_overrides` grows and `_merge_overrides_to_winners` carries it
+  onward as for any other match) -- an entry matching none of these steps
+  is written to `human/<book_id>/overrides/<entry-
   slug>.json` (a SUBDIRECTORY, deliberately: `queue/summary.py`,
   `queue/audit.py`, and `queue/complete.py`'s `_record_path_owners` all
   glob `human/<book_id>/*.json` non-recursively and would otherwise
