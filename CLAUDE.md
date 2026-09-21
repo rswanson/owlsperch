@@ -1092,7 +1092,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `min(pages)..max(pages)`) gives its whole entry's pdf page span, and
   every `rules_section`/`table` record of the SAME book whose own `pages`
   fall entirely inside that span AND (batch B10c-mand11) that the class owns
-  BY NAME gets `canonical = 0`/`superseded_by = <class id>` set. Owned by
+  BY NAME gets `canonical = 0`/`superseded_by = <class id>` set -- except
+  (B10c-mand14) a `table` whose `fields.parent_record` names a non-class
+  record this pass leaves canonical (a sidebar's own grid, e.g. the
+  Familiars progression table): a table follows its parent, since every
+  table otherwise passes the ownership predicate and the sidebar would
+  render a non-canonical table under a canonical parent. Owned by
   name means EITHER `owlsperch.supersede.is_class_owned_fragment(name, type,
   <class record name>)` -- the same predicate the segmenter's own stamp pass
   uses, read here against the record's `name`/`type` -- OR (this pass, unlike
