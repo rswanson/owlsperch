@@ -190,9 +190,10 @@ def run_queue_audit(
     out: Any = None,
 ) -> int:
     """Report (and, with `fix=True`, recover from) record paths this book's
-    segments no longer agree on the ownership of -- see
-    `owlsperch.queue.audit` for what a collision/stale claim means and what
-    `--fix` actually changes."""
+    segments no longer agree on the ownership of, plus (batch B10c-mand11)
+    segments a class span superseded without owning them -- see
+    `owlsperch.queue.audit` for what a collision/stale/superseded/wrongly-
+    superseded claim means and what `--fix` actually changes."""
     out = out if out is not None else sys.stdout
     data_dir = data_dir if data_dir is not None else default_data_dir()
 
@@ -210,7 +211,24 @@ def run_queue_audit(
             reset_count = 0
             released_count = 0
             moved_count = 0
+            restored_segments = 0
+            restored_files = 0
             for entry in fixed:
+                if entry["action"] == "restored":
+                    # Batch B10c-mand11: a wrongly superseded segment
+                    # un-superseded, with its released record files moved
+                    # back out of `superseded/`.
+                    restored = ", ".join(entry["restored_paths"]) or "(none)"
+                    print(f"  {entry['seg_id']}: restored (restored: {restored})", file=out)
+                    restored_segments += 1
+                    restored_files += len(entry["moved"])
+                    for blocked in entry["blocked"]:
+                        print(
+                            f"    {blocked['path']}: left in superseded/"
+                            f" ({blocked['reason']}: {blocked['moved_to']})",
+                            file=out,
+                        )
+                    continue
                 pruned = ", ".join(entry["pruned_paths"]) if entry["pruned_paths"] else "(none)"
                 print(
                     f"  {entry['seg_id']}: {entry['action']} (pruned: {pruned})",
@@ -225,6 +243,11 @@ def run_queue_audit(
             print(
                 f"  {released_count} claim(s) released, {moved_count} record file(s) "
                 "moved to superseded/",
+                file=out,
+            )
+            print(
+                f"  {restored_segments} segment(s) un-superseded, {restored_files} "
+                "record file(s) restored",
                 file=out,
             )
     return 0

@@ -553,6 +553,61 @@ def test_run_queue_audit_fix_prints_released_and_moved_counts(tmp_path: Path) ->
     assert moved.is_file()
 
 
+def test_run_queue_audit_fix_prints_restored_counts(tmp_path: Path) -> None:
+    """Batch B10c-mand11: `--fix`'s non-JSON output names how many segments
+    were un-superseded and how many record files were moved back out of
+    `superseded/`, and `--json` carries the `wrongly_superseded` report."""
+    data_dir = tmp_path / "data"
+    _write_segment(
+        data_dir,
+        "book",
+        "book-class-p0052",
+        kind_hint="class",
+        heading="Sorcerer",
+        tier="sonnet",
+        pages=[52, 53],
+        printed_pages=[52, 53],
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        kind_hint="rules_section",
+        heading="FAMILIARS",
+        status="done",
+        outcome="validated",
+        pages=[53],
+        printed_pages=[53],
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+    moved = data_dir / "superseded" / "book" / "rules_section" / "familiars.json"
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    moved.write_text(json.dumps({"extraction": {"segment_id": "book-p0053-03"}}))
+
+    report_out = io.StringIO()
+    assert (
+        run_queue_audit("book", fix=False, json_output=True, data_dir=data_dir, out=report_out) == 0
+    )
+    parsed = json.loads(report_out.getvalue())
+    assert [w["seg_id"] for w in parsed["wrongly_superseded"]] == ["book-p0053-03"]
+
+    out = io.StringIO()
+    assert run_queue_audit("book", fix=True, json_output=False, data_dir=data_dir, out=out) == 0
+
+    output = out.getvalue()
+    assert "book-p0053-03: restored" in output
+    assert "1 segment(s) un-superseded, 1 record file(s) restored" in output
+    assert not moved.exists()
+    assert (data_dir / "records" / "book" / "rules_section" / "familiars.json").is_file()
+    assert _read_segment(data_dir, "book", "book-p0053-03")["superseded_by"] is None
+
+
 # ---------------------------------------------------------------------------
 # queue reset
 # ---------------------------------------------------------------------------

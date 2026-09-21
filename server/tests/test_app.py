@@ -477,7 +477,9 @@ def test_health_and_schemas_unaffected_by_corrupt_db(tmp_path: Path) -> None:
 def _write_superseded_fixture(tmp_path: Path) -> Path:
     """A minimal, self-built data dir (not `built_data_dir`, which has no
     class records): one class record with a level table it owns, and one
-    rules_section fragment fully inside its page span."""
+    rules_section fragment fully inside its page span, whose name is
+    class-structural (batch B10c-mand11: only such a fragment is
+    superseded -- a sidebar sharing the class's pages stays canonical)."""
     import json as json_mod
 
     import yaml
@@ -589,16 +591,16 @@ def _write_superseded_fixture(tmp_path: Path) -> Path:
         },
     }
     fragment_record = {
-        "id": "rules_section:book:barbarian-fluff",
+        "id": "rules_section:book:class-features-testclass",
         "type": "rules_section",
-        "name": "Barbarian Fluff",
-        "slug": "barbarian-fluff",
+        "name": "Class Features (Testclass)",
+        "slug": "class-features-testclass",
         "aliases": [],
         "book_id": "book",
         "pages": [3],
         "citation": "Test Book p. 3",
         "text_md": "Fragment text.",
-        "fields": {"topic": "Barbarian Fluff"},
+        "fields": {"topic": "Class Features (Testclass)"},
         "tables": [],
         "canonical": False,
         "variant_of": None,
@@ -626,11 +628,11 @@ def _write_superseded_fixture(tmp_path: Path) -> Path:
 def test_record_detail_still_resolves_a_superseded_record(tmp_path: Path) -> None:
     data_dir = _write_superseded_fixture(tmp_path)
 
-    response = _client(data_dir).get("/records/rules_section/barbarian-fluff")
+    response = _client(data_dir).get("/records/rules_section/class-features-testclass")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["id"] == "rules_section:book:barbarian-fluff"
+    assert body["id"] == "rules_section:book:class-features-testclass"
     assert body["superseded_by"] == "class:book:testclass"
 
 
@@ -646,10 +648,10 @@ def test_record_detail_canonical_record_reports_null_superseded_by(tmp_path: Pat
 def test_search_never_returns_a_superseded_record(tmp_path: Path) -> None:
     data_dir = _write_superseded_fixture(tmp_path)
 
-    response = _client(data_dir).get("/search", params={"q": "Barbarian Fluff"})
+    response = _client(data_dir).get("/search", params={"q": "Class Features"})
 
     hits = [h for g in response.json()["groups"] for h in g["hits"]]
-    assert not any(h["slug"] == "barbarian-fluff" for h in hits)
+    assert not any(h["slug"] == "class-features-testclass" for h in hits)
 
 
 def test_records_list_never_returns_a_superseded_record(tmp_path: Path) -> None:
@@ -659,4 +661,4 @@ def test_records_list_never_returns_a_superseded_record(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     slugs = {item["slug"] for item in response.json()["items"]}
-    assert "barbarian-fluff" not in slugs
+    assert "class-features-testclass" not in slugs

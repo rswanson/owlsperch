@@ -12,6 +12,15 @@ recovery tool for segments that lost a record to the collision the
   last writer's stamp) -- "owned_by_other" when another segment's stamp is
   on the surviving file, "missing" when the file isn't on disk at all.
 
+- `superseded_claims` (batch B10c-mand2): segments frozen by a class span
+  that still hold a claim, released by `--fix`.
+- `wrongly_superseded` (batch B10c-mand11): segments a class span froze
+  without owning them (`owlsperch.supersede.is_class_owned_fragment` fails
+  for the stamping class's heading) -- a printed sidebar, or the next
+  class's own fragment on a shared page. `--fix` restores them: clear
+  `superseded_by`, move every released record file back out of
+  `superseded/`, and put the claims back.
+
 `fix_book` performs the recovery: prune stale paths from a segment's own
 lists, and soft-reset a `done` victim back to `pending` so it re-extracts.
 A segment sitting in `human/` is reported but left untouched.
@@ -698,3 +707,325 @@ def test_fix_book_release_is_idempotent(tmp_path: Path) -> None:
     assert moved.is_file()
     # No new/renamed file was created the second time around.
     assert list((data_dir / "superseded" / "book" / "table").iterdir()) == [moved]
+
+
+# ---------------------------------------------------------------------------
+# wrongly_superseded (batch B10c-mand11): a segment stamped `superseded_by`
+# by a class span that does not actually OWN it -- a printed sidebar, or the
+# next class's own heading fragment on a shared page. Page span alone used
+# to swallow both, moving their record files into `superseded/` and leaving
+# that content in no canonical record at all. `--fix` restores them.
+# ---------------------------------------------------------------------------
+
+
+def _write_class_segment(data_dir: Path, book_id: str, seg_id: str, heading: str) -> Path:
+    return _write_segment(
+        data_dir,
+        book_id,
+        seg_id,
+        pages=[52, 53],
+        printed_pages=[52, 53],
+        kind_hint="class",
+        heading=heading,
+        text=f"{heading} class text.",
+        tier="sonnet",
+    )
+
+
+def _write_released_record(data_dir: Path, rel_path: str, *, segment_id: str) -> Path:
+    """A record file already MOVED under `superseded/` by a (wrong) release."""
+    return _write_record(data_dir, rel_path, segment_id=segment_id)
+
+
+def test_wrongly_superseded_reports_a_sidebar_stamped_by_a_class(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        status="done",
+        outcome="validated",
+        heading="FAMILIARS",
+        pages=[53],
+        printed_pages=[53],
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert len(report.wrongly_superseded) == 1
+    wrong = report.wrongly_superseded[0]
+    assert wrong.seg_id == "book-p0053-03"
+    assert wrong.superseded_by == "book-class-p0052"
+    assert wrong.class_heading == "Sorcerer"
+    assert wrong.heading == "FAMILIARS"
+    assert wrong.kind_hint == "rules_section"
+    assert wrong.status == "done"
+    assert wrong.location == "segments"
+    assert wrong.restorable_paths == ["records/book/rules_section/familiars.json"]
+
+    payload = report.to_json()
+    assert payload["wrongly_superseded"][0]["seg_id"] == "book-p0053-03"
+    assert "FAMILIARS" in report.render()
+
+
+def test_a_class_structural_fragment_is_not_wrongly_superseded(tmp_path: Path) -> None:
+    """The keep-stamped half: a fragment whose heading IS class-structural
+    for the stamping class is never reported (and, when it still holds a
+    claim, still belongs to `superseded_claims` so `--fix` releases it)."""
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    for seg_id, heading in (
+        ("book-p0053-01", "SORCERER"),
+        ("book-p0053-02", "GAME RULE INFORMATION"),
+        ("book-p0053-04", "Human Sorcerer Starting Package"),
+    ):
+        _write_segment(
+            data_dir,
+            "book",
+            seg_id,
+            heading=heading,
+            pages=[53],
+            printed_pages=[53],
+            superseded_by="book-class-p0052",
+        )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-05",
+        kind_hint="table",
+        heading="Table 3–16: The Sorcerer",
+        pages=[53],
+        printed_pages=[53],
+        superseded_by="book-class-p0052",
+        records=["records/book/table/table-3-16-the-sorcerer.json"],
+    )
+    _write_record(
+        data_dir, "records/book/table/table-3-16-the-sorcerer.json", segment_id="book-p0053-05"
+    )
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert report.wrongly_superseded == []
+    assert [c.seg_id for c in report.superseded_claims] == ["book-p0053-05"]
+
+
+def test_superseded_by_naming_a_non_class_segment_is_left_alone(tmp_path: Path) -> None:
+    """Only the toc-driven class pass ever stamps, so a `superseded_by`
+    naming something that isn't a class/prestige_class segment (or naming a
+    segment this book has no file for) is hand-made -- reported the old
+    way, never undone."""
+    data_dir = tmp_path / "data"
+    _write_segment(data_dir, "book", "book-p0053-01", kind_hint="spell", heading="Fireball")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        heading="FAMILIARS",
+        superseded_by="book-p0053-01",
+        records=["records/book/rules_section/familiars.json"],
+    )
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-04",
+        heading="FAMILIARS",
+        superseded_by="book-class-p9999",
+    )
+    _write_record(data_dir, "records/book/rules_section/familiars.json", segment_id="book-p0053-03")
+
+    report = audit_book("book", data_dir=data_dir)
+
+    assert report.wrongly_superseded == []
+    assert [c.seg_id for c in report.superseded_claims] == ["book-p0053-03"]
+
+
+def test_fix_book_restores_a_wrongly_superseded_segment(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    seg_path = _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        status="done",
+        outcome="validated",
+        tier="sonnet",
+        heading="FAMILIARS",
+        pages=[53],
+        printed_pages=[53],
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+    moved_file = _write_released_record(
+        data_dir, "superseded/book/rules_section/familiars.json", segment_id="book-p0053-03"
+    )
+
+    results = fix_book("book", data_dir=data_dir)
+
+    assert results == [
+        {
+            "seg_id": "book-p0053-03",
+            "location": "segments",
+            "action": "restored",
+            "pruned_paths": [],
+            "restored_paths": ["records/book/rules_section/familiars.json"],
+            "moved": [
+                {
+                    "from": "superseded/book/rules_section/familiars.json",
+                    "to": "records/book/rules_section/familiars.json",
+                }
+            ],
+            "blocked": [],
+        }
+    ]
+
+    # The record file is back where the segment claims it ...
+    assert not moved_file.exists()
+    assert (data_dir / "records" / "book" / "rules_section" / "familiars.json").is_file()
+
+    # ... the claim is back in `records`, `superseded_by`/`released_records`
+    # are cleared, and the extraction bookkeeping is untouched (the record
+    # had already been validated before the wrong stamp).
+    restored = _read_segment(data_dir, "book", "book-p0053-03")
+    assert restored["superseded_by"] is None
+    assert restored["records"] == ["records/book/rules_section/familiars.json"]
+    assert restored["released_records"] == []
+    assert restored["status"] == "done"
+    assert restored["outcome"] == "validated"
+    assert restored["tier"] == "sonnet"
+    assert seg_path.is_file()
+
+
+def test_fix_book_restore_is_a_noop_the_second_time(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        status="done",
+        heading="FAMILIARS",
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+    _write_released_record(
+        data_dir, "superseded/book/rules_section/familiars.json", segment_id="book-p0053-03"
+    )
+
+    assert len(fix_book("book", data_dir=data_dir)) == 1
+    after_first = _read_segment(data_dir, "book", "book-p0053-03")
+    record_file = data_dir / "records" / "book" / "rules_section" / "familiars.json"
+    record_body = record_file.read_text()
+
+    assert fix_book("book", data_dir=data_dir) == []
+    assert _read_segment(data_dir, "book", "book-p0053-03") == after_first
+    assert record_file.read_text() == record_body
+    assert audit_book("book", data_dir=data_dir).wrongly_superseded == []
+
+
+def test_fix_book_never_overwrites_an_existing_destination(tmp_path: Path) -> None:
+    """A destination that already exists (a live segment re-extracted the
+    same path since) is never clobbered: the file stays under
+    `superseded/`, the entry is reported blocked, and its
+    `released_records` entry is kept so the pointer isn't lost."""
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        status="done",
+        heading="FAMILIARS",
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+    _write_released_record(
+        data_dir, "superseded/book/rules_section/familiars.json", segment_id="book-p0053-03"
+    )
+    live = _write_record(
+        data_dir, "records/book/rules_section/familiars.json", segment_id="book-p0060-01"
+    )
+    live_body = live.read_text()
+
+    results = fix_book("book", data_dir=data_dir)
+
+    assert results[0]["restored_paths"] == []
+    assert results[0]["moved"] == []
+    assert results[0]["blocked"] == [
+        {
+            "path": "records/book/rules_section/familiars.json",
+            "moved_to": "superseded/book/rules_section/familiars.json",
+            "reason": "destination_exists",
+        }
+    ]
+    assert live.read_text() == live_body
+    assert (data_dir / "superseded" / "book" / "rules_section" / "familiars.json").is_file()
+
+    restored = _read_segment(data_dir, "book", "book-p0053-03")
+    assert restored["superseded_by"] is None
+    assert restored["records"] == []
+    assert restored["released_records"] == [
+        {
+            "path": "records/book/rules_section/familiars.json",
+            "moved_to": "superseded/book/rules_section/familiars.json",
+        }
+    ]
+
+
+def test_fix_book_leaves_a_wrongly_superseded_segment_in_human_untouched(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_class_segment(data_dir, "book", "book-class-p0052", "Sorcerer")
+    _write_segment(
+        data_dir,
+        "book",
+        "book-p0053-03",
+        location="human",
+        status="done",
+        heading="FAMILIARS",
+        superseded_by="book-class-p0052",
+        released_records=[
+            {
+                "path": "records/book/rules_section/familiars.json",
+                "moved_to": "superseded/book/rules_section/familiars.json",
+            }
+        ],
+    )
+    moved_file = _write_released_record(
+        data_dir, "superseded/book/rules_section/familiars.json", segment_id="book-p0053-03"
+    )
+    before = _read_segment(data_dir, "book", "book-p0053-03", location="human")
+
+    results = fix_book("book", data_dir=data_dir)
+
+    assert results == [
+        {
+            "seg_id": "book-p0053-03",
+            "location": "human",
+            "action": "left_in_human",
+            "pruned_paths": ["records/book/rules_section/familiars.json"],
+        }
+    ]
+    assert _read_segment(data_dir, "book", "book-p0053-03", location="human") == before
+    assert moved_file.is_file()

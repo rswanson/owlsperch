@@ -1,5 +1,17 @@
-"""Releasing the record claims held by a superseded segment (batch
+"""Which fragments a class span actually owns (batch B10c-mand11), and
+releasing the record claims held by a superseded segment (batch
 B10c-mand2).
+
+`is_class_owned_fragment` is the shared, pure predicate that decides the
+SCOPE of superseding, used by all three places that used to go by page
+span alone: the class-span stamp pass (`owlsperch.segment.runner.
+_supersede_segments_in_span`), `owlsperch build-db`'s record-level
+superseding (`owlsperch.build_db.runner._apply_superseding`), and `owlsperch
+queue audit`'s retroactive `wrongly_superseded` restore
+(`owlsperch.queue.audit`). Page span alone swallowed printed SIDEBARS that
+merely share a class's pages ("FAMILIARS", "THE PALADIN'S MOUNT",
+"LEVEL ADVANCEMENT", ...), leaving them in no canonical record at all --
+see its own docstring for the exact rule.
 
 B10c's class-span pass (`owlsperch.segment.runner`) stamps `superseded_by`
 on every fragment segment whose pages fall entirely inside a discovered
@@ -48,6 +60,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +68,105 @@ from owlsperch.queue.common import resolve_record_path_under_book
 
 if TYPE_CHECKING:
     from owlsperch.segment.runner import ReleasedRecord, Segment
+
+#: A parenthetical qualifier, stripped before normalization so
+#: `is_class_owned_fragment` reads a RECORD name the same way it reads a
+#: printed segment heading: the extraction prompt's own name-qualification
+#: rule (B10-mand1) makes a generic heading's record name "Class Features
+#: (Barbarian)", never the bare "Class Features" a segment's own `heading`
+#: carries.
+_PARENTHETICAL_RE = re.compile(r"\([^()]*\)")
+
+#: Everything that isn't a lowercase letter or digit -- normalization strips
+#: punctuation/whitespace entirely rather than collapsing it (the same
+#: choice `owlsperch.segment.runner._heading_matches_title` makes), so
+#: "THE DRUID’S ANIMAL COMPANION" and "Ex-Barbarians" both normalize
+#: cleanly.
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
+
+#: The class-structural headings every class entry prints, whatever the
+#: class -- they belong to the class record itself, so a fragment carrying
+#: one of them inside a class's span is genuinely swallowed by that class.
+CLASS_STRUCTURAL_HEADINGS: frozenset[str] = frozenset(
+    {"gameruleinformation", "classskills", "classfeatures"}
+)
+
+#: Normalized tail of a "<Race> <Title> Starting Package" heading.
+_STARTING_PACKAGE = "startingpackage"
+
+
+def normalize_heading(text: str) -> str:
+    """The normalized form every comparison here (and
+    `owlsperch.build_db.runner._apply_superseding`'s own class-owned NAME
+    set) is made in: parentheticals dropped, casefolded, every
+    non-alphanumeric character deleted -- so "Wild Shape (Su)", "WILD
+    SHAPE" and "Wild shape" are one and the same."""
+    return _NON_ALNUM_RE.sub("", _PARENTHETICAL_RE.sub(" ", text).casefold())
+
+
+def _plural_equal(a: str, b: str) -> bool:
+    """Normalized equality tolerating a trailing plural "s" on either side
+    -- PHB 3.5 prints "WIZARDS" for the toc's "Wizard" (mirrors
+    `owlsperch.segment.runner._heading_matches_title`)."""
+    if not a or not b:
+        return False
+    return a == b or a == b + "s" or b == a + "s"
+
+
+def is_class_owned_fragment(heading: str, kind_hint: str, class_title: str) -> bool:
+    """Batch B10c-mand11: whether a fragment inside a class's page span is
+    part of THAT class's own printed entry (and so may be superseded by it)
+    rather than a sidebar or unrelated chapter content that merely shares
+    the pages.
+
+    `heading` is the fragment's own printed heading (a segment's `heading`,
+    or a record's `name` -- a parenthetical qualifier like "Class Features
+    (Barbarian)" is stripped first, see `_PARENTHETICAL_RE`), `kind_hint`
+    its kind (a segment's `kind_hint`, or a record's `type`), and
+    `class_title` the class entry's own printed/toc title (a
+    `_ClassSpan.heading`, or a class record's `name`).
+
+    True for:
+
+    - any `table` fragment in the span -- a class's own "tables belonging to
+      this entity" convention has the class record claim those very record
+      paths, so a table fragment's claim must stay released or
+      `owlsperch.queue.complete`'s collision guard blocks the class itself;
+    - a `rules_section` whose whole heading is the class title
+      (plural-tolerant), one of `CLASS_STRUCTURAL_HEADINGS` ("Game Rule
+      Information", "Class Skills", "Class Features"), "Ex-<Title>"
+      (plural-tolerant), or ends with "<Title> Starting Package".
+
+    False for everything else -- notably every sidebar the real PHB prints
+    inside a class's own pages ("FAMILIARS", "ARCANE SPELLS AND ARMOR",
+    "SCHOOL SPECIALIZATION", "LEVEL ADVANCEMENT", "THE PALADIN'S MOUNT",
+    "SAMPLE PALADIN'S MOUNTS", "THE DRUID'S ANIMAL COMPANION",
+    "ALTERNATIVE ANIMAL COMPANIONS") and any other kind (a spell or feat
+    fragment stranded in a class's span is never class-owned). Note that
+    "THE PALADIN'S MOUNT" NAMES the class and still isn't class-structural:
+    every match here is against the WHOLE heading, never a substring of
+    it."""
+    if kind_hint == "table":
+        return True
+    if kind_hint != "rules_section":
+        return False
+
+    normalized = normalize_heading(heading)
+    title = normalize_heading(class_title)
+    if not normalized or not title:
+        return False
+
+    if normalized in CLASS_STRUCTURAL_HEADINGS:
+        return True
+    if _plural_equal(normalized, title):
+        return True
+    if normalized.startswith("ex") and _plural_equal(normalized[2:], title):
+        return True
+    if normalized.endswith(_STARTING_PACKAGE):
+        prefix = normalized[: -len(_STARTING_PACKAGE)]
+        if prefix and (prefix.endswith(title) or prefix.endswith(f"{title}s")):
+            return True
+    return False
 
 
 def _record_owner_on_disk(path: Path) -> str | None:

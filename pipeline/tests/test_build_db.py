@@ -1201,19 +1201,23 @@ def _owned_level_table_record(*, book_id: str = "book") -> dict[str, Any]:
 
 
 def _rules_section_record(
-    *, book_id: str, slug: str, pages: list[int], seg_id: str
+    *, book_id: str, slug: str, pages: list[int], seg_id: str, name: str | None = None
 ) -> dict[str, Any]:
+    # `name` defaults to the slug read back as a title; pass it explicitly
+    # for a record whose printed name matters (batch B10c-mand11: only a
+    # CLASS-STRUCTURAL name is superseded inside a class span).
+    name = name if name is not None else slug.replace("-", " ").title()
     return {
         "id": f"rules_section:{book_id}:{slug}",
         "type": "rules_section",
-        "name": slug.replace("-", " ").title(),
+        "name": name,
         "slug": slug,
         "aliases": [],
         "book_id": book_id,
         "pages": pages,
         "citation": f"Test Book p. {pages[0]}",
         "text_md": "Some fragment text.",
-        "fields": {"topic": slug.replace("-", " ").title()},
+        "fields": {"topic": name},
         "tables": [],
         "canonical": False,
         "variant_of": None,
@@ -1242,9 +1246,13 @@ def test_build_db_supersedes_fragments_inside_a_class_span(tmp_path: Path) -> No
         data_dir,
         "book",
         "rules_section",
-        "barbarian-fluff",
+        "class-features-testclass",
         _rules_section_record(
-            book_id="book", slug="barbarian-fluff", pages=[3], seg_id="book-p0003-01"
+            book_id="book",
+            slug="class-features-testclass",
+            pages=[3],
+            seg_id="book-p0003-01",
+            name="Class Features (Testclass)",
         ),
     )
     _write_record(
@@ -1263,9 +1271,12 @@ def test_build_db_supersedes_fragments_inside_a_class_span(tmp_path: Path) -> No
 
     conn = _connect(result.db_path)
     try:
+        # A class-structural fragment name (batch B10c-mand11) -- the
+        # parenthetical qualifier the prompt's naming rule adds is stripped
+        # before the match, so this reads as "Class Features".
         fluff = conn.execute(
             "SELECT canonical, superseded_by FROM records WHERE id = ?",
-            ("rules_section:book:barbarian-fluff",),
+            ("rules_section:book:class-features-testclass",),
         ).fetchone()
         assert fluff["canonical"] == 0
         assert fluff["superseded_by"] == "class:book:testclass"
@@ -1297,6 +1308,164 @@ def test_build_db_supersedes_fragments_inside_a_class_span(tmp_path: Path) -> No
         conn.close()
 
 
+def test_build_db_leaves_a_sidebar_inside_a_class_span_canonical(tmp_path: Path) -> None:
+    """Batch B10c-mand11: page span alone is no longer enough -- a printed
+    sidebar sharing a class's pages ("Familiars") stays canonical, while a
+    class-structural fragment on the very same page ("Class Features") is
+    still superseded. Before this, the sidebar was demoted to
+    `canonical = 0` and so existed in no canonical record at all."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-p0003-01", [3])
+    _write_segment(data_dir, "book", "book-p0003-02", [3])
+
+    _write_record(data_dir, "book", "class", "testclass", _valid_class_record())
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "class-features-testclass",
+        _rules_section_record(
+            book_id="book",
+            slug="class-features-testclass",
+            pages=[3],
+            seg_id="book-p0003-01",
+            name="Class Features (Testclass)",
+        ),
+    )
+    _write_record(
+        data_dir,
+        "book",
+        "rules_section",
+        "familiars",
+        _rules_section_record(book_id="book", slug="familiars", pages=[3], seg_id="book-p0003-02"),
+    )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.skipped_invalid == 0, result.skipped
+    assert result.superseded == 1  # "Class Features", never "Familiars"
+
+    conn = _connect(result.db_path)
+    try:
+        familiars = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("rules_section:book:familiars",),
+        ).fetchone()
+        assert familiars["canonical"] == 1
+        assert familiars["superseded_by"] is None
+
+        features = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("rules_section:book:class-features-testclass",),
+        ).fetchone()
+        assert features["canonical"] == 0
+        assert features["superseded_by"] == "class:book:testclass"
+    finally:
+        conn.close()
+
+
+def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path) -> None:
+    """Batch B10c-mand11 (follow-up): this pass has the class RECORD in
+    hand, so a fragment named after one of the class's own printed
+    feature/section headings ("Wild Shape", "Adventures") is superseded even
+    though the heading isn't class-structural on its own -- while a printed
+    sidebar on the same pages ("Familiars") still stays canonical. A
+    parenthetical suffix on the printed feature heading ("Wild Shape (Su)")
+    normalizes away, so it matches the plainly named record."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    for ordinal in range(1, 5):
+        _write_segment(data_dir, "book", f"book-p0003-0{ordinal}", [3])
+
+    class_record = _valid_class_record()
+    # The level table's own Special column still has to reconcile (the
+    # class validator checks it), so these two are ADDED to the default
+    # feature list rather than replacing it.
+    class_record["fields"]["class_features"] = [
+        *class_record["fields"]["class_features"],
+        {"name": "Wild Shape (Su)", "level": 1, "text_md": "You change shape."},
+        {"name": "Venom Immunity (Ex)", "level": 2, "text_md": "You resist poison."},
+    ]
+    class_record["fields"]["description_sections"] = [
+        {"heading": "Adventures", "text_md": "Why a testclass adventures."}
+    ]
+    _write_record(data_dir, "book", "class", "testclass", class_record)
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
+
+    for slug, name, seg_id in (
+        ("wild-shape", "Wild Shape", "book-p0003-01"),
+        ("venom-immunity", "Venom Immunity", "book-p0003-02"),
+        ("adventures", "Adventures", "book-p0003-03"),
+        ("familiars", "Familiars", "book-p0003-04"),
+    ):
+        _write_record(
+            data_dir,
+            "book",
+            "rules_section",
+            slug,
+            _rules_section_record(book_id="book", slug=slug, pages=[3], seg_id=seg_id, name=name),
+        )
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.skipped_invalid == 0, result.skipped
+    # Wild Shape + Venom Immunity + Adventures -- never Familiars.
+    assert result.superseded == 3
+
+    conn = _connect(result.db_path)
+    try:
+        for slug in ("wild-shape", "venom-immunity", "adventures"):
+            row = conn.execute(
+                "SELECT canonical, superseded_by FROM records WHERE id = ?",
+                (f"rules_section:book:{slug}",),
+            ).fetchone()
+            assert row["canonical"] == 0, slug
+            assert row["superseded_by"] == "class:book:testclass", slug
+
+        familiars = conn.execute(
+            "SELECT canonical, superseded_by FROM records WHERE id = ?",
+            ("rules_section:book:familiars",),
+        ).fetchone()
+        assert familiars["canonical"] == 1
+        assert familiars["superseded_by"] is None
+    finally:
+        conn.close()
+
+
+def test_class_owned_names_collects_every_printed_heading() -> None:
+    """The name set is built once per class record, from its own `name`,
+    every `class_features[].name`, and every `description_sections[]
+    .heading` -- all normalized (parentheticals dropped, case and
+    punctuation folded)."""
+    from owlsperch.build_db.runner import _class_owned_names
+
+    class_record = _valid_class_record()
+    class_record["fields"]["class_features"] = [
+        {"name": "Wild Shape (Su)", "level": 1, "text_md": "..."},
+    ]
+    class_record["fields"]["description_sections"] = [
+        {"heading": "Adventures", "text_md": "..."},
+        {"heading": "Alignment", "text_md": "..."},
+    ]
+
+    assert _class_owned_names(class_record) == {
+        "testclass",
+        "wildshape",
+        "adventures",
+        "alignment",
+    }
+    # A class record with neither list (a bare prestige-class shape) still
+    # yields just its own name, never an empty-string entry.
+    assert _class_owned_names({"name": "Testclass", "fields": {}}) == {"testclass"}
+    assert _class_owned_names({}) == set()
+
+
 def test_run_build_db_prints_superseded_count(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
@@ -1310,9 +1479,13 @@ def test_run_build_db_prints_superseded_count(tmp_path: Path) -> None:
         data_dir,
         "book",
         "rules_section",
-        "barbarian-fluff",
+        "class-features-testclass",
         _rules_section_record(
-            book_id="book", slug="barbarian-fluff", pages=[3], seg_id="book-p0003-01"
+            book_id="book",
+            slug="class-features-testclass",
+            pages=[3],
+            seg_id="book-p0003-01",
+            name="Class Features (Testclass)",
         ),
     )
 
