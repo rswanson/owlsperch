@@ -941,7 +941,9 @@ def test_phb_detached_column_and_sidebar_band_corpus() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         data_dir = Path(tmp) / "data"
         assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(41, 41)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(44, 44)) == 0
         assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(46, 46)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(112, 112)) == 0
 
         def _text(page: int) -> str:
             return (data_dir / "text" / book_id / f"p{page:04d}.txt").read_text()
@@ -980,3 +982,21 @@ def test_phb_detached_column_and_sidebar_band_corpus() -> None:
         # its own mount rules, not by a body paragraph.
         assert p46[heading + 1].startswith("The paladin’s mount is superior"), p46[heading + 1]
         assert p46[heading + 2].startswith("mount must be within 5 feet"), p46[heading + 2]
+
+        # (3) p.112's Table 7-1: Random Starting Gold is printed as two
+        # side-by-side HALVES; step 2d must not fold the second half's own
+        # Class column into the first half's grid (review finding 1), so the
+        # grid stays two columns and its rows never mention a second-half
+        # class.
+        p112 = _text(112).splitlines()
+        gold_rows = [line for line in p112 if line.startswith(("Bard\t", "Cleric\t", "Druid\t"))]
+        assert len(gold_rows) == 3, p112
+        for line in gold_rows:
+            assert len(line.split("\t")) == 2, line
+        assert not any("Paladin" in line and "\t" in line for line in p112), p112
+
+        # (4) p.44 (Table 3-12: The Paladin) must be left exactly as it was:
+        # its band gap is only 3.2 line heights, under step 3a's threshold, and
+        # its two bands' column partitions agree anyway.
+        p44 = _text(44).split("\n\n")
+        assert p44[1].startswith("Table 3–12: The Paladin"), p44[:3]

@@ -308,14 +308,22 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   group's `x_max` (or left of its `x_min`) by at most
   `DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR` (4.0) median word heights, and
   every one of its non-blank lines y-aligns with a DISTINCT row. The blocks
-  passing on one side are taken as one column, accepted only when their
-  x-extents all overlap each other, they carry at least
-  `DETACHED_COLUMN_MIN_LINES` (3) cells, and those cells cover at least
+  passing on one side must read as ONE column, so only the largest subset of
+  them whose x-extents mutually overlap is kept (rejecting the side outright
+  would let one coincidentally aligned fragment cost the real column its
+  attachment); that subset is accepted only when it carries at least
+  `DETACHED_COLUMN_MIN_LINES` (3) cells covering at least
   `DETACHED_COLUMN_MIN_ROW_FRACTION` (50%) of the group's rows (a real
   column has a cell in nearly every row, which keeps a stray marginal note
-  out); each cell is appended to the row it aligns with and every uncovered
-  row between the first and last covered one gets an empty cell, so the
-  column cannot shift. (2) A new step 3a splits each RUN into horizontal
+  out) and when NOTHING row-aligned sits immediately beyond it on that side,
+  within one column gap -- the signature of a table printed as two
+  side-by-side HALVES, which is how PHB p.112's Table 7-1: Random Starting
+  Gold prints, and whose second half's own `Class` column otherwise folded
+  into the first half's grid as a bogus third column while its (prose-like,
+  never-a-candidate) `Amount` column stayed loose beside it. Each covered row
+  is padded out to the group's own width before the cell is appended (or
+  prepended), so it lands at the column's real index even on a wrapped
+  continuation row. (2) A new step 3a splits each RUN into horizontal
   BANDS at any band of whitespace running its full width and at least
   `HORIZONTAL_BAND_GAP_HEIGHT_FACTOR` (4.0) median word heights tall, and
   clusters each band into columns on its own. Step 4a's per-column repair is
@@ -323,14 +331,24 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   above a full-width boxed sidebar -- so the body's right column landed
   INSIDE the sidebar (PHB p.46 put "Human Paladin Starting Package" and its
   Armor/Weapons body between "THE PALADIN'S MOUNT" and the rest of that
-  sidebar, a regression from step 4a). The full-width requirement is the
-  safety: in a two-column region both columns must break at the same y,
-  which a paragraph gap in one column never does. 4.0 is calibrated against
-  p.46's own 4.8-line-height band gap; at 3.0 the split also reordered pages
-  that were already right, p.44 (Table 3-12: The Paladin) among them.
-  Measured scope of 2d/3a: 15 more of the 322 pages change, again all with
-  an identical whitespace-token multiset -- step 2d rebuilds the 8 grids
-  that lost a column to loose paragraphs (pp.41, 42, 63, 73, 112, 220, 261,
+  sidebar, a regression from step 4a). A full-width gap alone is not
+  evidence, though: a full-width ILLUSTRATION gap breaks both columns of an
+  ordinary two-column region at the same y too, and reading that band by band
+  splits the paragraph continuing down the left column. So each band is
+  column-clustered and every adjacent pair whose column partitions AGREE --
+  same column count, each column's two edges within
+  `COLUMN_BAND_MATCH_HEIGHT_FACTOR` (0.5) median word heights of its
+  counterpart's -- is merged straight back (to a fixpoint). A sidebar's box
+  insets and widens its columns past that (p.46's start 5.6pt right and run
+  8.2pt further; pp.57/58/74 do not even share a column count); a figure gap
+  leaves them identical. The partition test, not the 4.0 factor, is the
+  safety -- across the PHB the cut fires on 30 pages, none with agreeing
+  partitions (7 are the sidebar pages, the other 23 page-number or
+  single-column bands), so the figure-gap case is pinned by a synthetic test
+  rather than the corpus.
+  Measured scope of 2d/3a: 14 more of the 322 pages change, again all with
+  an identical whitespace-token multiset -- step 2d rebuilds the 7 grids
+  that lost a column to loose paragraphs (pp.41, 42, 63, 73, 220, 261,
   264) and step 3a reorders the 7 boxed-sidebar pages (pp.37, 46, 53, 54,
   57, 58, 74); 10 of the 11 class-level-table pages are byte-identical
   (p.41 gains its speed-bonus column, and p.53's sorcerer table is again

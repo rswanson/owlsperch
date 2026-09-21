@@ -1436,9 +1436,11 @@ def test_detached_column_is_folded_into_its_own_rows(tmp_path: Path) -> None:
         assert by_level[level][-1] == "+10 ft.", by_level[level]
     for level in ("18th", "19th", "20th"):
         assert by_level[level][-1] == "+60 ft.", by_level[level]
-    # A continuation row inside the column's own span gets an empty cell, so
-    # the column stays aligned rather than shifting up a row.
-    assert rows[15].cells == ["slow fall 80 ft.", ""], rows[15].cells
+    # A wrapped continuation row inside the column's own span is padded out to
+    # the group's own width first, so the appended (here empty) cell sits at
+    # the detached column's real index rather than right after the
+    # continuation text.
+    assert rows[15].cells == ["slow fall 80 ft.", "", "", ""], rows[15].cells
 
     # ...and none of the three blocks survives as a loose paragraph.
     assert not any(isinstance(item, Block) for item in ordered), ordered
@@ -1619,3 +1621,185 @@ def test_wide_single_column_run_with_no_valley_is_not_split(tmp_path: Path) -> N
     texts = [_block_text(item) for item in order_blocks(page)]
 
     assert texts == ["TOP_MIDDLE", "MIDDLE_RIGHTMOST", "LOWEST_LEFTMOST"]
+
+
+#: PHB p.112's own geometry for Table 7-1: Random Starting Gold, printed as
+#: two side-by-side HALVES: the first half's grid at x 301.1-397.2 and, beside
+#: it, the second half's `Class` column at x 409.7-437.7 and its `Amount`
+#: column at x 446.0-505.8, all sharing the same 7 row positions.
+_GOLD_ROW_FIRST_CENTER = 536.5
+_GOLD_ROW_PITCH = 9.6
+_GOLD_LINE_HEIGHT = 7.94
+_GOLD_FIRST_HALF = [
+    ("Class", "Amount (average)"),
+    ("Barbarian", "4d4 × 10 (100 gp)"),
+    ("Bard", "4d4 × 10 (100 gp)"),
+    ("Cleric", "5d4 × 10 (125 gp)"),
+    ("Druid", "2d4 × 10 (50 gp)"),
+    ("Fighter", "6d4 × 10 (150 gp)"),
+    ("Monk", "5d4 (12 gp, 5 sp)"),
+]
+_GOLD_SECOND_HALF = [
+    ("Class", "Amount (average)"),
+    ("Paladin", "6d4 × 10 (150 gp)"),
+    ("Ranger", "6d4 × 10 (150 gp)"),
+    ("Rogue", "5d4 × 10 (125 gp)"),
+    ("Sorcerer", "3d4 × 10 (75 gp)"),
+    ("Wizard", "3d4 × 10 (75 gp)"),
+]
+
+
+def _gold_row_y(row: int) -> tuple[float, float]:
+    center = _GOLD_ROW_FIRST_CENTER + row * _GOLD_ROW_PITCH
+    return center - _GOLD_LINE_HEIGHT / 2, center + _GOLD_LINE_HEIGHT / 2
+
+
+def _gold_lines(x_min: float, x_max: float, cells: list[str], first_row: int = 0) -> str:
+    """One column's cells, each its own `<line>` spanning the column's whole
+    width, with one `<word>` per whitespace-separated token -- the word count
+    is what step 1a's prose-like test measures, and PHB p.112's `Amount`
+    column (five tokens per cell, edge to edge) really is prose-like by it,
+    which is why it is never a step-2d candidate in the first place."""
+    lines = []
+    for offset, text in enumerate(cells):
+        y_min, y_max = _gold_row_y(first_row + offset)
+        tokens = text.split(" ")
+        step = (x_max - x_min) / len(tokens)
+        words = "".join(
+            f'<word xMin="{x_min + i * step}" yMin="{y_min}" '
+            f'xMax="{x_min + (i + 1) * step}" yMax="{y_max}">{token}</word>'
+            for i, token in enumerate(tokens)
+        )
+        lines.append(
+            f'<line xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}">{words}</line>'
+        )
+    return "".join(lines)
+
+
+def _gold_block(x_min: float, x_max: float, inner: str, rows: int) -> str:
+    y_min, _ = _gold_row_y(0)
+    _, y_max = _gold_row_y(rows - 1)
+    return (
+        f'<flow><block xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" '
+        f'yMax="{y_max}">{inner}</block></flow>'
+    )
+
+
+def _random_starting_gold_body() -> str:
+    # The first half arrives as ONE block holding both its columns' cells --
+    # step 2a's single-block table.
+    first = ""
+    for row, (name, amount) in enumerate(_GOLD_FIRST_HALF):
+        first += _gold_lines(301.12, 350.00, [name], row)
+        first += _gold_lines(360.00, 397.18, [amount], row)
+    body = _gold_block(301.12, 397.18, first, len(_GOLD_FIRST_HALF))
+    # The second half arrives as two separate per-column blocks.
+    body += _gold_block(
+        409.69, 437.66, _gold_lines(409.69, 437.66, [c for c, _ in _GOLD_SECOND_HALF]), 6
+    )
+    body += _gold_block(
+        445.95, 505.75, _gold_lines(445.95, 505.75, [a for _, a in _GOLD_SECOND_HALF]), 6
+    )
+    return body
+
+
+def test_a_side_by_side_table_half_is_not_folded_in_as_a_column(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand22 review finding 1, PHB p.112's Table
+    # 7-1: Random Starting Gold): the table is printed as two side-by-side
+    # halves, and the second half's own `Class` column y-aligns with six of
+    # the first half's seven rows -- enough to pass step 2d's gap, alignment,
+    # line-count and row-coverage tests. Its `Amount` column is prose-like, so
+    # it is never a candidate, and folding in the `Class` column alone built a
+    # bogus three-column grid with the amounts left loose beside it. A block
+    # lying FURTHER OUT on the same side and overlapping the group's own rows
+    # is the evidence that this is a second table, not a detached column.
+    page = _parse_page(tmp_path, "random_starting_gold.html", _random_starting_gold_body())
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    assert all(len(row.cells) <= 2 for row in table_groups[0].rows), table_groups[0].rows
+    assert not any("Paladin" in row.text for row in table_groups[0].rows), table_groups[0].rows
+    # ...and both of the second half's own columns stay loose blocks.
+    loose = [item for item in ordered if isinstance(item, Block)]
+    assert any("Paladin" in block.lines[1].text for block in loose), loose
+    assert any("6d4" in block.lines[1].text for block in loose), loose
+
+
+def test_detached_column_on_the_left_is_prepended(tmp_path: Path) -> None:
+    # The mirror of the monk case: a grid whose LEVEL column arrives detached
+    # to the LEFT of the rest of the grid (PHB p.42's Small/Large Monk Unarmed
+    # Damage grid). The cells must be prepended, not appended.
+    body = ""
+    for row in range(21):
+        y_min, y_max = _monk_row_y(row)
+        for (x_min, x_max), text in (
+            ((107.44, 151.55), f"+{row + 1}"),
+            ((260.00, 350.00), "Bonus feat"),
+        ):
+            box = f'xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}"'
+            body += f"<line {box}><word {box}>{text}</word></line>"
+    y_min, _ = _monk_row_y(0)
+    _, y_max = _monk_row_y(20)
+    body = (
+        f'<flow><block xMin="107.44" yMin="{y_min}" xMax="350.00" yMax="{y_max}">'
+        f"{body}</block></flow>"
+    )
+    body += _monk_column_block(71.20, 88.34, {row: level for row, level in _MONK_LEVELS.items()})
+    page = _parse_page(tmp_path, "monk_detached_left_column.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    rows = table_groups[0].rows
+    assert rows[0].cells == ["2nd", "+1", "Bonus feat"], rows[0].cells
+    assert rows[20].cells == ["20th", "+21", "Bonus feat"], rows[20].cells
+    assert not any(isinstance(item, Block) for item in ordered), ordered
+
+
+def test_a_stray_fragment_does_not_cost_the_real_column_its_attachment(
+    tmp_path: Path,
+) -> None:
+    # Step 2d keeps the largest mutually x-overlapping subset of a side's
+    # candidates rather than rejecting the side outright: here a two-line
+    # fragment sits at a different x, aligned with two of the grid's rows by
+    # coincidence, and the real speed column must still attach.
+    body = _monk_grid_block()
+    body += _monk_column_block(540.08, 561.68, {r: _MONK_SPEED_CELLS[r] for r in range(15)})
+    body += _monk_column_block(540.10, 561.66, {r: _MONK_SPEED_CELLS[r] for r in (18, 19, 20)})
+    body += _monk_column_block(521.00, 532.00, {5: "a", 6: "b"})
+    page = _parse_page(tmp_path, "monk_stray_fragment.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    by_level = {row.cells[0]: row.cells for row in table_groups[0].rows}
+    assert by_level["3rd"][-1] == "+10 ft.", by_level["3rd"]
+    assert any(isinstance(item, Block) and "a" in item.lines[0].text for item in ordered)
+
+
+def test_a_two_column_region_split_by_a_figure_gap_stays_column_major(
+    tmp_path: Path,
+) -> None:
+    # Review regression (B10c-mand22 review finding 2): a full-width
+    # illustration gap breaks BOTH columns of a two-column region at the same
+    # y, so step 3a's whitespace band fires -- but the two bands are the same
+    # two printed columns, and reading them band by band would emit
+    # LEFT_TOP, RIGHT_TOP, LEFT_BOTTOM, RIGHT_BOTTOM, splitting the paragraph
+    # that continues down the left column. Bands whose column partitions
+    # AGREE are merged back before clustering.
+    body = _narrow_gutter_block(34.0, 51.5, 274.2, 150.0, "LEFT_TOP")
+    body += _narrow_gutter_block(292.1, 51.5, 541.3, 150.0, "RIGHT_TOP")
+    body += _narrow_gutter_block(34.0, 300.0, 274.2, 500.0, "LEFT_BOTTOM")
+    body += _narrow_gutter_block(292.1, 300.0, 541.3, 500.0, "RIGHT_BOTTOM")
+    page = _parse_page(tmp_path, "two_column_figure_gap.html", body)
+
+    assert [_block_text(item) for item in order_blocks(page)] == [
+        "LEFT_TOP",
+        "LEFT_BOTTOM",
+        "RIGHT_TOP",
+        "RIGHT_BOTTOM",
+    ]
