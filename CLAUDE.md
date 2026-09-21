@@ -609,10 +609,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `check_class_segment_coverage(record, segment)`, dispatched from a third
   registry, `TYPE_SEGMENT_CHECKS` (`validate/runner.py`'s `validate_record`
   passes it the same already-resolved segment dict
-  `check_pages_within_segment` gets, so `build-db` gets it for free too),
-  which reads the owning segment's own `text` as the evidence of what the
-  page printed and returns `[]` silently when there is no segment, no
-  `text`, or no recognizable Class Features section: (a) every
+  `check_pages_within_segment` gets, so `build-db` and
+  `find_bump_candidates` get it for free too -- see the BLAST RADIUS note at
+  the end of this paragraph), which reads the owning segment's own `text` as
+  the evidence of what the page printed and returns `[]` silently when there
+  is no segment, no `text`, or no usable record `name`; when a segment has
+  text but no recognizable Class Features section only (b)/(c) are skipped,
+  since (a) works off the raw text and still runs: (a) every
   `<Words> <Class> Starting Package`/`Ex-<Class>` heading printed on a line
   of its own must be recorded as a `description_sections[].heading` OR a
   `class_features[].name` (the real cleric files "Ex-Clerics" as a feature
@@ -630,7 +633,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   (`_RUN_IN_HEADING_RE`: `<Heading>:` at a paragraph start or after
   sentence-final punctuation, `_SENTENCE_END_RE` allowing the `.)` a
   trailing citation prints, 2-60 chars of `[A-Za-z'’,()/ -]` starting with a
-  capital) must equal, after `_normalize_heading` (parentheticals dropped,
+  capital, AND `_is_heading_shaped`: at most 8 whitespace tokens with every
+  token longer than 3 characters capitalized once its edge punctuation is
+  stripped -- without which an ordinary mid-paragraph clause ending in a
+  colon, e.g. "If she has a familiar, the following apply:", is read as a
+  heading, reported as a missing feature AND cuts the real feature's printed
+  span short; calibrated so all ~150 real PHB run-in headings, up to
+  "Tongue of the Sun and Moon (Ex)" at 7 tokens, still pass) must equal,
+  after `_normalize_heading` (parentheticals dropped,
   punctuation folded, lowercased, per-word singularized), either a
   `class_features[].name` or one of `_NON_FEATURE_RUN_IN_HEADINGS` (the
   printed GAME RULE INFORMATION/flavor-section/starting-package labels plus
@@ -649,10 +659,21 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   extended by `_column_break_continuation` when the paragraph is cut off at
   a column break (the bard's printed "Spells:" body ends mid-word at "Cha 11
   for 1st-" and continues in a paragraph the column reconstructor emitted
-  EARLIER; stitched only when the window holds exactly one truncated prose
-  paragraph and exactly one that begins mid-sentence, so the pairing needs
-  no guessing -- anything more ambiguous is left unstitched, which only ever
-  makes the span shorter and the ratio larger, never a false failure). 0.75,
+  EARLIER). Leaving a window UNSTITCHED only ever shortens a span and raises
+  a ratio, so it can never cause a false failure -- but stitching the WRONG
+  pair appends unrelated prose and LOWERS the ratio, so a stitch takes three
+  things: the window must hold exactly one truncated prose paragraph and
+  exactly one that begins mid-sentence (no pairing to choose between); the
+  truncated paragraph must end mid-WORD on a hard hyphen
+  (`_COLUMN_BREAK_HYPHEN_RE`) with the continuation opening on that word's
+  lowercase remainder -- a paragraph that merely ends without a full stop is
+  routine in a reconstructed column (the monk's and druid's windows both do)
+  and is NOT corroboration; and the appended text is capped at the
+  continuation's own prefix BEFORE its first run-in heading, so at most one
+  printed feature's worth is ever added. A word-count cap tied to the
+  truncated paragraph is deliberately NOT used -- the bard's truncated tail
+  is 89 words against a 487-word continuation, so any such cap would hide
+  the very paraphrase rule (c) exists to catch. 0.75,
   not the 0.60 first proposed, because the real distribution over all 90
   (heading, feature) pairs in the 11 PHB class records is 87 at >= 0.92
   (mostly exactly 1.00 -- verbatim), one at 0.85 (the rogue's Trapfinding,
@@ -663,7 +684,14 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   corpus` test, skipped unless `$OWLSPERCH_DATA` has all 11 phb1 class
   records and their segments) pins that calibration: druid fails (1),
   paladin + sorcerer fail (2a), cleric fails (2b), bard fails (2c), and
-  nothing else fails anything.
+  nothing else fails anything. BLAST RADIUS: these are ordinary
+  `validate_record` errors, so a class record that trips one is not just
+  reported by `owlsperch validate` -- `owlsperch build-db` counts it in
+  `skipped_invalid` and leaves it OUT of the database (its `/r/class/<slug>`
+  page 404s and any table naming it as `parent_record` becomes a dangling
+  parent), `build-db --strict` exits 1, and `find_bump_candidates` will not
+  offer it for a `--bump-compatible` migration. The fix is always to
+  re-extract the segment, never to loosen the check.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the

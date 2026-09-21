@@ -16,7 +16,10 @@ from owlsperch.validate.checks import (
     NULL_CONTEXT,
     ValidationContext,
     _bab_progression_cell,
+    _column_break_continuation,
+    _is_heading_shaped,
     _normalize_special_token,
+    _run_in_headings,
     _save_progression_cell,
     _special_token_matches_feature,
     _split_special_cell,
@@ -1215,15 +1218,15 @@ def test_check_class_segment_coverage_stitches_a_column_break() -> None:
             "Class Features",
             "",
             (
-                "traps, and she never loses her bearings in the deep woods even after "
-                "many days of travel without rest, food, or the light of the sun above "
-                "her head, which is more than most can say for themselves."
+                "den traps, and she never loses her bearings in the deep woods even "
+                "after many days of travel without rest, food, or the light of the sun "
+                "above her head, which is more than most can say for themselves."
             ),
             "",
             (
                 "All of the following are class features of the testclass. "
                 "Rage: Once per day a testclass may fly into a rage. "
-                "Trap Sense: A testclass gains an intuitive sense for hidden"
+                "Trap Sense: A testclass gains an intuitive sense for hid-"
             ),
         ]
     )
@@ -1241,8 +1244,194 @@ def test_check_class_segment_coverage_stitches_a_column_break() -> None:
     assert len(errors) == 1
     assert "Trap Sense" in errors[0]
     # The stitched span is the truncated tail plus the continuation's whole
-    # prefix (46 words), not just the 8 the truncated paragraph itself holds.
-    assert "against 46 printed word(s)" in errors[0]
+    # prefix (47 words), not just the 8 the truncated paragraph itself holds.
+    assert "against 47 printed word(s)" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand12 review: `_is_heading_shaped` keeps an ordinary mid-paragraph
+# clause that ends in a colon from being read as a run-in heading.
+# ---------------------------------------------------------------------------
+
+
+def test_is_heading_shaped_accepts_the_longest_real_phb_headings() -> None:
+    for heading in (
+        "Tongue of the Sun and Moon (Ex)",
+        "Chaotic, Evil, Good, and Lawful Spells",
+        "Deity, Domains, and Domain Spells",
+        "Turn or Rebuke Undead (Su)",
+        "Hide in Plain Sight (Ex)",
+        "Skill Points at Each Additional Level",
+        "Weapon and Armor Proficiency",
+        "Resist Nature’s Lure (Ex)",
+        "A Thousand Faces (Su)",
+    ):
+        assert _is_heading_shaped(heading), heading
+
+
+def test_is_heading_shaped_rejects_sentence_clauses() -> None:
+    for clause in (
+        "If she has a familiar, the following apply",
+        "Her options for new forms include",
+        "The following restrictions apply to a paladin who wishes to keep her mount",
+    ):
+        assert not _is_heading_shaped(clause), clause
+
+
+def test_run_in_headings_ignores_a_mid_sentence_clause_colon() -> None:
+    paragraph = (
+        "Rage: A testclass may fly into a rage. "
+        "If she has a familiar, the following apply: it gains HD. "
+        "Her options for new forms include: bear, wolf. "
+        "Trap Sense: She senses traps."
+    )
+    assert [heading for _s, _e, heading in _run_in_headings(paragraph)] == [
+        "Rage",
+        "Trap Sense",
+    ]
+
+
+def test_check_class_segment_coverage_ignores_a_clause_colon_in_feature_prose() -> None:
+    """The clause is neither reported as a missing feature nor allowed to
+    cut the real feature's printed span short."""
+    text = "\n".join(
+        [
+            "Class Features",
+            "",
+            (
+                "All of the following are class features of the testclass. "
+                "Rage: Once per day a testclass may fly into a rage. "
+                "If she has a familiar, the following apply: the familiar rages too. "
+                "Trap Sense: A testclass gains an intuitive sense for traps."
+            ),
+        ]
+    )
+    record = _coverage_record()
+    record["fields"]["description_sections"] = []
+    record["fields"]["class_features"] = [
+        {
+            "name": "Rage",
+            "level": 1,
+            "text_md": (
+                "Once per day a testclass may fly into a rage. "
+                "If she has a familiar, the following apply: the familiar rages too."
+            ),
+        },
+        {
+            "name": "Trap Sense",
+            "level": 3,
+            "text_md": "A testclass gains an intuitive sense for traps.",
+        },
+    ]
+    assert check_class_segment_coverage(record, _segment(text)) == []
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand12 review: the column-break stitch is corroborated and capped --
+# a WRONG pairing would append unrelated prose and lower the ratio, so it
+# takes a mid-word hyphen, a unique pairing, and stops at the
+# continuation's own first run-in heading.
+# ---------------------------------------------------------------------------
+
+_TRUNCATED = (
+    "Trap Sense: A testclass gains an intuitive sense for traps and other "
+    "hidden hazards of the deep places of the world, so that she is rarely "
+    "caught out by a pit or a falling block of ma-"
+)
+_CONTINUATION = (
+    "sonry that a less wary soul would walk straight into without any warning "
+    "at all, whatever the light. "
+    "Uncanny Dodge: She keeps her Dexterity bonus to Armor Class even when "
+    "caught flat-footed, which is a different feature entirely and must not "
+    "be appended to the span of the feature before it under any circumstance."
+)
+
+
+def _stitch_window(*paragraphs: str) -> list[str]:
+    return ["Class Features", *paragraphs]
+
+
+def test_column_break_continuation_stitches_a_hyphenated_break() -> None:
+    stitch = _column_break_continuation(_stitch_window(_CONTINUATION, _TRUNCATED))
+    assert stitch is not None
+    index, prefix = stitch
+    assert index == 2
+    # Capped at the continuation's own first run-in heading: the following
+    # feature's prose is never appended to this one's span.
+    assert "Uncanny Dodge" not in prefix
+    assert prefix.strip().startswith("sonry")
+
+
+def test_column_break_continuation_needs_a_mid_word_hyphen() -> None:
+    """A paragraph that merely ends without a full stop is routine in a
+    reconstructed column and is no evidence of WHICH paragraph continues
+    it -- the PHB monk's and druid's windows both end that way."""
+    truncated = _TRUNCATED.replace("of ma-", "of masonry and")
+    assert _column_break_continuation(_stitch_window(_CONTINUATION, truncated)) is None
+
+
+def test_column_break_continuation_suppressed_by_two_truncated_paragraphs() -> None:
+    second = (
+        "Bonus Languages: A testclass may choose any language as a bonus "
+        "language, including the secret tongues of the wild places, and she "
+        "learns them faster than anyone else could ever hope to-"
+    )
+    assert _column_break_continuation(_stitch_window(_CONTINUATION, _TRUNCATED, second)) is None
+
+
+def test_column_break_continuation_suppressed_by_two_continuations() -> None:
+    second = (
+        "and so on, for as long as she keeps her concentration on the task "
+        "at hand, whatever else may be happening around her at the time of "
+        "the attempt, without any further penalty at all."
+    )
+    assert _column_break_continuation(_stitch_window(_CONTINUATION, _TRUNCATED, second)) is None
+
+
+# ---------------------------------------------------------------------------
+# B10c-mand12 review: TYPE_SEGMENT_CHECKS is really dispatched by
+# `validate_record`, and rule (a) still runs on a window-less segment.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_segment_coverage_rule_a_runs_without_a_window() -> None:
+    """A segment whose text has no recognizable Class Features section
+    still gets rule (a) -- a dropped Starting Package is visible without
+    one -- while (b)/(c) are skipped."""
+    text = "\n".join(
+        [
+            "TESTCLASS",
+            "",
+            "Testclasses are brave. Rage: They rage a great deal, at length, and often.",
+            "",
+            "Half-Orc Testclass Starting Package",
+            "",
+            "Armor: Studded leather.",
+        ]
+    )
+    record = _coverage_record()
+    record["fields"]["description_sections"] = []
+    errors = check_class_segment_coverage(record, _segment(text))
+    assert len(errors) == 1
+    assert "Half-Orc Testclass Starting Package" in errors[0]
+
+
+def test_validate_record_dispatches_type_segment_checks() -> None:
+    """`TYPE_SEGMENT_CHECKS` is wired into `owlsperch.validate.runner
+    .validate_record`, so `validate`, `build-db` and `find_bump_candidates`
+    all see these failures."""
+    from owlsperch.validate.loader import CompiledSchemas
+    from owlsperch.validate.runner import validate_record
+
+    compiled = CompiledSchemas.load()
+    record = copy.deepcopy(_valid_class_record())
+    record["type"] = "prestige_class"
+    record["id"] = "prestige_class:phb1:testclass"
+    segment = _segment(
+        "TESTCLASS\n\nEx-Testclasses\n\nA testclass who breaks her oath loses everything."
+    )
+    errors = validate_record(record, type_dir="prestige_class", compiled=compiled, segment=segment)
+    assert any("Ex-Testclasses" in error for error in errors)
 
 
 # ---------------------------------------------------------------------------

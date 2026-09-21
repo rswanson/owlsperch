@@ -963,8 +963,52 @@ TYPE_CONTEXT_CHECKS: dict[str, Callable[[dict[str, Any], ValidationContext], lis
 #: `<Heading>:` at a sentence start, 2-60 characters of letters, an
 #: apostrophe, a comma, parentheses, a slash, a space or a hyphen, beginning
 #: with a capital -- which covers both the plain form ("Bonus Languages:")
-#: and the supernatural-tagged one ("Wild Shape (Su):").
+#: and the supernatural-tagged one ("Wild Shape (Su):"). The character class
+#: alone is not enough: it also matches an ordinary mid-paragraph clause that
+#: happens to end in a colon ("If she has a familiar, the following apply:"),
+#: so every match is additionally put through `_is_heading_shaped`.
 _RUN_IN_HEADING_RE = re.compile(r"([A-Z][A-Za-z'’,()/ -]{1,59}):")
+
+#: A printed run-in heading is title-cased and short. `_is_heading_shaped`
+#: requires at most this many whitespace tokens -- the longest real PHB class
+#: heading is "Tongue of the Sun and Moon (Ex)" at 7.
+_MAX_HEADING_TOKENS = 8
+
+#: ...and every token LONGER than this to start with a capital. Shorter ones
+#: are exempt because a title-cased heading leaves its function words lower
+#: ("of", "the", "and", "or", "in") and its tags bare ("(Ex)" -> "Ex").
+_HEADING_SHORT_TOKEN_LEN = 3
+
+#: Leading/trailing punctuation on one token of a heading, stripped before
+#: the capitalization test so "(Ex)" tests as "Ex" and "Domains," as
+#: "Domains".
+_TOKEN_EDGE_PUNCTUATION_RE = re.compile(r"^[^0-9A-Za-z]+|[^0-9A-Za-z]+$")
+
+
+def _is_heading_shaped(heading: str) -> bool:
+    """Whether `heading` looks like a printed run-in HEADING rather than an
+    ordinary sentence clause that merely ends in a colon.
+
+    `_RUN_IN_HEADING_RE` alone accepts, for instance, "If she has a
+    familiar, the following apply" and "Her options for new forms include"
+    out of the middle of a feature's own prose -- each would then be
+    reported as a missing class feature AND would cut the real feature's
+    printed span short. Two conditions, calibrated so that every one of the
+    ~150 real run-in headings across the 11 PHB class segments still
+    passes: at most `_MAX_HEADING_TOKENS` tokens, and every token longer
+    than `_HEADING_SHORT_TOKEN_LEN` characters (once its edge punctuation is
+    stripped) capitalized."""
+    tokens = heading.split()
+    if not tokens or len(tokens) > _MAX_HEADING_TOKENS:
+        return False
+    for token in tokens:
+        word = _TOKEN_EDGE_PUNCTUATION_RE.sub("", token)
+        if len(word) <= _HEADING_SHORT_TOKEN_LEN:
+            continue
+        if not word[:1].isupper():
+            return False
+    return True
+
 
 #: Sentence-final punctuation, allowing the closing bracket/quote a citation
 #: puts after the period -- PHB's paladin prints "(See Turn or Rebuke
@@ -1027,6 +1071,14 @@ _NON_FEATURE_RUN_IN_HEADINGS = (
 #: distribution; the 0.60 originally proposed catches nothing at all on the
 #: real corpus, including the record the rule exists for.
 _FEATURE_TEXT_COVERAGE_RATIO = 0.75
+
+#: A paragraph broken mid-WORD at a column break: a letter followed by a
+#: hard hyphen at the very end (the PHB bard's "...Cha 11 for 1st-"). This
+#: is the only corroboration `_column_break_continuation` accepts for a
+#: stitch, since a paragraph that merely ends without a full stop is
+#: routine in a reconstructed column and proves nothing about WHICH other
+#: paragraph continues it.
+_COLUMN_BREAK_HYPHEN_RE = re.compile(r"[A-Za-z][-\u2010\u2011]$")
 
 #: A paragraph must be at least this many words to count as prose for the
 #: column-break stitch below -- a table row, a caption or a stray cell is
@@ -1128,12 +1180,15 @@ def _class_features_window(paragraphs: list[str], class_name: str) -> list[str] 
 def _run_in_headings(paragraph: str) -> list[tuple[int, int, str]]:
     """Every `(start, end, heading)` run-in heading in one paragraph: a
     `_RUN_IN_HEADING_RE` match that begins the paragraph or follows
-    sentence-final punctuation."""
+    sentence-final punctuation AND is `_is_heading_shaped`."""
     found: list[tuple[int, int, str]] = []
     for match in _RUN_IN_HEADING_RE.finditer(paragraph):
+        heading = match.group(1).strip()
+        if not _is_heading_shaped(heading):
+            continue
         preceding = paragraph[: match.start()].rstrip()
         if preceding == "" or _SENTENCE_END_RE.search(preceding):
-            found.append((match.start(), match.end(), match.group(1).strip()))
+            found.append((match.start(), match.end(), heading))
     return found
 
 
@@ -1142,7 +1197,7 @@ def _is_prose(paragraph: str) -> bool:
 
 
 def _column_break_continuation(paragraphs: list[str]) -> tuple[int, str] | None:
-    """The one unambiguous column-break stitch in a Class Features window,
+    """The one corroborated column-break stitch in a Class Features window,
     as `(index of the truncated paragraph, the continuation's own prefix)`,
     or `None`.
 
@@ -1155,12 +1210,29 @@ def _column_break_continuation(paragraphs: list[str]) -> tuple[int, str] | None:
     paragraph is measured against a fraction of its own printed span, and
     rule (c) can't see a paraphrase there at all.
 
-    Stitched only when the window holds EXACTLY ONE truncated prose
-    paragraph (one that doesn't end at a sentence boundary) and EXACTLY ONE
-    prose paragraph that begins mid-sentence (a lowercase first letter), so
-    the pairing needs no guessing. Anything more ambiguous is left alone:
-    the resulting span is then too SHORT, which only ever makes the ratio
-    larger, so an unstitched window can never produce a false failure."""
+    Unlike leaving a window unstitched -- which only ever makes a span
+    SHORTER and a ratio LARGER, and so can never produce a false failure --
+    stitching the WRONG pair appends unrelated prose and LOWERS the ratio,
+    which can. Three things bound that:
+
+    * the window must hold EXACTLY ONE truncated prose paragraph (one not
+      ending at a sentence boundary) and EXACTLY ONE prose paragraph that
+      begins mid-sentence, so there is no pairing to choose between;
+    * the truncated paragraph must end mid-WORD, on a hard hyphen
+      (`_COLUMN_BREAK_HYPHEN_RE`), and the continuation must open with the
+      lowercase remainder of that word -- the one unambiguous signature of a
+      column break, and the same one `owlsperch.text.cleanup`'s
+      dehyphenation rejoins within a paragraph. A paragraph that merely ends
+      without a full stop (the PHB monk's and druid's windows both do) is
+      NOT corroboration, and is left unstitched;
+    * the appended text is capped at the continuation's own prefix BEFORE
+      its first run-in heading, so at most one printed feature's worth of
+      continuation is ever added, never the rest of the column.
+
+    A word-count cap tied to the truncated paragraph is deliberately not
+    used: the bard's truncated tail is 89 words against a 487-word
+    continuation, so any such cap would hide the very paraphrase rule (c)
+    exists to catch."""
     truncated = [
         index
         for index, paragraph in enumerate(paragraphs)
@@ -1173,7 +1245,11 @@ def _column_break_continuation(paragraphs: list[str]) -> tuple[int, str] | None:
     ]
     if len(truncated) != 1 or len(continuations) != 1 or truncated[0] == continuations[0]:
         return None
+    if not _COLUMN_BREAK_HYPHEN_RE.search(paragraphs[truncated[0]].strip()):
+        return None
     continuation = paragraphs[continuations[0]]
+    if not continuation.strip()[:1].isalpha():
+        return None
     headings = _run_in_headings(continuation)
     prefix = continuation[: headings[0][0]] if headings else continuation
     return truncated[0], prefix
@@ -1247,10 +1323,13 @@ def check_class_segment_coverage(
         same paragraph, extended through `_column_break_continuation` when
         the paragraph is cut off at a column break.
 
-    Skipped silently (returns `[]`) when there is no segment, no `text`, or
-    no recognizable Class Features window -- a missing segment is already
-    its own failure via `check_pages_within_segment`, and a page layout this
-    can't read must not be reported as a missing feature."""
+    The whole check is skipped silently (returns `[]`) when there is no
+    segment, no `text`, or no usable record `name` -- a missing segment is
+    already its own failure via `check_pages_within_segment`. When a segment
+    HAS text but no recognizable Class Features window, only (b) and (c) are
+    skipped: (a) works off the raw segment text and still runs, since a
+    dropped Starting Package section is visible without one, and a page
+    layout this can't read must not be reported as a missing feature."""
     if segment is None:
         return []
     text = segment.get("text")
