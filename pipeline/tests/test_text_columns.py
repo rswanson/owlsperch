@@ -16,6 +16,7 @@ from owlsperch.text.columns import (
     _groups_can_merge,
     _merge_adjacent_groups,
     _qualifying_row_count,
+    _TableCandidate,
     is_vertical_block,
     order_blocks,
 )
@@ -822,7 +823,7 @@ def test_group_merge_is_rejected_when_it_would_reduce_qualifying_rows() -> None:
     assert before == 4
     assert _qualifying_row_count(group_a + group_b) == 3
 
-    result = _merge_adjacent_groups([group_a, group_b])
+    result = _merge_adjacent_groups([_TableCandidate.of(group_a), _TableCandidate.of(group_b)])
     assert result is None
 
 
@@ -856,7 +857,7 @@ def test_orphan_absorption_is_rejected_when_it_would_reduce_qualifying_rows() ->
     assert before == 3
     assert _qualifying_row_count([*group, leftover]) == 1
 
-    result = _absorb_orphan_blocks([group], [leftover])
+    result = _absorb_orphan_blocks([_TableCandidate.of(group)], [leftover])
     assert result is None
 
 
@@ -892,7 +893,7 @@ def test_orphan_absorption_guard_uses_true_total_not_group_only_baseline() -> No
     assert true_total_baseline == 2
     assert _qualifying_row_count([*group, leftover]) == 1
 
-    result = _absorb_orphan_blocks([group], [leftover])
+    result = _absorb_orphan_blocks([_TableCandidate.of(group)], [leftover])
     assert result is None
 
 
@@ -1113,13 +1114,13 @@ _FAMILIAR_ROWS = [
 ]
 
 
-def _label_value_grid_block() -> str:
+def _label_value_grid_block(rows: list[tuple[str, float, str]] | None = None) -> str:
     """The shape `pdftotext` emits for the PHB's FAMILIARS `Familiar |
     Special` grid: ONE block, with the label and the value of each row as
     two separate `<line>`s at the same y, plus a two-line footnote."""
     lines = []
     y = 565.1
-    for label, label_x_max, value in _FAMILIAR_ROWS:
+    for label, label_x_max, value in _FAMILIAR_ROWS if rows is None else rows:
         y_max = y + _SIDEBAR_GRID_LINE_HEIGHT
         lines.append(_line_of_words(y, y_max, [(76.6, label_x_max, label)]))
         value_words: list[tuple[float, float, str]] = []
@@ -1251,3 +1252,164 @@ def test_boxed_sidebar_columns_read_left_then_right(tmp_path: Path) -> None:
         "RIGHT_BODY",
         "SIDEBAR_RIGHT",
     ]
+
+
+#: The FAMILIARS grid with a long (6-word) header value instead of the
+#: printed one-word "Special". Averaged across BOTH cells, a label/value
+#: grid's median cell length depends on how many words the header happens to
+#: print -- which is not a fact about the grid -- so step 2c must not apply
+#: step 2a's `TABLE_CELL_MAX_MEDIAN_WORDS` check at all.
+_FAMILIAR_ROWS_LONG_HEADER = [
+    ("Familiar", 103.9, "Special ability granted to the master"),
+    *_FAMILIAR_ROWS[1:],
+]
+
+
+def test_label_value_grid_survives_a_long_header_row(tmp_path: Path) -> None:
+    # Review regression (B10c-mand15, finding (1)): step 2c used to delegate
+    # to `_build_single_block_table_or_prose_split` with its both-cells
+    # `TABLE_CELL_MAX_MEDIAN_WORDS` (4) check still armed, so the FAMILIARS
+    # grid only passed because its own one-word "Special" header happened to
+    # contribute a second short cell. Widen that header to 6 words and the
+    # median crosses 4, rejecting all 10 otherwise-identical animal rows.
+    page = _parse_page(
+        tmp_path,
+        "familiar_grid_long_header.html",
+        _label_value_grid_block(_FAMILIAR_ROWS_LONG_HEADER),
+    )
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1, ordered
+    rows = table_groups[0].rows
+    assert rows[0].text == "Familiar\tSpecial ability granted to the master"
+    animal_rows = [row for row in rows if len(row.cells) == 2][1:]
+    assert len(animal_rows) == 10, [row.cells for row in rows]
+    assert animal_rows[7].text == "Snake 2\tMaster gains a +3 bonus on Bluff checks"
+
+
+def test_label_value_grid_with_no_header_row_is_still_detected(tmp_path: Path) -> None:
+    # The same point from the other side: a grid printed with NO header row
+    # at all has nothing but sentence-like values on its right, so the
+    # both-cells median is above 4 for every row. Its label side is still a
+    # column of one-word names, which is the discriminator step 2c uses.
+    page = _parse_page(
+        tmp_path,
+        "familiar_grid_no_header.html",
+        _label_value_grid_block(list(_FAMILIAR_ROWS[1:])),
+    )
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1, ordered
+    animal_rows = [row for row in table_groups[0].rows if len(row.cells) == 2]
+    assert len(animal_rows) == 10, [row.cells for row in table_groups[0].rows]
+    assert animal_rows[0].text == "Bat\tMaster gains a +3 bonus on Listen checks"
+    assert animal_rows[7].text == "Snake 2\tMaster gains a +3 bonus on Bluff checks"
+
+
+def _sidebar_grid_base_body() -> str:
+    """The PHB p.37 sidebar grid's four per-column blocks, with NO orphan
+    cell -- the base the overhang tests below add one to. The Special
+    column's own widest cell reaches x 315.0, and every line is 8pt tall, so
+    step 2b's absorb tolerance is 8.0pt either side of x[76.6, 315.0]."""
+    levels = ["Class/Level", "1st-2nd", "3rd-5th", "6th-8th", "9th-11th"]
+    levels += ["12th-14th", "15th-17th", "18th-20th"]
+    body = _sidebar_grid_column_block(76.6, 110.2, dict(enumerate(levels)))
+    body += _sidebar_grid_column_block(
+        120.4, 216.3, {row: ("Bonus HD" if row == 0 else f"+{2 * row - 2}") for row in range(8)}
+    )
+    body += _sidebar_grid_column_block(
+        228.8, 250.2, {row: ("Tricks" if row == 0 else str(row)) for row in range(8)}
+    )
+    return body + _sidebar_grid_column_block(
+        257.5,
+        315.0,
+        {0: "Special", 1: "Link, share spells", 2: "Evasion", 3: "Devotion", 4: "Multiattack"},
+    )
+
+
+def _sidebar_grid_orphan(row: int, x_min: float, x_max: float, text: str) -> str:
+    y_min, y_max = _sidebar_grid_row_y(row)
+    box = f'xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}"'
+    return f"<flow><block {box}><line {box}><word {box}>{text}</word></line></block></flow>"
+
+
+def test_orphan_overhanging_beyond_the_tolerance_stays_out(tmp_path: Path) -> None:
+    # The absorb tolerance is one median line height (8pt) either side of
+    # the group's base x span, which ends at 315.0. A cell reaching 330.0
+    # overhangs by 15pt and must NOT be absorbed; neither must a cell in the
+    # neighbouring column, even at the exact y of one of the grid's rows.
+    body = _sidebar_grid_base_body()
+    body += _sidebar_grid_orphan(6, 257.5, 330.0, "TOO_WIDE")
+    body += _sidebar_grid_orphan(3, 340.0, 420.0, "NEIGHBOUR_COLUMN")
+    page = _parse_page(tmp_path, "sidebar_grid_overhang_rejected.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    cell_texts = [cell for row in table_groups[0].rows for cell in row.cells]
+    assert "TOO_WIDE" not in cell_texts
+    assert "NEIGHBOUR_COLUMN" not in cell_texts
+    loose = [item.lines[0].text for item in ordered if isinstance(item, Block)]
+    assert "TOO_WIDE" in loose and "NEIGHBOUR_COLUMN" in loose, loose
+
+
+def test_absorbing_an_overhanging_orphan_does_not_widen_the_tolerance(tmp_path: Path) -> None:
+    # Review regression (B10c-mand15, finding (2)): the tolerance used to be
+    # measured against the group's CURRENT extent, which
+    # `_reassemble_table_groups` re-derives after every absorb -- so an
+    # absorbed cell reaching 322.0 (7pt overhang, accepted) moved the goal
+    # posts, and a second cell reaching 329.0 then looked like a 7pt
+    # overhang too and ratcheted the group outward one tolerance at a time.
+    # Measured against the clique's own base span (x_max 315.0) the second
+    # cell overhangs by 14pt and must stay out.
+    body = _sidebar_grid_base_body()
+    body += _sidebar_grid_orphan(5, 257.5, 322.0, "WITHIN_TOLERANCE")
+    body += _sidebar_grid_orphan(7, 257.5, 329.0, "RATCHET")
+    page = _parse_page(tmp_path, "sidebar_grid_no_ratchet.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    cell_texts = [cell for row in table_groups[0].rows for cell in row.cells]
+    assert "WITHIN_TOLERANCE" in cell_texts, cell_texts
+    assert "RATCHET" not in cell_texts, cell_texts
+    loose = [item.lines[0].text for item in ordered if isinstance(item, Block)]
+    assert loose == ["RATCHET"], loose
+
+
+def test_over_wide_cluster_with_no_qualifying_valley_stays_merged(tmp_path: Path) -> None:
+    # Step 4a's safety is the VALLEY, not the width: an over-wide cluster
+    # whose only internal gap is 4pt -- under
+    # `COLUMN_VALLEY_GAP_HEIGHT_FACTOR` (1.0) * the 8pt median word height
+    # -- is left exactly as the greedy pass built it, i.e. ordered by y.
+    body = _narrow_gutter_block(34.0, 51.5, 274.2, 155.3, "LEFT_TOP")
+    body += _narrow_gutter_block(278.2, 53.7, 541.3, 138.8, "RIGHT_TOP")
+    body += _narrow_gutter_block(34.0, 200.0, 274.2, 293.3, "LEFT_LOW")
+    body += _narrow_gutter_block(278.2, 196.0, 541.3, 280.0, "RIGHT_LOW")
+    page = _parse_page(tmp_path, "over_wide_no_valley.html", body)
+
+    texts = [_block_text(item) for item in order_blocks(page)]
+
+    assert texts == ["LEFT_TOP", "RIGHT_TOP", "RIGHT_LOW", "LEFT_LOW"]
+
+
+def test_wide_single_column_run_with_no_valley_is_not_split(tmp_path: Path) -> None:
+    # A run whose blocks overlap each other's x-extents in a chain covers
+    # its whole span with no valley at all (`_widest_valley` returns None),
+    # so however wide the cluster is it stays one column, read top to
+    # bottom. The fixture's y order deliberately disagrees with its x order,
+    # so a split would be visible.
+    body = _narrow_gutter_block(34.0, 300.0, 300.0, 340.0, "LOWEST_LEFTMOST")
+    body += _narrow_gutter_block(200.0, 100.0, 450.0, 140.0, "TOP_MIDDLE")
+    body += _narrow_gutter_block(380.0, 200.0, 541.0, 240.0, "MIDDLE_RIGHTMOST")
+    page = _parse_page(tmp_path, "wide_single_column.html", body)
+
+    texts = [_block_text(item) for item in order_blocks(page)]
+
+    assert texts == ["TOP_MIDDLE", "MIDDLE_RIGHTMOST", "LOWEST_LEFTMOST"]

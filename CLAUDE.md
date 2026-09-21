@@ -256,7 +256,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   (50%) of the block's rows, they confirm exactly one column split, and the
   LABEL side's median word count is at most
   `LABEL_GRID_MAX_MEDIAN_LABEL_WORDS` (3) -- the fraction guard is what
-  keeps PHB p.28's illustration-wrapped bard prose out -- and it never
+  keeps PHB p.28's illustration-wrapped bard prose out. That label-side
+  guard REPLACES step 2a's own both-sides `TABLE_CELL_MAX_MEDIAN_WORDS`
+  check (`_build_single_block_table_or_prose_split` takes
+  `max_median_cell_words=None` from this caller): averaged across a
+  label/value grid's two cells the median depends on how many words the
+  HEADER happens to print, so a one-word "Special" header would admit the
+  grid while a six-word one rejected all ten identical rows. Step 2c never
   falls through to a prose split, so it can only turn a would-be run-on
   paragraph into a table group. (C) A new step 4a repairs an over-merged
   column: step 4's greedy left-to-right chain bridges a merely NARROW
@@ -265,13 +271,26 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   columns into one cluster that then orders purely by `yMin` and so
   interleaves them -- which is why every full-width sidebar opened with its
   right column's mid-sentence continuation. A cluster wider than
-  `WIDE_BLOCK_FRACTION` of the text area (impossible for one printed
-  column, since a block that wide is already a step-3 break) is split at
-  its widest internal valley -- an x-interval no member block overlaps, at
-  least `COLUMN_VALLEY_GAP_HEIGHT_FACTOR` (1.0) median word heights wide --
-  and each piece re-checked; splitting only while a piece is still
+  `WIDE_BLOCK_FRACTION` of the text area is a suspect (wide enough to be
+  several printed columns, though unlike a block that is not on its own
+  proof of anything); the actual safety is the VALLEY requirement -- it is
+  split only at its widest internal valley, an x-interval no member block
+  overlaps and at least `COLUMN_VALLEY_GAP_HEIGHT_FACTOR` (1.0) median word
+  heights wide, with each piece re-checked, and a cluster with no such
+  valley left exactly as it was. Splitting only while a piece is still
   implausibly wide is what keeps an ungrouped table's cell blocks merged
-  (and so read row-wise) instead of column-ordered. Still out of scope: a
+  (and so read row-wise) instead of column-ordered. (A)'s overhang is
+  measured against each clique's OWN x span, captured once by
+  `_TableCandidate` before step 2b's fixpoint loop, never against the
+  group's growing extent -- otherwise each absorbed overhanging cell would
+  widen the tolerance for the next and ratchet the group into a
+  neighbouring column. Measured scope of all three: re-extracting the whole
+  PHB changes 32 of its 322 pages, every one with an identical
+  whitespace-token multiset (these steps only regroup/reorder, never drop or
+  invent a word); 9 of the 11 class-level-table pages are byte-identical,
+  p.40 gains its orphan `Bonus feat` Special cells inside their own rows,
+  and p.53's sorcerer table is untouched while the FAMILIARS grid below it
+  becomes a table group. Still out of scope: a
   table group is a column break for the whole page even when only one
   column wide, so a grid inside a sidebar's left column still cuts the page
   at its own `yMin` -- the sidebar now opens in printed order, but its right

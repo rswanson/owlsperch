@@ -266,19 +266,32 @@ Algorithm (per page):
     opened mid-sentence ("mount must be within 5 feet at the time of
     casting to receive the benefit.").
 
-    A cluster whose own x span exceeds the same `WIDE_BLOCK_FRACTION` (60%)
-    of the text area that makes a *block* a column break cannot be one
-    printed column, since no block that wide ever reaches column clustering
-    (step 3 takes it out as a break first). Such a cluster is split at its
-    widest internal **valley** -- an x-interval inside its span that none of
-    its member blocks overlaps -- provided the valley is at least
+    So a cluster whose own x span exceeds the same `WIDE_BLOCK_FRACTION`
+    (60%) of the text area that makes a *block* a column break is treated as
+    a suspect: it is wide enough to be several printed columns, though --
+    unlike a block, which step 3 would already have taken out as a break --
+    being that wide is not on its own proof of anything. The actual safety
+    is the **valley** requirement: such a cluster is split only at its widest
+    internal valley -- an x-interval inside its span that none of its member
+    blocks overlaps -- and only when that valley is at least
     `COLUMN_VALLEY_GAP_HEIGHT_FACTOR` (1.0) times the run's median word
-    glyph height, and each piece is then re-checked the same way. Being a
-    global property of the cluster, a valley is order-independent, unlike
-    the running extent step 4 chains. Splitting only while a piece is still
-    implausibly wide is what keeps this from column-ordering a table's cell
-    blocks that step 2 failed to group: those stay merged (and so ordered
-    row-wise by y) as soon as their own piece is narrow enough.
+    glyph height, i.e. a real band of whitespace running the cluster's whole
+    height. A cluster with no such valley is left exactly as it is. Each
+    piece is then re-checked the same way. Being a global property of the
+    cluster, a valley is order-independent, unlike the running extent step 4
+    chains. Splitting only while a piece is still implausibly wide is what
+    keeps this from column-ordering a table's cell blocks that step 2 failed
+    to group: those stay merged (and so ordered row-wise by y) as soon as
+    their own piece is narrow enough.
+
+   Measured scope of steps 2b/2c/4a together (B10c-mand15): re-extracting
+   the whole Player's Handbook changes 32 of its 322 pages, every one of
+   them with an identical whitespace-token multiset before and after -- the
+   three steps only ever regroup or reorder text, never drop or invent a
+   word. Of the 11 class-level-table pages, 9 are byte-identical; p.40
+   (Table 3-9: The Fighter) gains its orphan `Bonus feat` Special cells
+   inside their own level rows, and p.53's own sorcerer table is unchanged
+   while the FAMILIARS grid below it becomes a table group.
 
 5. **Emit columns left to right, each column's blocks top to bottom**
    (sorted by `yMin`), then continue with the next run after its wide
@@ -814,23 +827,32 @@ def _build_single_block_table_or_prose_split(
     confirmed_splits: list[float],
     gappy_row_indices: list[int],
     median_height: float,
+    max_median_cell_words: float | None = TABLE_CELL_MAX_MEDIAN_WORDS,
 ) -> TableGroup | list[Block]:
     """Step 3: given confirmed column splits, decide whether the gappy
     rows' cells are table cells (build the `TableGroup`) or full sentences
     -- two prose columns `pdftotext` merged into one block (see step 2a's
     addendum in the module docstring) -- and split into separate column
-    `Block`s instead."""
+    `Block`s instead.
+
+    `max_median_cell_words` is `None` for step 2c's two-column label/value
+    grid, whose *value* cells are sentences by nature: averaging them with
+    the labels makes the median depend on how many words the header happens
+    to print, so that caller uses its own label-side-only guard
+    (`LABEL_GRID_MAX_MEDIAN_LABEL_WORDS`) instead and never wants the prose
+    split this check would otherwise produce."""
     # A table cell is short -- a name, a number, a die code. If the
     # confirmed splits' cells are, on the whole, full sentences instead,
     # this is two prose columns merged into one block, not a table.
-    gappy_cell_word_counts = [
-        float(len(cell_words))
-        for i in gappy_row_indices
-        for cell_words in _bucket_words_at(rows_words[i], confirmed_splits)
-    ]
-    median_words_per_cell = _median(gappy_cell_word_counts, default=0.0)
-    if median_words_per_cell > TABLE_CELL_MAX_MEDIAN_WORDS:
-        return _build_prose_sub_blocks(lines, confirmed_splits)
+    if max_median_cell_words is not None:
+        gappy_cell_word_counts = [
+            float(len(cell_words))
+            for i in gappy_row_indices
+            for cell_words in _bucket_words_at(rows_words[i], confirmed_splits)
+        ]
+        median_words_per_cell = _median(gappy_cell_word_counts, default=0.0)
+        if median_words_per_cell > max_median_cell_words:
+            return _build_prose_sub_blocks(lines, confirmed_splits)
 
     gappy = set(gappy_row_indices)
     rows = [
@@ -874,6 +896,14 @@ def _detect_label_value_grid(
     of at most `LABEL_GRID_MAX_MEDIAN_LABEL_WORDS` words), a merged prose
     column's are sentences.
 
+    That label-side guard REPLACES step 2a's own both-sides cell-length
+    check, which is why the build below passes `max_median_cell_words=None`:
+    averaged across a label/value grid's two cells, the median depends on
+    how many words the header row happens to print -- a FAMILIARS grid with
+    a one-word "Special" header squeaks under the (4) bar while the very
+    same 10 rows under a "Special ability granted to the master" header
+    would be rejected wholesale, which is not a distinction about the grid.
+
     This fallback runs only once ordinary detection has declined the block,
     and returns `None` -- leaving the block exactly as it was -- rather than
     ever falling through to a prose split, so the path is strictly additive:
@@ -897,7 +927,13 @@ def _detect_label_value_grid(
         return None
 
     built = _build_single_block_table_or_prose_split(
-        block, lines, rows_words, confirmed_splits, gappy_row_indices, median_height
+        block,
+        lines,
+        rows_words,
+        confirmed_splits,
+        gappy_row_indices,
+        median_height,
+        max_median_cell_words=None,
     )
     return built if isinstance(built, TableGroup) else None
 
@@ -1020,52 +1056,92 @@ def _groups_can_merge(a: list[Block], b: list[Block]) -> bool:
     return gap <= TABLE_MERGE_GAP_HEIGHT_FACTOR * threshold
 
 
-def _merge_adjacent_groups(groups: list[list[Block]]) -> list[list[Block]] | None:
+@dataclass(frozen=True)
+class _TableCandidate:
+    """One in-progress table group during step 2b's reassembly: its member
+    blocks so far, plus the x span of the printed clique (or cliques) it
+    started from.
+
+    That base span is deliberately NOT re-derived from `blocks` as they
+    accumulate. `_block_fits_group` measures its overhang tolerance against
+    it, so re-deriving would let every absorbed, slightly overhanging orphan
+    widen the span for the next candidate -- a ratchet that could walk a
+    group one tolerance at a time into a neighbouring column. Merging two
+    candidates unions their base spans (both are real cliques poppler
+    emitted); absorbing a block never changes it."""
+
+    blocks: list[Block]
+    base_x_min: float
+    base_x_max: float
+
+    @classmethod
+    def of(cls, blocks: list[Block]) -> _TableCandidate:
+        x_min, x_max, _, _ = _group_extent(blocks)
+        return cls(blocks, x_min, x_max)
+
+    def with_block(self, block: Block) -> _TableCandidate:
+        return _TableCandidate([*self.blocks, block], self.base_x_min, self.base_x_max)
+
+    def merged_with(self, other: _TableCandidate) -> _TableCandidate:
+        return _TableCandidate(
+            [*self.blocks, *other.blocks],
+            min(self.base_x_min, other.base_x_min),
+            max(self.base_x_max, other.base_x_max),
+        )
+
+
+def _merge_adjacent_groups(groups: list[_TableCandidate]) -> list[_TableCandidate] | None:
     """Try to merge one vertically adjacent pair of `groups` (step 2b,
-    part A); return the new list of groups with that pair concatenated, or
-    `None` if no pair both qualifies (`_groups_can_merge`) and passes the
+    part A); return the new list of candidates with that pair concatenated,
+    or `None` if no pair both qualifies (`_groups_can_merge`) and passes the
     row-count guard."""
-    ordered = sorted(groups, key=lambda g: _group_extent(g)[2])
+    ordered = sorted(groups, key=lambda g: _group_extent(g.blocks)[2])
     for i in range(len(ordered) - 1):
         a, b = ordered[i], ordered[i + 1]
-        if not _groups_can_merge(a, b):
+        if not _groups_can_merge(a.blocks, b.blocks):
             continue
-        before = _qualifying_row_count(a) + _qualifying_row_count(b)
-        merged = a + b
-        if _qualifying_row_count(merged) < before:
+        before = _qualifying_row_count(a.blocks) + _qualifying_row_count(b.blocks)
+        merged = a.merged_with(b)
+        if _qualifying_row_count(merged.blocks) < before:
             continue
         rest = [g for k, g in enumerate(ordered) if k != i and k != i + 1]
         return [merged, *rest]
     return None
 
 
-def _block_fits_group(block: Block, group: list[Block]) -> bool:
+def _block_fits_group(block: Block, group: _TableCandidate) -> bool:
     """Whether `block` is an orphan single-cell fragment belonging inside
     `group` (step 2b, part B): not prose-like or label:value-like (the
     same exclusions steps 1a/1b apply to real table columns), its
-    x-extent inside the group's own x span -- allowing an overhang of up
-    to `TABLE_ABSORB_X_OVERHANG_HEIGHT_FACTOR` of the group's own median
-    non-blank line height on either side (B10c-mand15: the group's x span
-    is only as wide as the cells it has already claimed, and an orphan
-    row's own cell is frequently the widest one in its column) -- and its
-    y-center within one of the group's own median non-blank line heights
-    of the group's y span. Deliberately does not require
+    x-extent inside the group's own BASE x span -- allowing an overhang of
+    up to `TABLE_ABSORB_X_OVERHANG_HEIGHT_FACTOR` of the group's own median
+    non-blank line height on either side (B10c-mand15: that span is only as
+    wide as the cells poppler's own cliques carried, and an orphan row's
+    cell is frequently the widest one in its column) -- and its y-center
+    within one of the group's own median non-blank line heights of the
+    group's y span. Deliberately does not require
     `_has_min_lines_for_table_candidacy` -- a single-line orphan row
-    fragment is exactly what this looks for."""
+    fragment is exactly what this looks for.
+
+    The overhang is measured against `_TableCandidate.base_x_min/max`, not
+    the group's current extent, so absorbing one overhanging cell cannot
+    widen the tolerance for the next (see `_TableCandidate`)."""
     if _is_prose_like_block(block) or _is_label_value_block(block):
         return False
-    x_min, x_max, y_min, y_max = _group_extent(group)
-    height = _group_median_line_height(group)
+    _, _, y_min, y_max = _group_extent(group.blocks)
+    height = _group_median_line_height(group.blocks)
     overhang = TABLE_ABSORB_X_OVERHANG_HEIGHT_FACTOR * height
-    if block.x_min < x_min - overhang or block.x_max > x_max + overhang:
+    if block.x_min < group.base_x_min - overhang:
+        return False
+    if block.x_max > group.base_x_max + overhang:
         return False
     y_center = (block.y_min + block.y_max) / 2
     return y_min - height <= y_center <= y_max + height
 
 
 def _absorb_orphan_blocks(
-    groups: list[list[Block]], pool: list[Block]
-) -> tuple[list[list[Block]], list[Block]] | None:
+    groups: list[_TableCandidate], pool: list[Block]
+) -> tuple[list[_TableCandidate], list[Block]] | None:
     """Try to absorb one leftover block from `pool` into one of `groups`
     (step 2b, part B); return the updated `(groups, pool)`, or `None` if
     no block both fits (`_block_fits_group`) and passes the row-count
@@ -1074,10 +1150,10 @@ def _absorb_orphan_blocks(
         for bi, block in enumerate(pool):
             if not _block_fits_group(block, group):
                 continue
-            before = _qualifying_row_count(group) + _qualifying_row_count([block])
-            if _qualifying_row_count([*group, block]) < before:
+            before = _qualifying_row_count(group.blocks) + _qualifying_row_count([block])
+            if _qualifying_row_count([*group.blocks, block]) < before:
                 continue
-            new_groups = [*groups[:gi], [*group, block], *groups[gi + 1 :]]
+            new_groups = [*groups[:gi], group.with_block(block), *groups[gi + 1 :]]
             new_pool = [*pool[:bi], *pool[bi + 1 :]]
             return new_groups, new_pool
     return None
@@ -1090,17 +1166,23 @@ def _reassemble_table_groups(
     absorbing orphan single-cell blocks into them to a joint fixpoint (see
     module docstring, step 2b) -- a single merge-then-absorb pass is not
     enough, since absorbing an orphan row can be exactly what brings a gap
-    down under the merge threshold."""
+    down under the merge threshold.
+
+    Each incoming clique's own x span is captured ONCE here, before the
+    loop, as the `_TableCandidate` the whole fixpoint then carries -- see
+    that class for why the absorb tolerance must not be re-derived from a
+    group's growing extent."""
+    candidates = [_TableCandidate.of(g) for g in groups]
     while True:
-        merged = _merge_adjacent_groups(groups)
+        merged = _merge_adjacent_groups(candidates)
         if merged is not None:
-            groups = merged
+            candidates = merged
             continue
-        absorbed = _absorb_orphan_blocks(groups, pool)
+        absorbed = _absorb_orphan_blocks(candidates, pool)
         if absorbed is not None:
-            groups, pool = absorbed
+            candidates, pool = absorbed
             continue
-        return groups, pool
+        return [c.blocks for c in candidates], pool
 
 
 def _extract_table_groups(blocks: list[Block]) -> tuple[list[TableGroup], list[Block]]:
@@ -1173,11 +1255,12 @@ def _split_over_wide_cluster(
 
     A cluster whose own x span is wider than `wide_threshold` -- the same
     `WIDE_BLOCK_FRACTION` of the text area that makes a *block* a column
-    break -- cannot be one printed column, since no block that wide ever
-    reaches column clustering in the first place (step 3 takes it out as a
-    break). It is split at its widest internal valley, provided that valley
-    is at least `min_valley` wide; a cluster with no qualifying valley is
-    left as it is."""
+    break -- is wide enough to be several printed columns, and so a suspect;
+    that alone proves nothing (the threshold's block-level rationale does not
+    carry over to a cluster). The safety is the valley: it is split only at
+    its widest internal valley, and only when that valley is at least
+    `min_valley` wide -- a real band of whitespace running the cluster's
+    whole height. A cluster with no qualifying valley is left as it is."""
     if len(cluster) < 2:
         return [cluster]
     span = max(b.x_max for b in cluster) - min(b.x_min for b in cluster)
