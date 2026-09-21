@@ -7,32 +7,56 @@ Per book:
    already exist; `all` silently considers only in-scope/override books
    (mirroring `owlsperch.text.runner`) and prints a "no text output" skip
    line for any of those missing a text dir, instead of erroring.
-2. Read every `p{NNNN}.txt` in the (optionally `--pages`-limited) range into
-   paragraphs, joined with their `p{NNNN}.meta.json` sidecar stats into one
-   flat, book-wide `owlsperch.segment.headings.Paragraph` stream (a segment
-   may span a page boundary, so segmentation never works page by page). A
-   page whose `.txt` exists but whose `.meta.json` is missing (or does not
-   have one entry per paragraph) is a hard error naming every such page and
-   `owlsperch text <book_id> --force`.
+2. Read EVERY `p{NNNN}.txt` the book has into paragraphs, joined with their
+   `p{NNNN}.meta.json` sidecar stats into one flat, book-wide
+   `owlsperch.segment.headings.Paragraph` stream (a segment may span a page
+   boundary, so segmentation never works page by page). A page whose `.txt`
+   exists but whose `.meta.json` is missing (or does not have one entry per
+   paragraph) is a hard error naming every such page and `owlsperch text
+   <book_id> --force`. (Batch B10c-mand19) `--pages A-B` does NOT restrict
+   this stream: segmentation always sees the whole book, exactly as a plain
+   run does, and `--pages` restricts ONLY which of the resulting segments
+   are written and deleted (points 4/5 below). Building from a
+   page-restricted stream instead -- what this used to do -- silently
+   truncated every segment that began before the range (the real-corpus
+   damage: `owlsperch segment phb1 --force --pages 46-46` re-cut the paladin
+   class segment, pages 43-47, down to page 46 alone) and left a headingless
+   page-top fragment wherever a section started on the page before.
 3. Compute the book's body-median word height and split the stream into
    segments (`owlsperch.segment.splitter.build_segments`): pattern anchors
    (spell, stat_block, feat, table) plus `rules_section` for everything
    between them, split further at headings.
 4. If `--force` was given, first delete every existing
-   `segments/<book_id>/<seg_id>.json` whose first page falls inside the
-   processed page range (the whole book when no `--pages` was given) --
-   otherwise a page whose segmentation changed (e.g. it used to produce two
-   segments and now produces one) would leave a stale orphan file behind
-   alongside the freshly written ones.
+   `segments/<book_id>/<seg_id>.json` whose FIRST page falls inside the
+   `--pages` range (the whole book when no `--pages` was given) -- otherwise
+   a page whose segmentation changed (e.g. it used to produce two segments
+   and now produces one) would leave a stale orphan file behind alongside
+   the freshly written ones. A segment whose first page is OUTSIDE the range
+   is never deleted, even when it spans into the range.
 5. For each non-empty segment, compute its `seg_id` (`<book_id>-p<NNNN>-<NN>`
    -- first page spanned, then a per-first-page ordinal, both assigned in
    stream order so reruns reproduce the same ids) and write
    `segments/<book_id>/<seg_id>.json` unless it already exists and `--force`
-   was not given. Prints one line per book: counts per `kind_hint`, and how
-   many segment files were written vs already present.
+   was not given. (Batch B10c-mand19) With `--pages A-B` a segment is
+   written only when its own first page (`min(pages)`) lies in `[A, B]` --
+   the same rule point 4 deletes by, so write and delete stay symmetric. A
+   segment whose first page lies before the range is left exactly as it is
+   on disk (so a class segment starting on page 43 survives `--pages 46-46`
+   untouched), and a segment starting inside the range is written WHOLE,
+   including whatever pages it continues onto past `B`. Prints one line per
+   book: counts per `kind_hint`, and how many segment files were written vs
+   already present.
 6. As a coverage safety net (every page with any text should land in at
-   least one segment -- acceptance criterion 5), warns on stderr listing any
-   page in the processed range that ended up in no segment's `pages`.
+   least one segment -- acceptance criterion 5), records any page in the
+   processed range that is in no segment's `pages` onto
+   `BookSegmentSummary.uncovered_pages`, which `render` prints as its own
+   (single) `warning:` line. (Batch B10c-mand19) Coverage is read back off
+   the segment files actually on disk once the run has finished -- live or
+   `superseded_by`-stamped, under `segments/<book_id>/` or the
+   `human/<book_id>/` inbox, and including segments this run didn't rewrite
+   -- so it is meaningful for a `--pages` run (processed range `[A, B]`) and
+   a `--kinds` run (processed range: the whole book) too, not just a plain
+   one.
 7. (Batch B10c) If `toc/<book_id>.json` exists, a SEPARATE, toc-driven pass
    looks for class/prestige_class entries: a level >= 2 toc entry whose
    resolved `category` is `classes`/`prestige-classes` AND whose own pages
@@ -102,8 +126,10 @@ Per book:
    why the rest of the overlap can't be resolved the same way.
    `--kinds class[,prestige_class]` (`owlsperch segment <book_id> --kinds
    class`) re-runs ONLY this toc-driven pass, for exactly the requested
-   kind(s): no whole-book `build_segments` pass, no stale-segment-file
-   removal, no coverage warning. Every other kind_hint comes from that
+   kind(s): no whole-book `build_segments` pass and no stale-segment-file
+   removal (the coverage warning of point 6 still runs, since B10c-mand19
+   reads it off the segment files on disk rather than off this run's own
+   `build_segments` output). Every other kind_hint comes from that
    single whole-book pass and can't be produced selectively, so any other
    value is a hard error (exit 1, nothing written). Rewriting a class
    segment file this way resets it to `pending` with no claims -- delete
@@ -365,6 +391,13 @@ class BookSegmentSummary:
     #: rather than replacing the main one, since ordinary segmentation still
     #: ran normally.
     class_note: str = ""
+    #: Batch B10c-mand19: every page in the PROCESSED range (`--pages A-B`,
+    #: else the whole book) that has text but is in no segment's `pages` on
+    #: disk once the run has finished -- live or superseded, this run's
+    #: writes or an earlier run's. Also printed as a `warning:` line on
+    #: stderr; exposed here so a caller (and the tests) can assert on it
+    #: without capturing stderr.
+    uncovered_pages: list[int] = field(default_factory=list)
 
     def render(self) -> str:
         if self.note:
@@ -384,6 +417,11 @@ class BookSegmentSummary:
             )
         if self.class_note:
             lines.append(f"{self.book_id}: {self.class_note}")
+        if self.uncovered_pages:
+            pages_str = ", ".join(str(p) for p in self.uncovered_pages)
+            lines.append(
+                f"warning: {self.book_id}: page(s) with text but no segment coverage: {pages_str}"
+            )
         return "\n".join(lines)
 
 
@@ -462,20 +500,85 @@ _SEG_FILENAME_RE = re.compile(r"^(?:[a-z_]+-)?p(\d{4})(?:-\d+)?\.json$")
 
 
 def _remove_stale_segments(out_dir: Path, book_id: str, page_range: tuple[int, int] | None) -> None:
-    """Delete every existing `segments/<book_id>/*.json` whose first page
-    falls inside the range about to be (re)processed, so a page whose
-    segmentation changed (e.g. it used to produce two segments and now
-    produces one) doesn't leave a stale orphan file behind. Only called
-    when `--force` is given; the whole book counts as in range when no
-    `--pages` was given."""
+    """Delete every existing `segments/<book_id>/*.json` whose FIRST page
+    falls inside the `--pages` range, so a page whose segmentation changed
+    (e.g. it used to produce two segments and now produces one) doesn't
+    leave a stale orphan file behind. Only called when `--force` is given;
+    the whole book counts as in range when no `--pages` was given.
+
+    Batch B10c-mand19: this is exactly the rule `_in_write_range` applies
+    to what gets WRITTEN, so delete and write stay symmetric -- a segment
+    whose first page lies before the range is neither deleted here nor
+    rewritten below, even when it spans into the range."""
     prefix = f"{book_id}-"
     for path in out_dir.glob(f"{book_id}-*.json"):
         match = _SEG_FILENAME_RE.match(path.name.removeprefix(prefix))
         if match is None:
             continue
-        first_page = int(match.group(1))
-        if page_range is None or page_range[0] <= first_page <= page_range[1]:
+        if _in_write_range(int(match.group(1)), page_range):
             path.unlink()
+
+
+def _in_write_range(first_page: int, page_range: tuple[int, int] | None) -> bool:
+    """Batch B10c-mand19: the single rule deciding whether a segment is
+    this run's business at all -- its own FIRST page (`min(pages)`, the one
+    its `seg_id` encodes and the one `_remove_stale_segments` keys its
+    deletions off) must lie inside `--pages`. No `--pages` means the whole
+    book, so a plain run is unaffected."""
+    return page_range is None or page_range[0] <= first_page <= page_range[1]
+
+
+def _pages_covered_on_disk(data_dir: Path, book_id: str) -> set[int]:
+    """Every page named by any of this book's segment files currently on
+    disk -- live or `superseded_by`-stamped, written by this run or an
+    earlier one (batch B10c-mand19: the coverage check reads the result off
+    disk, so it is meaningful for a `--pages` or `--kinds` run, neither of
+    which produces a whole-book `build_segments` output of its own to check
+    against).
+
+    Both segment homes count: `segments/<book_id>/` AND `human/<book_id>/`,
+    where `owlsperch.queue.common.move_segment_to_human` parks a segment the
+    escalation ladder couldn't resolve. Such a segment still covers its
+    pages perfectly well -- it's awaiting a human extraction decision, not
+    missing -- so leaving the inbox out would report its pages as coverage
+    gaps (`human/<book_id>/overrides/*.json`, B11's unmatched-override
+    files, live in a SUBDIRECTORY and so are never globbed here).
+
+    A file that isn't parseable JSON with a `pages` list contributes nothing
+    rather than raising -- coverage is a warning-only safety net, never a
+    reason to fail a run."""
+    covered: set[int] = set()
+    for parent in ("segments", "human"):
+        for path in (data_dir / parent / book_id).glob(f"{book_id}-*.json"):
+            try:
+                raw = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if not isinstance(raw, dict):
+                continue
+            pages = raw.get("pages")
+            if not isinstance(pages, list):
+                continue
+            covered.update(p for p in pages if isinstance(p, int))
+    return covered
+
+
+def _report_coverage(
+    data_dir: Path,
+    book_id: str,
+    paragraphs: list[Paragraph],
+    page_range: tuple[int, int] | None,
+    summary: BookSegmentSummary,
+) -> None:
+    """Record every page in the PROCESSED range that has text but is in no
+    segment's `pages` (batch B10c-mand19 -- runs for a plain, a `--pages`
+    and a `--kinds` run alike) onto `summary.uncovered_pages`, which
+    `BookSegmentSummary.render` prints as its own `warning:` line. Only
+    pages that actually contributed a paragraph are expected to be covered:
+    a page whose `.txt` is blank (no text at all, e.g. a pure image page)
+    never enters the stream and can't be a coverage gap."""
+    pages_with_content = {p.page for p in paragraphs if _in_write_range(p.page, page_range)}
+    summary.uncovered_pages = sorted(pages_with_content - _pages_covered_on_disk(data_dir, book_id))
 
 
 def _pages_spanned(paragraphs: list[Paragraph], start: int, end: int) -> list[int]:
@@ -1029,7 +1132,6 @@ def _write_class_segment(
     entry: ManifestEntry,
     out_dir: Path,
     pages_json: dict[int, int],
-    covered_pages: set[int],
     summary: BookSegmentSummary,
     force: bool,
     *,
@@ -1072,7 +1174,6 @@ def _write_class_segment(
         text = "\n\n".join(p.text for p in paragraphs if span.start <= p.page <= span.end)
     if not pages or not text.strip():
         return
-    covered_pages.update(pages)
 
     summary.counts[span.kind] = summary.counts.get(span.kind, 0) + 1
 
@@ -1174,8 +1275,8 @@ def _run_class_pass(
     data_dir: Path,
     force: bool,
     summary: BookSegmentSummary,
-    covered_pages: set[int],
     kinds: frozenset[str] | None,
+    page_range: tuple[int, int] | None,
 ) -> None:
     """Batch B10c's toc-driven class/prestige_class pass (see this module's
     docstring, point 7), factored out (B10c-mand6) so it can run either as
@@ -1188,8 +1289,28 @@ def _run_class_pass(
     `resolved_starts` are still resolved from every discovered class span
     regardless, so a class segment's own end cap and back-extension bound
     (`_back_extend_start_index`) stay correct even when a neighbouring
-    prestige_class span (say) isn't one of the requested `kinds`. Mutates
-    `summary` in place; returns nothing."""
+    prestige_class span (say) isn't one of the requested `kinds`.
+
+    Batch B10c-mand19: `page_range` (`--pages A-B`) narrows `spans_to_write`
+    the same way and for the same reason -- a span is this run's business
+    only when its OWN first page (`span.start`, the toc start page its
+    `seg_id` encodes and the one `_remove_stale_segments` deletes by) is in
+    range, so `owlsperch segment phb1 --force --pages 46-46` leaves the
+    paladin's span (pages 43-47) completely alone rather than re-cutting it
+    down to page 46. Since the supersede/release loop below iterates
+    `spans_to_write` too, stamping only ever happens for spans this run
+    actually wrote. Discovery and index resolution stay whole-book, so an
+    in-range span's end cap is still the next class's real heading even when
+    that next class is itself out of range.
+
+    The supersede/release loop below is deliberately WIDER than
+    `spans_to_write` (B10c-mand19 review follow-up): it runs for every span
+    that has a segment file on disk at all, in range or not, so a fragment
+    a `--force --pages` run just re-cut inside an out-of-range class span is
+    stamped again in that same run rather than waiting for a later plain
+    one -- which is also what keeps a `superseded_by` from ever naming a
+    class segment that isn't there. Mutates `summary` in place; returns
+    nothing."""
     toc = load_toc(data_dir, entry.book_id)
     if toc is None or not toc.entries:
         summary.class_note = "no toc -- no class/prestige_class segments"
@@ -1247,7 +1368,11 @@ def _run_class_pass(
         )
     all_flavor_indices: frozenset[int] = frozenset().union(*flavor_indices_by_span.values())
 
-    spans_to_write = class_spans if kinds is None else [s for s in class_spans if s.kind in kinds]
+    spans_to_write = [
+        s
+        for s in class_spans
+        if (kinds is None or s.kind in kinds) and _in_write_range(s.start, page_range)
+    ]
 
     for span in spans_to_write:
         start_index = start_indices[span.seg_id]
@@ -1263,7 +1388,6 @@ def _run_class_pass(
                 entry,
                 out_dir,
                 pages_json,
-                covered_pages,
                 summary,
                 force,
                 start_index=None,
@@ -1329,7 +1453,6 @@ def _run_class_pass(
             entry,
             out_dir,
             pages_json,
-            covered_pages,
             summary,
             force,
             start_index=text_start_index,
@@ -1348,7 +1471,22 @@ def _run_class_pass(
     # had its turn, not a per-span sum.
     left_live_ids: set[str] = set()
     stamped_ids: set[str] = set()
-    for span in spans_to_write:
+    # B10c-mand19 (review follow-up): stamp for every span that HAS a
+    # segment file on disk, not only the ones this run wrote. Otherwise a
+    # `--force --pages` run that re-cuts a fragment inside an out-of-range
+    # class span leaves it unstamped until some later plain run -- and a
+    # fragment's `superseded_by` should never be able to lag behind (or,
+    # worse, point at) a class segment file that isn't there. Stamping is
+    # idempotent and touches no extraction bookkeeping, so widening it is
+    # safe; the `kinds` filter still applies, since a kind the caller
+    # didn't ask for is none of this run's business.
+    spans_to_stamp = [
+        s
+        for s in class_spans
+        if (kinds is None or s.kind in kinds)
+        and (s in spans_to_write or (out_dir / f"{s.seg_id}.json").is_file())
+    ]
+    for span in spans_to_stamp:
         stamped, released, left_live = _supersede_segments_in_span(
             out_dir,
             entry.book_id,
@@ -1381,8 +1519,12 @@ def segment_book(
             entry.book_id, note="no text output -- run `owlsperch text` first"
         )
 
-    page_indices = _discover_text_pages(text_dir, page_range)
-    if not page_indices:
+    # Batch B10c-mand19: ALWAYS the whole book's pages, never just
+    # `--pages`' -- segmentation must see the same paragraph stream a plain
+    # run sees, or every segment beginning before the range comes back
+    # truncated. `--pages` restricts writes/deletes only (`_in_write_range`).
+    page_indices = _discover_text_pages(text_dir, None)
+    if not page_indices or not any(_in_write_range(i, page_range) for i in page_indices):
         return BookSegmentSummary(entry.book_id, note="no page text in range")
 
     paragraphs = _load_paragraphs(text_dir, page_indices, entry.book_id)
@@ -1398,15 +1540,13 @@ def segment_book(
     if kinds is not None:
         # B10c-mand6 criterion 6: `--kinds class[,prestige_class]` runs
         # ONLY the toc-driven class pass below -- no whole-book
-        # `build_segments` pass, no stale-file removal (a class segment's
-        # id derives from the toc start page and so never goes stale the
-        # way a page-ordinal fragment id can under a plain rerun), and no
-        # "page(s) with text but no segment coverage" warning (there is no
-        # `build_segments` output for that check to run against). Writing
-        # over an existing class segment file (`--force`) resets it to
-        # `pending` with no claims -- any records it previously claimed
-        # are left orphaned on disk unless deleted first (`queue reset
-        # --hard`) before re-segmenting.
+        # `build_segments` pass and no stale-file removal (a class
+        # segment's id derives from the toc start page and so never goes
+        # stale the way a page-ordinal fragment id can under a plain
+        # rerun). Writing over an existing class segment file (`--force`)
+        # resets it to `pending` with no claims -- any records it
+        # previously claimed are left orphaned on disk unless deleted
+        # first (`queue reset --hard`) before re-segmenting.
         summary = BookSegmentSummary(entry.book_id)
         _run_class_pass(
             entry,
@@ -1417,12 +1557,17 @@ def segment_book(
             data_dir=data_dir,
             force=force,
             summary=summary,
-            covered_pages=set(),
             kinds=kinds,
+            page_range=page_range,
         )
         if not summary.class_note:
             kinds_str = ",".join(sorted(kinds))
             summary.class_note = f"--kinds {kinds_str}: only the toc-driven class pass ran"
+        # B10c-mand19: the coverage safety net runs for a `--kinds` run
+        # too -- it reads back the segment files on disk, so it no longer
+        # needs this run's own `build_segments` output (which a `--kinds`
+        # run never produces).
+        _report_coverage(data_dir, entry.book_id, paragraphs, page_range, summary)
         return summary
 
     body_median = compute_body_median(paragraphs)
@@ -1431,7 +1576,6 @@ def segment_book(
 
     summary = BookSegmentSummary(entry.book_id)
     first_page_counters: dict[int, int] = {}
-    covered_pages: set[int] = set()
 
     for raw in raw_segments:
         _write_one_segment(
@@ -1441,21 +1585,9 @@ def segment_book(
             out_dir,
             pages_json,
             first_page_counters,
-            covered_pages,
             summary,
             force,
-        )
-
-    # Only pages that actually contributed a paragraph are expected to be
-    # covered -- a page whose .txt is blank (no text at all, e.g. a pure
-    # image page) never enters the stream, and can't be a coverage gap.
-    pages_with_content = {p.page for p in paragraphs}
-    uncovered = sorted(pages_with_content - covered_pages)
-    if uncovered:
-        print(
-            f"warning: {entry.book_id}: page(s) with text but no segment "
-            f"coverage: {', '.join(str(p) for p in uncovered)}",
-            file=sys.stderr,
+            page_range,
         )
 
     # Batch B10c: a separate, toc-driven pass for class/prestige_class
@@ -1470,9 +1602,16 @@ def segment_book(
         data_dir=data_dir,
         force=force,
         summary=summary,
-        covered_pages=covered_pages,
         kinds=None,
+        page_range=page_range,
     )
+
+    # Batch B10c-mand19: coverage last, once BOTH passes have written --
+    # a class segment can be the only thing covering a page, and the check
+    # reads the segment files on disk rather than this run's own output, so
+    # a page covered by a segment an earlier run wrote (and this `--pages`
+    # run deliberately left alone) is correctly not reported as a gap.
+    _report_coverage(data_dir, entry.book_id, paragraphs, page_range, summary)
     return summary
 
 
@@ -1483,9 +1622,9 @@ def _write_one_segment(
     out_dir: Path,
     pages_json: dict[int, int],
     first_page_counters: dict[int, int],
-    covered_pages: set[int],
     summary: BookSegmentSummary,
     force: bool,
+    page_range: tuple[int, int] | None,
 ) -> None:
     # Lazy import: see `_write_class_segment`'s identical comment -- avoids
     # a `segment.runner` <-> `queue.ladder` circular import.
@@ -1496,10 +1635,20 @@ def _write_one_segment(
         return
 
     pages = _pages_spanned(paragraphs, raw.start, raw.end)
-    covered_pages.update(pages)
     first_page = pages[0]
+    # The per-first-page ordinal is advanced for EVERY segment the
+    # whole-book stream produces, in stream order, including the ones
+    # `--pages` then declines to write -- that's what keeps a seg_id
+    # identical between a plain run and a `--pages` run (batch B10c-mand19).
     first_page_counters[first_page] = first_page_counters.get(first_page, 0) + 1
     seg_id = f"{entry.book_id}-p{first_page:04d}-{first_page_counters[first_page]:02d}"
+
+    # Batch B10c-mand19: `--pages A-B` restricts which segments this run
+    # touches, NOT the stream they were built from. A segment whose own
+    # first page is outside the range is this run's business in no way at
+    # all: not written, not skipped-counted, not deleted above.
+    if not _in_write_range(first_page, page_range):
+        return
 
     summary.counts[raw.kind] = summary.counts.get(raw.kind, 0) + 1
 

@@ -109,7 +109,10 @@ uv run owlsperch segment <book_id|all> [--force] [--pages A-B] [--kinds class[,p
   # segment their page span swallows `superseded_by` -- additive, so a
   # plain (non --force) run is always safe to re-run. (B10c-mand6) `--kinds`
   # re-runs ONLY that toc-driven pass (only class/prestige_class accepted);
-  # everything else about a plain run is unaffected.
+  # everything else about a plain run is unaffected. (B10c-mand19) `--pages
+  # A-B` never restricts the paragraph stream -- segmentation always sees
+  # the whole book -- it restricts only which segments are written and
+  # (with --force) deleted: those whose own FIRST page is in [A, B].
 uv run owlsperch validate <book_id|all> [--json] [--stale] [--bump-compatible]
 uv run owlsperch schema show <type>
 uv run owlsperch queue next <book_id> --limit N [--tier haiku|sonnet|opus] [--kind K] [--model M] [--lock-timeout S] [--json] [--dry-run]
@@ -330,8 +333,10 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the handful of class segments get written and every existing
   class-chapter fragment gets stamped, without touching anyone's
   `outcome`/`attempts`. A toc-less book gets no class segments at
-  all (reported in the summary), and a `--force` covering a class segment's
-  first page still deletes and recreates it like any other segment. Batch
+  all (reported in the summary), and a `--force --pages` run covering a
+  class segment's own FIRST page (its toc start page, the one its `seg_id`
+  encodes) still deletes and recreates it like any other segment -- but,
+  per B10c-mand19 below, one merely OVERLAPPING its span does not. Batch
   B10c-mand2: a segment NEWLY stamped `superseded_by` this pass also has
   its record claims RELEASED in the same atomic write, via
   `pipeline/owlsperch/supersede.py`'s `release_segment_claims` (see that
@@ -388,8 +393,9 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   ambiguity instead of the segmenter picking an owner. Also from
   B10c-mand6: `owlsperch segment <book_id> --kinds class[,prestige_class]`
   re-runs ONLY this toc-driven class/prestige_class pass -- no whole-book
-  `build_segments` pass, no stale-segment-file removal, no coverage
-  warning -- so a class-segmentation fix can be re-applied without
+  `build_segments` pass and no stale-segment-file removal (the coverage
+  warning DOES run, as of B10c-mand19) -- so a class-segmentation fix can
+  be re-applied without
   resetting every other segment's extraction status; any other kind is a
   hard error (exit 1, nothing written), since every kind besides class/
   prestige_class comes from the single whole-book pass and can't be
@@ -454,6 +460,45 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   structural heading never starts a run and closes an open one, and the
   next class's own start index is again unchanged. On the real phb1 text
   this changes exactly one class span, the fighter's.
+  Batch B10c-mand19 fixes what `--pages A-B` meant. It used to load ONLY
+  that range's pages into the paragraph stream and then delete/recreate
+  every segment OVERLAPPING the range, which truncated every segment that
+  began before it -- `owlsperch segment phb1 --force --pages 46-46` re-cut
+  the paladin class segment (pdf pages 43-47) down to page 46 alone, and
+  `--pages 53-53` cut FAMILIARS (53-54) off at 53 while deleting page 54's
+  own segments and never recreating them, with no coverage warning either
+  time. Now `--pages` NEVER restricts the stream: `segment_book` always
+  loads every text page and runs the same whole-book `build_segments` (and
+  the same whole-book class-span discovery/index resolution) a plain run
+  does, and `--pages` restricts only which segments this run TOUCHES, by
+  the single rule `_in_write_range`: a segment is written when its own
+  FIRST page (`min(pages)` -- for a class span, `span.start`, the toc start
+  page its `seg_id` encodes) lies in `[A, B]`, and `--force` deletes
+  exactly the existing files matching that same rule, so write and delete
+  stay symmetric. A segment starting inside the range is therefore written
+  WHOLE, including the pages it continues onto past `B`; one starting
+  before `A` is never touched at all. The class pass is unchanged for a
+  plain run; under `--pages` its `spans_to_write` is filtered the same way,
+  but its supersede/release stamping is DELIBERATELY WIDER
+  (`spans_to_stamp`): it runs for every span with a segment file on disk, in
+  range or not (still honouring `--kinds`), so a class-structural fragment a
+  `--force --pages` run just re-cut inside an out-of-range class span is
+  stamped again in that same run instead of waiting for a later plain one --
+  which is what keeps a `superseded_by` from ever naming a class segment
+  that isn't there. Stamping is idempotent and touches no extraction
+  bookkeeping, so widening it costs nothing. Coverage
+  (`_report_coverage`/`_pages_covered_on_disk`) is now read back off the
+  segment FILES on disk -- live or superseded, this run's writes or an
+  earlier run's, and from BOTH `segments/<book_id>/` and the
+  `human/<book_id>/` inbox (a segment parked there by the escalation ladder
+  still covers its pages; B11's `human/<book_id>/overrides/*.json` sit in a
+  subdirectory and are never globbed) -- rather than off this run's own
+  `build_segments` output, so the `warning: <book_id>: page(s) with text but
+  no segment coverage: ...` line fires for a `--pages` run (processed range
+  `[A, B]`) and a `--kinds` run (processed range: the whole book) as well as
+  a plain one. That line is printed exactly once, by
+  `BookSegmentSummary.render` off its own `uncovered_pages` field (there is
+  no separate stderr copy).
   Batch B11 adds an errata/update anchor, gated entirely on the book's manifest
   `kind`: `anchors.find_triggers` takes a keyword-only `entry_kind`
   (`"errata_entry"`/`"update_entry"`, resolved by `segment/runner.py` from
