@@ -16,6 +16,15 @@ using the `PrecedenceResult` this module returns.
 
 See the batch brief's design decisions D13-D15 for the exact matching and
 grouping rules this implements.
+
+Batch B10c-mand17 adds two FALLBACKS to step (1)'s target matching, for the
+B10c x B11 interaction the 2026-09-21 class-quality judgement's finding E
+surfaced: a class record absorbs its own feature-level `rules_section`
+fragments (`_apply_superseding` sets their `superseded_by`), and every
+candidate pool here is `records WHERE superseded_by IS NULL` (D13a), so an
+erratum targeting the druid's "Wild Shape" or the paladin's "Special Mount"
+matched nothing at all and its correction never reached the class page. See
+`_apply_overrides` for the exact order and the (a)/(b) precedence.
 """
 
 from __future__ import annotations
@@ -29,6 +38,7 @@ from sqlite3 import Connection
 from typing import Any
 
 from owlsperch.fsutil import atomic_write_text
+from owlsperch.supersede import GENERIC_CLASS_SECTION_HEADINGS, normalize_heading
 from owlsperch.validate.checks import slugify
 
 #: The book_id of the Rules Compendium in `pipeline/manifest.yaml` -- a
@@ -124,6 +134,82 @@ def _load_pool(conn: Connection) -> list[_PoolRecord]:
     return pool
 
 
+@dataclass
+class _SupersededRecord:
+    """One `records` row a class span already absorbed (`superseded_by` set)
+    -- deliberately NOT part of any precedence pool (D13a), but kept
+    alongside it so step (1)'s fallback (a) can follow a matched fragment to
+    the record that superseded it (batch B10c-mand17)."""
+
+    id: str
+    type: str
+    slug: str
+    name: str
+    book_id: str
+    pages: list[int]
+    superseded_by: str
+
+
+def _load_superseded(conn: Connection) -> list[_SupersededRecord]:
+    rows = conn.execute(
+        "SELECT id, type, slug, name, book_id, json, superseded_by FROM records "
+        "WHERE superseded_by IS NOT NULL"
+    ).fetchall()
+    superseded = []
+    for record_id, type_name, slug, name, book_id, raw_json, superseded_by in rows:
+        record = json.loads(raw_json)
+        pages = record.get("pages")
+        superseded.append(
+            _SupersededRecord(
+                id=record_id,
+                type=type_name,
+                slug=slug,
+                name=name,
+                book_id=book_id,
+                pages=[p for p in pages if isinstance(p, int)] if isinstance(pages, list) else [],
+                superseded_by=superseded_by,
+            )
+        )
+    return superseded
+
+
+def _superseding_root(record_id: str, superseded_by: dict[str, str]) -> str:
+    """Follow `superseded_by` pointers from `record_id` to the end of the
+    chain -- normally exactly one hop (a fragment -> its class), but walked
+    and cycle-guarded exactly like `_root_of` does for `variant_of`, so a
+    hand-edited or chained database can't loop or `KeyError`."""
+    seen: set[str] = set()
+    current = record_id
+    while True:
+        nxt = superseded_by.get(current)
+        if nxt is None or nxt == current or current in seen:
+            return current
+        seen.add(current)
+        current = nxt
+
+
+def _class_heading_names(record: _PoolRecord) -> set[str]:
+    """The normalized printed headings a `class`/`prestige_class` record owns:
+    every `fields.class_features[].name` and every
+    `fields.description_sections[].heading` (batch B10c-mand17), normalized
+    with `owlsperch.supersede.normalize_heading` -- so "Wild Shape (Su)" and
+    an erratum's bare "Wild Shape" are one name -- and with the shared
+    `GENERIC_CLASS_SECTION_HEADINGS` set subtracted, exactly as
+    `build_db.runner._class_owned_names` does for the superseding pass (a
+    separate function computing the same heading set for its own purpose, not
+    the same one): "Alignment"/"Races"/"Class Features" are printed by every
+    class and so are never evidence that THIS class is an erratum's target."""
+    names: set[str] = set()
+    for feature in record.fields.get("class_features") or []:
+        if isinstance(feature, dict):
+            names.add(normalize_heading(str(feature.get("name", ""))))
+    for section in record.fields.get("description_sections") or []:
+        if isinstance(section, dict):
+            names.add(normalize_heading(str(section.get("heading", ""))))
+    names.discard("")
+    return names - GENERIC_CLASS_SECTION_HEADINGS
+
+
 def _first_word(name: str) -> str:
     words = name.strip().split()
     return words[0].casefold() if words else ""
@@ -142,13 +228,101 @@ def _candidate_dict(record: _PoolRecord) -> dict[str, Any]:
     return {"id": record.id, "type": record.type, "name": record.name, "pages": record.pages}
 
 
+def _superseded_fallback_targets(
+    candidates: list[_SupersededRecord],
+    target_name: str,
+    target_page: int | None,
+    superseded_by: dict[str, str],
+    live_target_ids: set[str],
+) -> list[str]:
+    """Batch B10c-mand17, step (1) fallback (a): the same NAME-then-PAGE
+    match the live pool got, run over the SUPERSEDED records of the target
+    book, with every hit resolved to the record that superseded it
+    (`_superseding_root`). A resolved root only counts when it is itself a
+    live, non-override target (in `live_target_ids`), so a chain ending
+    outside the pool -- or a fragment whose superseding record was skipped
+    or is itself an errata entry -- yields no match at all rather than a
+    dangling `applied_overrides` id. The narrowing discipline is the live
+    match's: a page hit needs either exactly one name-overlapping record or
+    exactly one record on the page, never a silent apply-to-all."""
+    matches = [s for s in candidates if s.slug == slugify(target_name)]
+    if not matches and isinstance(target_page, int):
+        on_page = [s for s in candidates if target_page in s.pages]
+        narrower = [s for s in on_page if _names_overlap(s.name, target_name)]
+        if len(narrower) == 1:
+            matches = narrower
+        elif not narrower and len(on_page) == 1:
+            matches = on_page
+
+    resolved: list[str] = []
+    for fragment in matches:
+        root = _superseding_root(fragment.id, superseded_by)
+        if root != fragment.id and root in live_target_ids and root not in resolved:
+            resolved.append(root)
+    return resolved
+
+
+def _class_heading_fallback_targets(
+    targets: list[_PoolRecord], target_name: str, target_page: int | None
+) -> list[str]:
+    """Batch B10c-mand17, step (1) fallback (b): an entry whose normalized
+    `target_name` IS one of a same-book `class`/`prestige_class` record's own
+    printed feature/section headings is applied to that class record -- the
+    case where no `rules_section` fragment for that feature exists at all
+    (the paladin's "Special Mount", the druid's "Animal Companion"), so
+    fallback (a) has nothing to follow.
+
+    A given `target_page` must fall inside the class record's own pages;
+    with no page, every class in the book is eligible. Either way the match
+    must be UNIQUE -- a generic heading several classes print ("Spells",
+    "Alignment") resolves to nothing and the entry stays unmatched, rather
+    than being applied to an arbitrary one of them."""
+    normalized = normalize_heading(target_name)
+    if not normalized:
+        return []
+    classes = [
+        t
+        for t in targets
+        if t.type in ("class", "prestige_class") and normalized in _class_heading_names(t)
+    ]
+    if isinstance(target_page, int):
+        classes = [t for t in classes if target_page in t.pages]
+    return [classes[0].id] if len(classes) == 1 else []
+
+
 def _apply_overrides(
     pool: list[_PoolRecord],
     state: dict[str, dict[str, Any]],
     applied_overrides: dict[str, list[str]],
+    superseded: list[_SupersededRecord],
 ) -> tuple[int, list[UnmatchedOverride], set[str]]:
     """Design decision D13b: apply every errata_entry/update_entry to its
-    target(s). Returns (overrides_applied, unmatched, source_books)."""
+    target(s). Returns (overrides_applied, unmatched, source_books).
+
+    Match order per entry, first hit winning:
+
+    1. the live pool's NAME match (`slug == slugify(target_name)`),
+    2. the live pool's PAGE match (unambiguous only),
+    3. batch B10c-mand17 fallback (a): the same name/page match over the
+       book's SUPERSEDED records, resolved to whatever superseded them
+       (`_superseded_fallback_targets`),
+    4. batch B10c-mand17 fallback (b): a unique same-book class/
+       prestige_class record whose own `class_features[].name`/
+       `description_sections[].heading` normalizes to `target_name`
+       (`_class_heading_fallback_targets`).
+
+    Steps 3 and 4 run only when no live record matched at ALL -- an
+    AMBIGUOUS live page match (two same-page candidates whose names overlap
+    the target) keeps its existing "unmatched, reported with its candidates"
+    outcome rather than falling through to a class-level apply.
+
+    (a) is tried before (b) deliberately: when both hit they name the same
+    class record (the fragment was superseded BY that class precisely
+    because the class owns a feature of that name -- see
+    `build_db.runner._class_owned_names`), and where they could disagree the
+    fragment's own stored `superseded_by` pointer is the harder evidence of
+    which record actually absorbed that printed text. An entry matching none
+    of the four is unmatched exactly as before."""
     entries = sorted(
         (r for r in pool if r.type in _OVERRIDE_TYPES), key=lambda r: (r.book_id, r.id)
     )
@@ -157,6 +331,12 @@ def _apply_overrides(
         if r.type in _OVERRIDE_TYPES:
             continue
         targets_by_book.setdefault(r.book_id, []).append(r)
+
+    superseded_by_id = {s.id: s.superseded_by for s in superseded}
+    superseded_by_book: dict[str, list[_SupersededRecord]] = {}
+    for s in superseded:
+        superseded_by_book.setdefault(s.book_id, []).append(s)
+    live_target_ids = {r.id for r in pool if r.type not in _OVERRIDE_TYPES}
 
     overrides_applied = 0
     unmatched: list[UnmatchedOverride] = []
@@ -214,6 +394,34 @@ def _apply_overrides(
             for t in chosen:
                 applied_overrides[t.id].append(entry.id)
             overrides_applied += len(chosen)
+            continue
+
+        # Batch B10c-mand17: no LIVE record matched at all -- try the two
+        # superseded/class-feature fallbacks, (a) then (b). Deliberately NOT
+        # when the live page match was AMBIGUOUS: two live candidates on the
+        # target's own page is a "needs a human" report, and quietly applying
+        # the entry to a class record instead would bury that ambiguity.
+        fallback_ids: list[str] = []
+        if not ambiguous:
+            fallback_ids = _superseded_fallback_targets(
+                superseded_by_book.get(target_book, []),
+                target_name,
+                target_page if isinstance(target_page, int) else None,
+                superseded_by_id,
+                live_target_ids,
+            ) or _class_heading_fallback_targets(
+                targets, target_name, target_page if isinstance(target_page, int) else None
+            )
+        if fallback_ids:
+            for target_id in fallback_ids:
+                # Every fallback id is a live pool record by construction
+                # (`live_target_ids` / `targets`), so plain indexing is right:
+                # a KeyError here means that invariant broke and must not be
+                # papered over with a fresh list nobody writes to the DB.
+                target_overrides = applied_overrides[target_id]
+                if entry.id not in target_overrides:
+                    target_overrides.append(entry.id)
+            overrides_applied += len(fallback_ids)
             continue
 
         if ambiguous:
@@ -422,11 +630,12 @@ def apply_precedence(
     in place, and return a `PrecedenceResult` summarizing what happened for
     `write_precedence_report`/`write_unmatched_overrides` to use afterward."""
     pool = _load_pool(conn)
+    superseded = _load_superseded(conn)
     state: dict[str, dict[str, Any]] = {r.id: {"canonical": 1, "variant_of": None} for r in pool}
     applied_overrides: dict[str, list[str]] = {r.id: [] for r in pool}
 
     overrides_applied, unmatched_overrides, source_books = _apply_overrides(
-        pool, state, applied_overrides
+        pool, state, applied_overrides, superseded
     )
     records_with_overrides = sum(1 for ids in applied_overrides.values() if ids)
 

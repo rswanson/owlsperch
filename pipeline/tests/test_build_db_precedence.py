@@ -811,3 +811,618 @@ def test_two_errata_books_with_the_same_entry_slug_collapse_under_latest_wins() 
     newer = _record_row(conn, "errata_entry:errata-v2:fireball-p-231")
     assert newer["canonical"] == 1
     assert newer["variant_of"] is None
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand17: a class record absorbs its own feature-level fragments,
+# so an erratum targeting one of those features matched nothing at all
+# (2026-09-21 class-quality judgement, finding E). Two fallbacks now run
+# after the live name/page match: (a) follow a matched SUPERSEDED record's
+# own `superseded_by`, (b) match a class record's own printed feature/
+# section headings.
+# ---------------------------------------------------------------------------
+
+
+def _insert_class(
+    conn: sqlite3.Connection,
+    *,
+    book_id: str,
+    slug: str,
+    name: str,
+    pages: list[int],
+    features: list[str] | None = None,
+    sections: list[str] | None = None,
+    class_skills: list[str] | None = None,
+) -> str:
+    record_id = f"class:{book_id}:{slug}"
+    _insert_record(
+        conn,
+        record_id=record_id,
+        type_name="class",
+        slug=slug,
+        name=name,
+        book_id=book_id,
+        pages=pages,
+        fields={
+            "hit_die": "d8",
+            "class_type": "base",
+            "class_features": [{"name": f, "level": 1, "text_md": "x"} for f in (features or [])],
+            "description_sections": [{"heading": h, "text_md": "x"} for h in (sections or [])],
+            "class_skills": [{"skill": skill} for skill in (class_skills or [])],
+        },
+    )
+    return record_id
+
+
+def _insert_errata(
+    conn: sqlite3.Connection,
+    *,
+    book_id: str,
+    slug: str,
+    target_book: str,
+    target_name: str,
+    target_page: int | None,
+) -> str:
+    record_id = f"errata_entry:{book_id}:{slug}"
+    fields: dict[str, Any] = {
+        "target_book": target_book,
+        "target_name": target_name,
+        "replacement_text": "New wording.",
+    }
+    if target_page is not None:
+        fields["target_page"] = target_page
+    _insert_record(
+        conn,
+        record_id=record_id,
+        type_name="errata_entry",
+        slug=slug,
+        name=f"{target_name} (p. {target_page})" if target_page else target_name,
+        book_id=book_id,
+        pages=[1],
+        fields=fields,
+    )
+    return record_id
+
+
+def test_override_on_superseded_fragment_resolves_to_the_superseding_class() -> None:
+    """Fallback (a): the only slug match is a fragment the druid's span
+    absorbed, so the override lands on the druid record itself."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 35, 36, 37, 38],
+        # Deliberately NOT carrying a "Wild Shape" feature, so only
+        # fallback (a) -- the fragment's own `superseded_by` -- can match.
+        features=["Spells"],
+    )
+    _insert_record(
+        conn,
+        record_id="rules_section:book:wild-shape",
+        type_name="rules_section",
+        slug="wild-shape",
+        name="Wild Shape",
+        book_id="book",
+        pages=[37],
+        fields={"topic": "Wild Shape"},
+        superseded_by=class_id,
+    )
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="wild-shape-p-37",
+        target_book="book",
+        target_name="Wild Shape",
+        target_page=37,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert result.records_with_overrides == 1
+    assert result.unmatched_overrides == []
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == [entry_id]
+    # The superseded fragment itself is never rewritten by precedence.
+    fragment = conn.execute(
+        "SELECT applied_overrides, superseded_by FROM records WHERE id = ?",
+        ("rules_section:book:wild-shape",),
+    ).fetchone()
+    assert fragment["superseded_by"] == class_id
+    assert fragment["applied_overrides"] == "[]"
+
+
+def test_override_matches_class_feature_heading_when_no_fragment_exists() -> None:
+    """Fallback (b): the paladin's "Special Mount" was never extracted as
+    its own `rules_section`, so there is nothing superseded to follow --
+    the class record's own `class_features[].name` is the match."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="paladin",
+        name="Paladin",
+        pages=[43, 44, 45, 46, 47],
+        features=["Special Mount (Sp)", "Spells"],
+        sections=["Ex-Paladins"],
+    )
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="special-mount-p-44",
+        target_book="book",
+        target_name="Special Mount",
+        target_page=44,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert result.unmatched_overrides == []
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == [entry_id]
+
+
+def test_override_matches_class_description_section_heading() -> None:
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="paladin",
+        name="Paladin",
+        pages=[43, 44],
+        features=["Spells"],
+        sections=["Ex-Paladins"],
+    )
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="ex-paladins-p-44",
+        target_book="book",
+        target_name="Ex-Paladins",
+        target_page=44,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == [entry_id]
+
+
+def test_superseded_fragment_takes_precedence_over_an_ambiguous_class_heading() -> None:
+    """Both fallbacks could fire: two classes on the same page print a
+    "Wild Shape" feature (so (b) is ambiguous and applies to neither), but
+    the superseded fragment names exactly which one absorbed the printed
+    text -- (a) runs first and wins."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    druid_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 37],
+        features=["Wild Shape (Su)"],
+    )
+    ranger_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="ranger",
+        name="Ranger",
+        pages=[37, 38],
+        features=["Wild Shape (Su)"],
+    )
+    _insert_record(
+        conn,
+        record_id="rules_section:book:wild-shape",
+        type_name="rules_section",
+        slug="wild-shape",
+        name="Wild Shape",
+        book_id="book",
+        pages=[37],
+        fields={"topic": "Wild Shape"},
+        superseded_by=druid_id,
+    )
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="wild-shape-p-37",
+        target_book="book",
+        target_name="Wild Shape",
+        target_page=37,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert json.loads(_record_row(conn, druid_id)["applied_overrides"]) == [entry_id]
+    assert json.loads(_record_row(conn, ranger_id)["applied_overrides"]) == []
+
+
+def test_class_heading_shared_by_two_classes_stays_unmatched() -> None:
+    """Fallback (b) never applies a generic heading several classes print
+    ("Spells") to an arbitrary one of them."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    _insert_class(
+        conn, book_id="book", slug="druid", name="Druid", pages=[34, 37], features=["Spells"]
+    )
+    _insert_class(
+        conn, book_id="book", slug="paladin", name="Paladin", pages=[37, 44], features=["Spells"]
+    )
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="spells-p-37",
+        target_book="book",
+        target_name="Spells",
+        target_page=37,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+    assert result.unmatched_overrides[0].reason == "no_unambiguous_target_match"
+
+
+def test_override_matching_no_live_superseded_or_class_heading_is_unmatched(
+    tmp_path: Path,
+) -> None:
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 37],
+        features=["Wild Shape (Su)"],
+    )
+    # A fragment whose `superseded_by` names a record that never made it
+    # into `records` -- fallback (a) must find no LIVE root and give up.
+    _insert_record(
+        conn,
+        record_id="rules_section:book:vanished",
+        type_name="rules_section",
+        slug="vanished",
+        name="Vanished",
+        book_id="book",
+        pages=[99],
+        fields={"topic": "Vanished"},
+        superseded_by="class:book:gone",
+    )
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="vanished-p-99",
+        target_book="book",
+        target_name="Vanished",
+        target_page=99,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert result.records_with_overrides == 0
+    assert len(result.unmatched_overrides) == 1
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == []
+
+    data_dir = tmp_path / "data"
+    written = write_unmatched_overrides(data_dir, result)
+    assert [p.name for p in written] == ["vanished-p-99.json"]
+    report = write_precedence_report(data_dir, result)
+    text = report.read_text()
+    assert "- Overrides applied: 0" in text
+    assert "- Unmatched errata/update entries: 1" in text
+
+
+def test_superseded_by_cycle_never_loops_or_matches() -> None:
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    _insert_record(
+        conn,
+        record_id="rules_section:book:a",
+        type_name="rules_section",
+        slug="a",
+        name="A",
+        book_id="book",
+        pages=[10],
+        fields={"topic": "A"},
+        superseded_by="rules_section:book:b",
+    )
+    _insert_record(
+        conn,
+        record_id="rules_section:book:b",
+        type_name="rules_section",
+        slug="b",
+        name="B",
+        book_id="book",
+        pages=[10],
+        fields={"topic": "B"},
+        superseded_by="rules_section:book:a",
+    )
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="a-p-10",
+        target_book="book",
+        target_name="A",
+        target_page=10,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+
+
+def test_fallback_override_reaches_a_latest_wins_winner(tmp_path: Path) -> None:
+    """`_merge_overrides_to_winners` still runs over a fallback match: the
+    class row the override landed on is itself demoted by latest-wins, so
+    the override must be copied onto the winning printing too, and the
+    report's counts reflect the one applied override."""
+    conn = _make_conn()
+    _insert_book(conn, "book", published="2003-07")
+    _insert_book(conn, "book-2", published="2008-07")
+    _insert_book(conn, "book-errata")
+    old_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 37],
+        features=["Wild Shape (Su)"],
+    )
+    new_id = _insert_class(
+        conn,
+        book_id="book-2",
+        slug="druid",
+        name="Druid",
+        pages=[50],
+        features=["Wild Shape (Su)"],
+    )
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="wild-shape-p-37",
+        target_book="book",
+        target_name="Wild Shape",
+        target_page=37,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert result.unmatched_overrides == []
+    assert json.loads(_record_row(conn, old_id)["applied_overrides"]) == [entry_id]
+    assert json.loads(_record_row(conn, new_id)["applied_overrides"]) == [entry_id]
+    assert _record_row(conn, old_id)["variant_of"] == new_id
+
+    report = write_precedence_report(tmp_path / "data", result)
+    text = report.read_text()
+    assert "- Overrides applied: 1" in text
+    assert "- Unmatched errata/update entries: 0" in text
+
+
+def _insert_page_crowder(conn: sqlite3.Connection, *, book_id: str, slug: str, page: int) -> None:
+    """A second live record on the target page whose name doesn't overlap the
+    target name, so the LIVE page match finds two candidates and no
+    name-narrowed one -- i.e. no live match, which is what lets the
+    B10c-mand17 fallbacks run at all (a single live record on the page would
+    be accepted outright by step (2) instead)."""
+    _insert_record(
+        conn,
+        record_id=f"table:{book_id}:{slug}",
+        type_name="table",
+        slug=slug,
+        name=slug.replace("-", " ").title(),
+        book_id=book_id,
+        pages=[page],
+        fields={"columns": ["A"], "rows": [["1"]]},
+    )
+
+
+def test_class_heading_shared_by_two_classes_is_narrowed_by_target_page() -> None:
+    """The real "Animal Companion (p. 36)" case: both the druid and the
+    ranger print an "Animal Companion" feature, but only the druid's own
+    pages contain page 36, so fallback (b) is unique after page narrowing."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    druid_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 35, 36, 37, 38],
+        features=["Animal Companion (Ex)"],
+    )
+    ranger_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="ranger",
+        name="Ranger",
+        pages=[47, 48, 49, 50],
+        features=["Animal Companion (Ex)"],
+    )
+    _insert_page_crowder(conn, book_id="book", slug="druid-level-table", page=36)
+    entry_id = _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="animal-companion-p-36",
+        target_book="book",
+        target_name="Animal Companion",
+        target_page=36,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 1
+    assert result.unmatched_overrides == []
+    assert json.loads(_record_row(conn, druid_id)["applied_overrides"]) == [entry_id]
+    assert json.loads(_record_row(conn, ranger_id)["applied_overrides"]) == []
+
+
+def test_class_heading_shared_by_two_classes_without_a_target_page_is_unmatched() -> None:
+    """With no `target_page` there is nothing to narrow by, so the same two
+    classes make fallback (b) ambiguous and the entry stays unmatched."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    druid_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 36],
+        features=["Animal Companion (Ex)"],
+    )
+    ranger_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="ranger",
+        name="Ranger",
+        pages=[47, 50],
+        features=["Animal Companion (Ex)"],
+    )
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="animal-companion",
+        target_book="book",
+        target_name="Animal Companion",
+        target_page=None,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+    assert json.loads(_record_row(conn, druid_id)["applied_overrides"]) == []
+    assert json.loads(_record_row(conn, ranger_id)["applied_overrides"]) == []
+
+
+def test_class_skills_are_not_consulted_by_the_heading_fallback() -> None:
+    """Fallback (b) reads printed HEADINGS only: a class listing "Listen" as
+    a class skill is not the target of an erratum correcting the Listen
+    skill's own rules."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="ranger",
+        name="Ranger",
+        pages=[47, 78],
+        features=["Spells"],
+        class_skills=["Listen", "Spot"],
+    )
+    _insert_page_crowder(conn, book_id="book", slug="ranger-level-table", page=78)
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="listen-p-78",
+        target_book="book",
+        target_name="Listen",
+        target_page=78,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == []
+
+
+def test_generic_class_heading_is_never_a_fallback_target() -> None:
+    """A heading EVERY class prints (`GENERIC_CLASS_SECTION_HEADINGS`) is no
+    evidence of ownership, so fallback (b) ignores it even when exactly one
+    class is on the target page."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 36],
+        features=["Spells"],
+        sections=["Alignment"],
+    )
+    _insert_page_crowder(conn, book_id="book", slug="druid-level-table", page=36)
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="alignment-p-36",
+        target_book="book",
+        target_name="Alignment",
+        target_page=36,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == []
+
+
+def test_ambiguous_live_page_match_is_reported_not_sent_to_a_fallback() -> None:
+    """An AMBIGUOUS live page match (two same-page records whose names overlap
+    the target) keeps its "unmatched, reported with candidates" outcome -- the
+    B10c-mand17 fallbacks must not quietly apply it to a class instead."""
+    conn = _make_conn()
+    _insert_book(conn, "book")
+    _insert_book(conn, "book-errata")
+    class_id = _insert_class(
+        conn,
+        book_id="book",
+        slug="druid",
+        name="Druid",
+        pages=[34, 37],
+        features=["Wild Shape (Su)"],
+    )
+    for slug, name in (
+        ("wild-shape-rules", "Wild Shape Rules"),
+        ("wild-shape-uses", "Wild Shape Uses"),
+    ):
+        _insert_record(
+            conn,
+            record_id=f"rules_section:book:{slug}",
+            type_name="rules_section",
+            slug=slug,
+            name=name,
+            book_id="book",
+            pages=[37],
+            fields={"topic": name},
+        )
+    _insert_errata(
+        conn,
+        book_id="book-errata",
+        slug="wild-shape-p-37",
+        target_book="book",
+        target_name="Wild Shape",
+        target_page=37,
+    )
+
+    result = apply_precedence(conn)
+
+    assert result.overrides_applied == 0
+    assert len(result.unmatched_overrides) == 1
+    assert {c["id"] for c in result.unmatched_overrides[0].candidates} == {
+        "rules_section:book:wild-shape-rules",
+        "rules_section:book:wild-shape-uses",
+    }
+    assert json.loads(_record_row(conn, class_id)["applied_overrides"]) == []

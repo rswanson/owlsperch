@@ -104,6 +104,33 @@ def normalize_heading(text: str) -> str:
     return _NON_ALNUM_RE.sub("", _PARENTHETICAL_RE.sub(" ", text).casefold())
 
 
+#: Normalized flavor/section headings EVERY class prints (batch B10c-mand11),
+#: so none of them is ever class-specific evidence that a given class owns a
+#: heading. It lives here, beside `normalize_heading`, because two callers
+#: need exactly the same set: `owlsperch.build_db.runner._class_owned_names`
+#: (which headings may a class span supersede a fragment by?) and
+#: `owlsperch.build_db.precedence._class_heading_names` (which headings may an
+#: errata/update entry be matched to a class record by? -- B10c-mand17).
+GENERIC_CLASS_SECTION_HEADINGS: frozenset[str] = frozenset(
+    normalize_heading(h)
+    for h in (
+        "Adventures",
+        "Characteristics",
+        "Alignment",
+        "Religion",
+        "Background",
+        "Races",
+        "Other Classes",
+        "Role",
+        "Abilities",
+        "Classes",
+        "Game Rule Information",
+        "Class Skills",
+        "Class Features",
+    )
+)
+
+
 def _plural_equal(a: str, b: str) -> bool:
     """Normalized equality tolerating a trailing plural "s" on either side
     -- PHB 3.5 prints "WIZARDS" for the toc's "Wizard" (mirrors
