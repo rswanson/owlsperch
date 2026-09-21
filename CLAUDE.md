@@ -293,12 +293,57 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   invent a word); 9 of the 11 class-level-table pages are byte-identical,
   p.40 gains its orphan `Bonus feat` Special cells inside their own rows,
   and p.53's sorcerer table is untouched while the FAMILIARS grid below it
-  becomes a table group. Still out of scope: a
+  becomes a table group. Batch B10c-mand22 fixes two more defects the
+  judgement's round 4 found. (1) A new step 2d folds a DETACHED COLUMN back
+  into its table: a whole printed column can arrive as one or more blocks
+  standing wholly CLEAR of the table's own x span rather than as the orphan
+  single cells step 2b absorbs (PHB p.41's Table 3-10: The Monk emits its
+  "Unarmored Speed Bonus" column as three blocks 23.8pt right of the grid's
+  last column, so the extractor reattached it at the wrong offset and 18 of
+  the monk's 20 cells were wrong on the site). Once every table group
+  exists -- after step 2a/2c, since on p.41 the grid is a single-block
+  table, not a step-2 clique, which is why step 2b's clique-relative
+  absorb could never see it -- a leftover block joins a group when it is
+  not prose-like/label:value-like, its x-extent lies wholly right of the
+  group's `x_max` (or left of its `x_min`) by at most
+  `DETACHED_COLUMN_MAX_GAP_HEIGHT_FACTOR` (4.0) median word heights, and
+  every one of its non-blank lines y-aligns with a DISTINCT row. The blocks
+  passing on one side are taken as one column, accepted only when their
+  x-extents all overlap each other, they carry at least
+  `DETACHED_COLUMN_MIN_LINES` (3) cells, and those cells cover at least
+  `DETACHED_COLUMN_MIN_ROW_FRACTION` (50%) of the group's rows (a real
+  column has a cell in nearly every row, which keeps a stray marginal note
+  out); each cell is appended to the row it aligns with and every uncovered
+  row between the first and last covered one gets an empty cell, so the
+  column cannot shift. (2) A new step 3a splits each RUN into horizontal
+  BANDS at any band of whitespace running its full width and at least
+  `HORIZONTAL_BAND_GAP_HEIGHT_FACTOR` (4.0) median word heights tall, and
+  clusters each band into columns on its own. Step 4a's per-column repair is
+  right, but the run it repairs can stack two unrelated layouts -- body text
+  above a full-width boxed sidebar -- so the body's right column landed
+  INSIDE the sidebar (PHB p.46 put "Human Paladin Starting Package" and its
+  Armor/Weapons body between "THE PALADIN'S MOUNT" and the rest of that
+  sidebar, a regression from step 4a). The full-width requirement is the
+  safety: in a two-column region both columns must break at the same y,
+  which a paragraph gap in one column never does. 4.0 is calibrated against
+  p.46's own 4.8-line-height band gap; at 3.0 the split also reordered pages
+  that were already right, p.44 (Table 3-12: The Paladin) among them.
+  Measured scope of 2d/3a: 15 more of the 322 pages change, again all with
+  an identical whitespace-token multiset -- step 2d rebuilds the 8 grids
+  that lost a column to loose paragraphs (pp.41, 42, 63, 73, 112, 220, 261,
+  264) and step 3a reorders the 7 boxed-sidebar pages (pp.37, 46, 53, 54,
+  57, 58, 74); 10 of the 11 class-level-table pages are byte-identical
+  (p.41 gains its speed-bonus column, and p.53's sorcerer table is again
+  untouched while a body paragraph above FAMILIARS is reunited with its own
+  continuation). Still out of scope (unchanged by mand22): a
   table group is a column break for the whole page even when only one
   column wide, so a grid inside a sidebar's left column still cuts the page
-  at its own `yMin` -- the sidebar now opens in printed order, but its right
-  column is emitted before the grid rather than after the left column's
-  text below it.
+  at its own `yMin` -- the sidebar now opens at its own heading with no body
+  text inside it, but its right column is emitted before the grid rather
+  than after the left column's text below it. Letting a narrow table group
+  take part in column clustering is the fuller fix and was measured, not
+  shipped: it reorders 48 further PHB pages, class-level-table pages among
+  them.
 - `pipeline/owlsperch/segment/` -- the `segment` subcommand: `headings.py`
   defines the book-wide `Paragraph` stream (a page's `.txt` paragraphs
   joined with their `.meta.json` stats) and heading detection (font-size

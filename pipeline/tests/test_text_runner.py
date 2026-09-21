@@ -900,3 +900,83 @@ _FAMILIAR_NAMES = [
     "Toad",
     "Weasel",
 ]
+
+
+@pytest.mark.corpus
+def test_phb_detached_column_and_sidebar_band_corpus() -> None:
+    """Regression for B10c-mand22's two defects (see
+    `owlsperch.text.columns`'s module docstring, steps 2d and 3a):
+
+    1. PHB p.41 "Table 3-10: The Monk" -- the whole "Unarmored Speed Bonus"
+       column arrives from poppler as three blocks standing 23.8pt clear of
+       the grid's own last column, and used to be emitted as loose
+       paragraphs AFTER the table, where the extractor reattached it at the
+       wrong offset (18 of the monk's 20 cells came out wrong on the site).
+    2. PHB p.46 "THE PALADIN'S MOUNT" -- the body text above that boxed
+       sidebar shares the sidebar's two-column cluster, so the "Human
+       Paladin Starting Package" heading and its Armor/Weapons body were
+       emitted INSIDE the sidebar, between its own heading and the rest of
+       it. The body band must now be emitted complete, before the sidebar.
+
+       Step 5's known limitation is still open here: the narrow mount grid
+       inside the sidebar's left column is a column break for the whole
+       page, so the sidebar's right-column text still precedes the left
+       column's own text below the grid. The sidebar is contiguous and opens
+       at its heading, which is what the extraction prompt needs.
+    """
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+
+    entries = load_manifest(default_manifest_path())
+    book_id = "phb1" if any(e.book_id == "phb1" for e in entries) else "phb"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(41, 41)) == 0
+        assert run_text(book_id, pdf_dir=pdf_dir, data_dir=data_dir, page_range=(46, 46)) == 0
+
+        def _text(page: int) -> str:
+            return (data_dir / "text" / book_id / f"p{page:04d}.txt").read_text()
+
+        # (1) every monk level row carries its own printed speed bonus, in
+        # its own row -- +10 ft. for 3rd-5th, +60 ft. for 18th-20th.
+        p41 = _text(41).splitlines()
+        rows = {line.split("\t")[0]: line for line in p41 if "\t" in line}
+        for level in ("3rd", "4th", "5th"):
+            assert rows[level].endswith("\t+10 ft."), rows[level]
+        for level in ("18th", "19th", "20th"):
+            assert rows[level].endswith("\t+60 ft."), rows[level]
+        # ...and the column is no longer a run of loose paragraphs.
+        assert not any(line.strip() in {"+10 ft.", "+60 ft."} for line in p41), p41
+
+        # (2) the body band comes before the sidebar, never inside it.
+        p46 = _text(46).split("\n\n")
+        heading = next(i for i, para in enumerate(p46) if "PALADIN’S MOUNT" in para.splitlines()[0])
+        samples = next(
+            i for i, para in enumerate(p46) if para.startswith("SAMPLE PALADIN’S MOUNTS")
+        )
+        starting_package = next(
+            i for i, para in enumerate(p46) if para.startswith("Human Paladin Starting Package")
+        )
+        armor = next(i for i, para in enumerate(p46) if para.startswith("Armor: Scale mail"))
+        assert starting_package < heading, (starting_package, heading, samples)
+        assert armor < heading, (armor, heading)
+        assert not any(i for i in (starting_package, armor) if heading < i < samples), (
+            heading,
+            samples,
+            starting_package,
+            armor,
+        )
+
+        # ...and the sidebar's own opening paragraph is followed straight by
+        # its own mount rules, not by a body paragraph.
+        assert p46[heading + 1].startswith("The paladin’s mount is superior"), p46[heading + 1]
+        assert p46[heading + 2].startswith("mount must be within 5 feet"), p46[heading + 2]

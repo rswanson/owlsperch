@@ -1223,6 +1223,20 @@ def _narrow_gutter_block(x_min: float, y_min: float, x_max: float, y_max: float,
     """
 
 
+def _paladin_mount_page_body() -> str:
+    """PHB p.46's own geometry: two bands of ordinary body text (y 51-155)
+    above a full-width boxed sidebar (y 193-471) whose own columns sit
+    slightly wider than the body's, narrowing the gutter between them to
+    ~9.6pt."""
+    body = _narrow_gutter_block(34.0, 51.5, 274.2, 155.3, "LEFT_BODY")
+    body += _narrow_gutter_block(292.1, 53.7, 454.3, 64.5, "RIGHT_HEADING")
+    body += _narrow_gutter_block(301.1, 66.5, 541.3, 138.8, "RIGHT_BODY")
+    body += _narrow_gutter_block(39.6, 193.1, 164.0, 203.9, "SIDEBAR_HEADING")
+    body += _narrow_gutter_block(39.6, 206.3, 282.4, 293.3, "SIDEBAR_INTRO")
+    body += _narrow_gutter_block(293.1, 196.4, 535.9, 471.4, "SIDEBAR_RIGHT")
+    return body
+
+
 def test_boxed_sidebar_columns_read_left_then_right(tmp_path: Path) -> None:
     # Real-corpus regression (B10c-mand15 finding C, PHB p.46 "THE
     # PALADIN'S MOUNT"): a boxed sidebar spanning both body columns sits
@@ -1234,24 +1248,216 @@ def test_boxed_sidebar_columns_read_left_then_right(tmp_path: Path) -> None:
     # top) was emitted BEFORE its own left-column intro (y 206.3) and the
     # sidebar opened mid-sentence. Step 4a must split that cluster at the
     # gutter.
-    body = _narrow_gutter_block(34.0, 51.5, 274.2, 155.3, "LEFT_BODY")
-    body += _narrow_gutter_block(292.1, 53.7, 454.3, 64.5, "RIGHT_HEADING")
-    body += _narrow_gutter_block(301.1, 66.5, 541.3, 138.8, "RIGHT_BODY")
-    body += _narrow_gutter_block(39.6, 193.1, 164.0, 203.9, "SIDEBAR_HEADING")
-    body += _narrow_gutter_block(39.6, 206.3, 282.4, 293.3, "SIDEBAR_INTRO")
-    body += _narrow_gutter_block(293.1, 196.4, 535.9, 471.4, "SIDEBAR_RIGHT")
-    page = _parse_page(tmp_path, "boxed_sidebar_narrow_gutter.html", body)
+    #
+    # B10c-mand22: and step 3a must band-split the run first, so the body
+    # text above the box is emitted complete (both its columns) BEFORE the
+    # sidebar -- see `test_body_text_is_never_emitted_inside_a_boxed_sidebar`.
+    page = _parse_page(tmp_path, "boxed_sidebar_narrow_gutter.html", _paladin_mount_page_body())
 
     texts = [_block_text(item) for item in order_blocks(page)]
 
     assert texts == [
         "LEFT_BODY",
-        "SIDEBAR_HEADING",
-        "SIDEBAR_INTRO",
         "RIGHT_HEADING",
         "RIGHT_BODY",
+        "SIDEBAR_HEADING",
+        "SIDEBAR_INTRO",
         "SIDEBAR_RIGHT",
     ]
+
+
+def test_body_text_is_never_emitted_inside_a_boxed_sidebar(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand22 defect 2, PHB p.46 "THE PALADIN'S
+    # MOUNT"): step 4a's cluster split is correct per column but the run it
+    # splits stacks TWO layouts -- body text above, boxed sidebar below --
+    # so the body's left column and the sidebar's left column ended up in
+    # one cluster and the body's right column and the sidebar's right
+    # column in another. Emitting left cluster then right cluster then put
+    # the body's "Human Paladin Starting Package" heading and its
+    # Armor/Weapons body INSIDE the sidebar, between its heading and the
+    # rest of it. Step 3a cuts the run at the 37.8pt (4.8 line height)
+    # whitespace band between the two regions first.
+    page = _parse_page(tmp_path, "boxed_sidebar_body_band.html", _paladin_mount_page_body())
+
+    texts = [_block_text(item) for item in order_blocks(page)]
+
+    sidebar_start = texts.index("SIDEBAR_HEADING")
+    assert texts[:sidebar_start] == ["LEFT_BODY", "RIGHT_HEADING", "RIGHT_BODY"], texts
+    assert not any(
+        text.endswith("_BODY") or text == "RIGHT_HEADING" for text in texts[sidebar_start:]
+    )
+
+
+def test_a_run_with_no_full_width_whitespace_band_is_not_split(tmp_path: Path) -> None:
+    # Step 3a must not fire on an ordinary two-column page just because ONE
+    # column has a tall gap in it: the band has to run the run's full width.
+    # Here the left column breaks between y 60 and y 300 (30 line heights)
+    # while the right column runs straight through, so the page stays one
+    # band and reads left column then right column.
+    body = _narrow_gutter_block(34.0, 51.5, 274.2, 60.0, "LEFT_TOP")
+    body += _narrow_gutter_block(34.0, 300.0, 274.2, 400.0, "LEFT_BOTTOM")
+    body += _narrow_gutter_block(300.0, 51.5, 540.0, 400.0, "RIGHT")
+    page = _parse_page(tmp_path, "one_column_gap_only.html", body)
+
+    assert [_block_text(item) for item in order_blocks(page)] == [
+        "LEFT_TOP",
+        "LEFT_BOTTOM",
+        "RIGHT",
+    ]
+
+
+#: PHB p.41's own geometry for Table 3-10: The Monk -- ~9.894pt row pitch,
+#: ~7.94pt lines, the grid's own columns ending at x 516.28 and the detached
+#: "Unarmored Speed Bonus" column standing at x 540.08-561.68, 23.8pt (3.0
+#: line heights) clear of it.
+_MONK_ROW_FIRST_CENTER = 515.03
+_MONK_ROW_PITCH = 9.894
+_MONK_LINE_HEIGHT = 7.94
+
+#: Local row index -> the level that row prints. Rows 15 and 17 are wrapped
+#: continuations of the row above them ("slow fall 80 ft.", "tongue of the
+#: sun and moon") and print no level or speed bonus of their own.
+_MONK_LEVELS = {
+    0: "2nd",
+    1: "3rd",
+    2: "4th",
+    3: "5th",
+    4: "6th",
+    5: "7th",
+    6: "8th",
+    7: "9th",
+    8: "10th",
+    9: "11th",
+    10: "12th",
+    11: "13th",
+    12: "14th",
+    13: "15th",
+    14: "16th",
+    16: "17th",
+    18: "18th",
+    19: "19th",
+    20: "20th",
+}
+
+#: The printed Unarmored Speed Bonus cells, by local row index: +0 ft. for
+#: 1st-2nd (only 2nd is on this fixture's rows), then +10/+20/... every three
+#: levels. Poppler emits them as THREE blocks -- rows 0-14, row 16, rows
+#: 18-20 -- since the two continuation rows break the run.
+_MONK_SPEED_CELLS = {
+    0: "+0 ft.",
+    **{row: "+10 ft." for row in (1, 2, 3)},
+    **{row: "+20 ft." for row in (4, 5, 6)},
+    **{row: "+30 ft." for row in (7, 8, 9)},
+    **{row: "+40 ft." for row in (10, 11, 12)},
+    **{row: "+50 ft." for row in (13, 14, 16)},
+    **{row: "+60 ft." for row in (18, 19, 20)},
+}
+
+
+def _monk_row_y(row: int) -> tuple[float, float]:
+    center = _MONK_ROW_FIRST_CENTER + row * _MONK_ROW_PITCH
+    return center - _MONK_LINE_HEIGHT / 2, center + _MONK_LINE_HEIGHT / 2
+
+
+def _monk_column_block(x_min: float, x_max: float, cells: dict[int, str]) -> str:
+    """One detached-column block: a run of consecutive rows' cells, each its
+    own `<line>`, in a block standing to the right of the grid."""
+    rows = sorted(cells)
+    lines = []
+    for row in rows:
+        y_min, y_max = _monk_row_y(row)
+        box = f'xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}"'
+        lines.append(f"<line {box}><word {box}>{cells[row]}</word></line>")
+    block_y_min, _ = _monk_row_y(rows[0])
+    _, block_y_max = _monk_row_y(rows[-1])
+    return (
+        f'<flow><block xMin="{x_min}" yMin="{block_y_min}" xMax="{x_max}" '
+        f'yMax="{block_y_max}">{"".join(lines)}</block></flow>'
+    )
+
+
+#: The grid's own three columns, as x extents: Level, Base Attack Bonus and
+#: Special, the last ending at x 516.28.
+_MONK_GRID_COLUMNS = [(71.20, 88.34), (107.44, 151.55), (260.00, 350.00)]
+
+
+def _monk_grid_block() -> str:
+    """The grid itself, as PHB p.41 emits it: ONE block holding every cell as
+    its own `<line>`, which step 2a picks up as a single-block table. That
+    the grid is a single block (rather than a clique of per-column blocks) is
+    exactly why step 2b's absorb never sees the detached column: there is no
+    clique whose base span to measure it against."""
+    lines = []
+    for row in range(21):
+        y_min, y_max = _monk_row_y(row)
+        level = _MONK_LEVELS.get(row)
+        cells = (
+            [(_MONK_GRID_COLUMNS[2], "slow fall 80 ft." if row == 15 else "tongue of the sun")]
+            if level is None
+            else [
+                (_MONK_GRID_COLUMNS[0], level),
+                (_MONK_GRID_COLUMNS[1], f"+{row + 1}"),
+                (_MONK_GRID_COLUMNS[2], "Bonus feat"),
+            ]
+        )
+        for (x_min, x_max), text in cells:
+            box = f'xMin="{x_min}" yMin="{y_min}" xMax="{x_max}" yMax="{y_max}"'
+            lines.append(f"<line {box}><word {box}>{text}</word></line>")
+    y_min, _ = _monk_row_y(0)
+    _, y_max = _monk_row_y(20)
+    return (
+        f'<flow><block xMin="71.20" yMin="{y_min}" xMax="516.28" '
+        f'yMax="{y_max}">{"".join(lines)}</block></flow>'
+    )
+
+
+def test_detached_column_is_folded_into_its_own_rows(tmp_path: Path) -> None:
+    # Real-corpus regression (B10c-mand22 defect 1, PHB p.41 Table 3-10: The
+    # Monk): the whole "Unarmored Speed Bonus" column arrives from poppler as
+    # three blocks standing 23.8pt clear of the grid's own last column, so
+    # step 2b's absorb (which requires a block's x-extent INSIDE the clique's
+    # base span, bar one line height) could never take them, and the column
+    # was emitted as loose paragraphs after the table -- the extractor then
+    # reattached it at the wrong offset, 18 of 20 cells wrong.
+    body = _monk_grid_block()
+    body += _monk_column_block(540.08, 561.68, {r: _MONK_SPEED_CELLS[r] for r in range(15)})
+    body += _monk_column_block(540.25, 561.69, {16: _MONK_SPEED_CELLS[16]})
+    body += _monk_column_block(540.10, 561.66, {r: _MONK_SPEED_CELLS[r] for r in (18, 19, 20)})
+    page = _parse_page(tmp_path, "monk_detached_column.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    rows = table_groups[0].rows
+    assert len(rows) == 21
+    by_level = {row.cells[0]: row.cells for row in rows}
+    for level in ("3rd", "4th", "5th"):
+        assert by_level[level][-1] == "+10 ft.", by_level[level]
+    for level in ("18th", "19th", "20th"):
+        assert by_level[level][-1] == "+60 ft.", by_level[level]
+    # A continuation row inside the column's own span gets an empty cell, so
+    # the column stays aligned rather than shifting up a row.
+    assert rows[15].cells == ["slow fall 80 ft.", ""], rows[15].cells
+
+    # ...and none of the three blocks survives as a loose paragraph.
+    assert not any(isinstance(item, Block) for item in ordered), ordered
+
+
+def test_a_block_beside_a_table_covering_too_few_rows_stays_out(tmp_path: Path) -> None:
+    # Step 2d's row-coverage guard: a two-line note printed beside the grid
+    # (aligned with two of its rows by coincidence) is not a column, and
+    # must stay an ordinary block.
+    body = _monk_grid_block()
+    body += _monk_column_block(540.08, 561.68, {3: "see", 4: "below"})
+    page = _parse_page(tmp_path, "note_beside_table.html", body)
+
+    ordered = order_blocks(page)
+
+    table_groups = [item for item in ordered if isinstance(item, TableGroup)]
+    assert len(table_groups) == 1
+    assert all(len(row.cells) <= 3 for row in table_groups[0].rows)
+    assert any(isinstance(item, Block) and "see" in item.lines[0].text for item in ordered)
 
 
 #: The FAMILIARS grid with a long (6-word) header value instead of the
