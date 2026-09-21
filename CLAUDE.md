@@ -661,9 +661,28 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   "Alignment" `description_sections` entry of the same name; table's
   verbatim title, column/row padding, and caption-only-segment `no_content`
   guidance -- a kind_hint with no entry,
-  e.g. `stat_block`, gets no rules section), a shared "### Tables belonging
-  to this entity" convention for every non-table kind (write a second
-  `table` record alongside the entity's own when the segment's text
+  e.g. `stat_block`, gets no rules section). Batch B10c-mand13 (the
+  2026-09-18 class quality judgement) adds five more class/prestige_class
+  rules: every printed heading in the span must land in the record, with a
+  printed `Ex-<Class>` section and the printed `Abilities:` paragraph each
+  called out by name as their own `description_sections` entries; a bold
+  run-in heading printed INSIDE the Class Features section (e.g. the
+  cleric's `Spontaneous Casting:`) is its own `class_features` entry, never
+  nested inside a different feature's `text_md`; a feature's `text_md` is
+  the complete printed text verbatim and in printed order, with a printed
+  typo kept and noted rather than silently corrected; a titled sidebar
+  (`FAMILIARS`, `THE PALADIN'S MOUNT`, ...) is extracted as its own
+  rules_section, never copied into a feature, while an untitled grid inside
+  the class's own feature text still gets its own `table` record; and (a
+  fifth rule, in the shared table convention below since it applies to
+  every owned table, not just the level table) a class's own secondary
+  titled table is written as its own `table` record too, plus a
+  `_KIND_RULES["table"]` rule folding a printed footnote into `caption` and
+  keeping a wrapped two-line header's printed left-to-right column order.
+  `schemas/examples/class.json` models the Abilities section and a
+  run-in-turned-standalone feature ("Bonus Spells"). A shared "### Tables
+  belonging to this entity" convention for every non-table kind (write a
+  second `table` record alongside the entity's own when the segment's text
   contains a table belonging to it, printing both absolute output
   directories, cross-linked via `fields.parent_record`/`tables` -- this
   convention also renders the `table` type's own `fields` schema,
