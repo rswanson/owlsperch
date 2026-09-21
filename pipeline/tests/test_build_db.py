@@ -1439,6 +1439,74 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
         conn.close()
 
 
+def test_build_db_keeps_a_sidebars_own_table_canonical_with_its_parent(tmp_path: Path) -> None:
+    """B10c-mand14: the real-corpus case -- the FAMILIARS sidebar inside the
+    sorcerer's span stays canonical (B10c-mand11), but its own progression
+    grid, a `table` whose `parent_record` names that sidebar, used to be
+    demoted anyway (every table in a span passes the ownership predicate),
+    leaving a canonical parent rendering a non-canonical table. A table
+    follows its parent: the sidebar's grid stays canonical, while a table
+    parented by a class-structural fragment ("Class Features (Testclass)")
+    is still demoted with it."""
+    data_dir = tmp_path / "data"
+    manifest_path = _write_manifest(tmp_path)
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    for ordinal in range(4, 8):
+        _write_segment(data_dir, "book", f"book-p0003-0{ordinal}", [3])
+    class_record = _valid_class_record()
+    _write_record(data_dir, "book", "class", "testclass", class_record)
+    _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
+
+    for slug, name, seg_id in (
+        ("familiars", "Familiars", "book-p0003-04"),
+        ("class-features-testclass", "Class Features (Testclass)", "book-p0003-05"),
+    ):
+        _write_record(
+            data_dir,
+            "book",
+            "rules_section",
+            slug,
+            _rules_section_record(book_id="book", slug=slug, pages=[3], seg_id=seg_id, name=name),
+        )
+    for slug, name, parent, seg_id in (
+        (
+            "familiar-progression",
+            "Familiar Progression",
+            "rules_section:book:familiars",
+            "book-p0003-06",
+        ),
+        (
+            "class-features-grid",
+            "Class Features Grid",
+            "rules_section:book:class-features-testclass",
+            "book-p0003-07",
+        ),
+    ):
+        table = _valid_table_record(
+            book_id="book", slug=slug, pages=[3], name=name, seg_id=seg_id, parent_record=parent
+        )
+        _write_record(data_dir, "book", "table", slug, table)
+
+    result = build_db(
+        data_dir=data_dir, manifest_path=manifest_path, schemas_dir=_repo_schemas_dir()
+    )
+    assert result.skipped_invalid == 0, result.skipped
+    conn = _connect(result.db_path)
+    try:
+        rows = dict(
+            conn.execute(
+                "SELECT slug, canonical FROM records WHERE type IN ('rules_section', 'table')"
+            ).fetchall()
+        )
+    finally:
+        conn.close()
+    assert rows["familiars"] == 1
+    assert rows["familiar-progression"] == 1
+    assert rows["class-features-testclass"] == 0
+    assert rows["class-features-grid"] == 0
+    assert rows["table-x-the-testclass"] == 1
+
+
 def test_class_owned_names_excludes_generic_flavor_headings() -> None:
     """A class's "Alignment"/"Races"/... description headings are printed
     by every class, so they must not let one class demote its neighbour's

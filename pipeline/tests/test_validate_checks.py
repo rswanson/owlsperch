@@ -1491,4 +1491,11 @@ def test_phb1_real_corpus_class_validator_calibration() -> None:
             elif "looks condensed rather than verbatim" in error:
                 failures["feature_coverage"].add(stem)
 
-    assert failures == _EXPECTED_CORPUS_FAILURES
+    # The real data dir is LIVE: `_EXPECTED_CORPUS_FAILURES` is the set the
+    # rules were calibrated on (2026-09-21, before those five classes were
+    # re-extracted under the B10c-mand13 prompt rules). Once a class is
+    # fixed its failure disappears, so this is a no-false-positive guard --
+    # any failure the rules report must be one of the calibrated ones --
+    # rather than a pin of a data state that is meant to go away.
+    for key, stems in failures.items():
+        assert stems <= _EXPECTED_CORPUS_FAILURES[key], (key, stems)

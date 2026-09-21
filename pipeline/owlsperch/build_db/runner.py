@@ -736,7 +736,9 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
     pages ("Familiars", "Alternative Animal Companions", "The Paladin's
     Mount") stays canonical; page span alone demoted both, leaving the
     sidebars in no canonical record at all. Every `table` in the span still
-    passes the predicate, so the table rule above is unchanged. A record
+    passes the predicate, but (B10c-mand14) a table FOLLOWS ITS PARENT: one
+    whose `fields.parent_record` names a non-class record this pass leaves
+    canonical (a sidebar's own grid) is left canonical with it. A record
     already superseded by an earlier class is left alone. Returns how many
     records were newly superseded."""
     class_rows = conn.execute(
@@ -788,6 +790,16 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
             "('rules_section', 'table') AND superseded_by IS NULL AND id != ?",
             (book_id, class_id),
         ).fetchall()
+        # B10c-mand14: every non-class record of the book by id, so a table
+        # candidate can look up the (type, name) of its `parent_record`.
+        non_class_by_id: dict[str, tuple[str, str]] = {
+            row[0]: (row[1], row[2])
+            for row in conn.execute(
+                "SELECT id, type, name FROM records WHERE book_id = ? "
+                "AND type NOT IN ('class', 'prestige_class')",
+                (book_id,),
+            ).fetchall()
+        }
         for candidate_id, candidate_type, candidate_name, candidate_json in candidates:
             if candidate_id in owned_table_ids:
                 continue
@@ -810,6 +822,20 @@ def _apply_superseding(conn: sqlite3.Connection) -> int:
                 )
                 if parent in class_ids:
                     continue
+                # B10c-mand14: a table follows its PARENT. A sidebar's own
+                # grid ("Familiars", "The Paladin's Mount") names that
+                # sidebar as `parent_record`; the sidebar itself stays
+                # canonical under the two rules above, so its table must
+                # too -- otherwise the canonical parent renders a
+                # non-canonical table (the real-corpus case this fixes).
+                parent_row = non_class_by_id.get(parent) if isinstance(parent, str) else None
+                if parent_row is not None:
+                    parent_type, parent_name = parent_row
+                    if (
+                        not is_class_owned_fragment(parent_name, parent_type, class_name)
+                        and normalize_heading(parent_name) not in owned_names
+                    ):
+                        continue
 
             candidate_pages = candidate.get("pages")
             numeric_candidate_pages = (
