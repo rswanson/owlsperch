@@ -1073,6 +1073,7 @@ def _coverage_record() -> dict[str, Any]:
     record = copy.deepcopy(_valid_class_record())
     record["fields"]["description_sections"] = [
         {"heading": "Adventures", "text_md": "They adventure."},
+        {"heading": "Abilities", "text_md": "Strength matters."},
         {"heading": "Ex-Testclasses", "text_md": "A testclass who becomes lawful loses it."},
         {
             "heading": "Half-Orc Testclass Starting Package",
@@ -1246,6 +1247,61 @@ def test_check_class_segment_coverage_stitches_a_column_break() -> None:
     # The stitched span is the truncated tail plus the continuation's whole
     # prefix (47 words), not just the 8 the truncated paragraph itself holds.
     assert "against 47 printed word(s)" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand16 rule (d): the printed "Abilities:" run-in under GAME
+# RULE INFORMATION is its own description_sections entry.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_segment_coverage_passes_with_an_abilities_section() -> None:
+    """`_coverage_record()` already records the "Abilities:" run-in
+    `_SEGMENT_TEXT` prints under GAME RULE INFORMATION."""
+    assert check_class_segment_coverage(_coverage_record(), _segment()) == []
+
+
+def test_check_class_segment_coverage_flags_a_dropped_abilities_section() -> None:
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if section["heading"] != "Abilities"
+    ]
+    errors = check_class_segment_coverage(record, _segment())
+    assert len(errors) == 1
+    assert "Abilities" in errors[0]
+    assert "GAME RULE INFORMATION" in errors[0]
+
+
+def test_check_class_segment_coverage_skips_abilities_with_no_gri_window() -> None:
+    """A segment printing no "GAME RULE INFORMATION" heading at all (a page
+    layout this window can't read, or simply a segment with none) must not
+    be reported as a missing Abilities section."""
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if section["heading"] != "Abilities"
+    ]
+    text = _SEGMENT_TEXT.replace("GAME RULE INFORMATION\n\n", "")
+    assert check_class_segment_coverage(record, _segment(text)) == []
+
+
+def test_check_class_segment_coverage_skips_abilities_with_no_marker() -> None:
+    """A GAME RULE INFORMATION window that never prints an "Abilities:"
+    run-in at all (a prestige class need not have one) is not a failure."""
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if section["heading"] != "Abilities"
+    ]
+    text = _SEGMENT_TEXT.replace(
+        "Testclasses have the following game statistics. Abilities: Strength matters.",
+        "Testclasses have the following game statistics.",
+    )
+    assert check_class_segment_coverage(record, _segment(text)) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1435,10 +1491,11 @@ def test_validate_record_dispatches_type_segment_checks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The real corpus: pin the B10c-mand12 calibration against the 11 real PHB
-# class records, so a later change to any of the three rules that alters
-# which of them fail shows up here. Skipped (not failed) unless the real
-# data dir has all 11 records and their owning segments.
+# The real corpus: pin the B10c-mand12 calibration (plus B10c-mand16's
+# Abilities rule) against the 11 real PHB class records, so a later change
+# to any of these rules that alters which of them fail shows up here.
+# Skipped (not failed) unless the real data dir has all 11 records and
+# their owning segments.
 # ---------------------------------------------------------------------------
 
 #: The exact real-data outcome each rule must produce, per class record, as
@@ -1448,6 +1505,7 @@ _EXPECTED_CORPUS_FAILURES = {
     "extra_sections": {"paladin", "sorcerer"},
     "run_in_headings": {"cleric"},
     "feature_coverage": {"bard"},
+    "abilities": {"barbarian", "fighter", "monk", "ranger", "rogue", "wizard"},
 }
 
 
@@ -1490,6 +1548,8 @@ def test_phb1_real_corpus_class_validator_calibration() -> None:
                 failures["run_in_headings"].add(stem)
             elif "looks condensed rather than verbatim" in error:
                 failures["feature_coverage"].add(stem)
+            elif 'with heading "Abilities" records' in error:
+                failures["abilities"].add(stem)
 
     # The real data dir is LIVE: `_EXPECTED_CORPUS_FAILURES` is the set the
     # rules were calibrated on (2026-09-21, before those five classes were

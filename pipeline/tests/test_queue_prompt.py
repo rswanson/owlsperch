@@ -1246,6 +1246,35 @@ def test_rules_section_prompt_states_generic_heading_qualification_rule(tmp_path
     assert "the enclosing section's heading, ONLY when the text makes it" in rules_section
 
 
+def test_rules_section_prompt_states_multiple_grids_rule(tmp_path: Path) -> None:
+    """B10c-mand16 finding B: a rules_section segment printing several
+    grids (e.g. the FAMILIARS sidebar's own progression grid AND its
+    separate "Familiar | Special" list) must write each one as its own
+    `table` record, in printed order, rather than inlining a later grid as
+    markdown/prose -- including a two-column label/value grid whose right
+    cells are full sentences."""
+    segment = _segment(kind_hint="rules_section")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    rules_index = text.index("## Extraction rules for `rules_section`")
+    next_heading_index = text.index("\n## ", rules_index)
+    rules_section = text[rules_index:next_heading_index]
+
+    assert "SEVERAL grids" in rules_section
+    assert "Familiar | Special" in rules_section
+    assert "each one is its own `table` record, in printed order" in rules_section
+    assert "Tables belonging to this entity" in rules_section
+    assert "never" in rules_section and "inlined as markdown or prose" in rules_section
+    assert "still a table for this purpose" in rules_section
+
+
 def test_spell_feat_table_prompts_do_not_carry_rules_section_qualification_rule(
     tmp_path: Path,
 ) -> None:

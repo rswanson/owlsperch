@@ -1299,11 +1299,78 @@ def _check_extra_sections(
     ]
 
 
+def _game_rule_information_window(paragraphs: list[str]) -> list[str] | None:
+    """The stripped paragraphs of a class's printed GAME RULE INFORMATION
+    block (batch B10c-mand16), or `None` when the segment has no
+    recognizable one.
+
+    Starts at the paragraph that is exactly the "GAME RULE INFORMATION"
+    heading; ends at the first following paragraph that is exactly the
+    "Class Skills" heading or an ALL-CAPS sidebar/section heading
+    (`_is_caps_heading`), whichever comes first -- the same windowing
+    `_class_features_window` uses for its own end boundary. The real PHB
+    wizard prints its own "Class Skills" heading BEFORE "GAME RULE
+    INFORMATION" in this segment's reconstructed reading order; that's
+    harmless here, since the printed "Abilities:" run-in always sits in the
+    paragraph immediately after the GAME RULE INFORMATION heading itself,
+    well before the next ALL-CAPS heading closes the window regardless of
+    where "Class Skills" falls."""
+    start: int | None = None
+    for index, paragraph in enumerate(paragraphs):
+        if paragraph.strip().lower() == "game rule information":
+            start = index
+            break
+    if start is None:
+        return None
+    end = len(paragraphs)
+    for index in range(start + 1, len(paragraphs)):
+        stripped = paragraphs[index].strip()
+        if stripped.lower() == "class skills" or _is_caps_heading(stripped):
+            end = index
+            break
+    return [paragraph.strip() for paragraph in paragraphs[start:end]]
+
+
+def _check_abilities_section(fields: dict[str, Any], text: str, name: str) -> list[str]:
+    """Rule (d) (batch B10c-mand16, the 2026-09-21 class quality judgement's
+    finding D): the printed "Abilities:" run-in under GAME RULE INFORMATION
+    is its own `description_sections` entry (`heading: "Abilities"`, per
+    the B10c-mand13 prompt rule) -- distinct from the `alignment` field and
+    from the flavor "Alignment" section printed alongside it. Skipped
+    silently when the segment has no recognizable GAME RULE INFORMATION
+    window at all, or that window prints no "Abilities:" run-in of its own
+    (a prestige class need not print one)."""
+    window = _game_rule_information_window(text.split("\n"))
+    if window is None:
+        return []
+    prints_abilities = any(
+        _normalize_heading(heading) == _normalize_heading("Abilities")
+        for paragraph in window
+        for _start, _end, heading in _run_in_headings(paragraph)
+    )
+    if not prints_abilities:
+        return []
+    sections = fields.get("description_sections")
+    if isinstance(sections, list):
+        for section in sections:
+            if (
+                isinstance(section, dict)
+                and isinstance(section.get("heading"), str)
+                and _normalize_heading(section["heading"]) == _normalize_heading("Abilities")
+            ):
+                return []
+    return [
+        f'{name}: segment text prints an "Abilities:" paragraph under GAME RULE '
+        'INFORMATION that no description_sections entry with heading "Abilities" records'
+    ]
+
+
 def check_class_segment_coverage(
     record: dict[str, Any], segment: dict[str, Any] | None
 ) -> list[str]:
-    """Batch B10c-mand12: the class/prestige_class checks that need the
-    OWNING SEGMENT's own `text` as the evidence of what the page printed.
+    """Batch B10c-mand12 (plus B10c-mand16's rule (d)): the class/
+    prestige_class checks that need the OWNING SEGMENT's own `text` as the
+    evidence of what the page printed.
 
     (a) Every `<Words> <Class> Starting Package`/`Ex-<Class>` heading the
         text prints on its own line is recorded somewhere in the record
@@ -1322,14 +1389,19 @@ def check_class_segment_coverage(
         the span running from its heading to the next run-in heading in the
         same paragraph, extended through `_column_break_continuation` when
         the paragraph is cut off at a column break.
+    (d) A printed "Abilities:" run-in under GAME RULE INFORMATION
+        (`_game_rule_information_window`) is recorded as a
+        `description_sections[].heading` normalizing to "Abilities"
+        (`_check_abilities_section`).
 
     The whole check is skipped silently (returns `[]`) when there is no
     segment, no `text`, or no usable record `name` -- a missing segment is
     already its own failure via `check_pages_within_segment`. When a segment
     HAS text but no recognizable Class Features window, only (b) and (c) are
-    skipped: (a) works off the raw segment text and still runs, since a
-    dropped Starting Package section is visible without one, and a page
-    layout this can't read must not be reported as a missing feature."""
+    skipped: (a) and (d) work off the raw segment text and still run, since
+    a dropped Starting Package section or Abilities entry is visible
+    without one, and a page layout this can't read must not be reported as
+    a missing feature."""
     if segment is None:
         return []
     text = segment.get("text")
@@ -1345,6 +1417,7 @@ def check_class_segment_coverage(
     fields = record.get("fields")
     if not isinstance(fields, dict):
         return errors
+    errors.extend(_check_abilities_section(fields, text, name))
     features_by_name: dict[str, dict[str, Any]] = {}
     raw_features = fields.get("class_features")
     if isinstance(raw_features, list):
