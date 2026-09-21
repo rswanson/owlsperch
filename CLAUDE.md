@@ -340,6 +340,30 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   produced selectively. Rewriting a class segment file this way (`--force`)
   resets it to `pending` with no claims -- its previously claimed records
   are orphaned on disk unless deleted first (`queue reset --hard`).
+  Batch B10c-mand18 stops that end cap from stranding a class's OWN level
+  table: the real PHB p0040 prints "Table 3–9: The Fighter", then "MONK"
+  (the next class's heading), then the fighter's own grid, so the fighter
+  segment ended with a bare caption and no level table at all and the
+  extractor replied `needs_context`. After the end cap is resolved,
+  `_class_own_table_indices` scans the bounded window `[end_index,
+  page_cap_index)` -- never past the span's own D2-extended page range --
+  and adds back (via `_write_class_segment`'s new `extra_indices`, a set
+  union so nothing is duplicated) every caption-or-grid paragraph whose
+  caption names THIS class: from the paragraph's own first-line `Table
+  N–M: The <Title>` caption (`_table_caption_title`, plural-tolerant
+  through `_heading_matches_title`) when it has one, else from the caption
+  in scope, seeded from the cut's OWN page inside the span's own text. A
+  caption's scope covers its own (possibly poppler-fragmented) consecutive
+  grid paragraphs and closes at the first prose after them, so one caption
+  can't adopt every later uncaptioned grid on the page, and a caption
+  naming another class ("Table 3–10: The Monk") is never pulled in. The
+  next class's own start index is deliberately unchanged -- its
+  back-extended text may still hold the same grid, resolved by the
+  extraction prompt's pre-heading attribution rule like every other
+  shared-page overlap. Verified against the real corpus for all 11 phb1
+  classes (`test_phb1_real_corpus_every_class_segment_has_its_own_level_table`,
+  which copies the real `text/`+`toc/` into a tmp data dir rather than
+  re-extracting, so it needs no PDFs or `pdftotext`).
   Batch B11 adds an errata/update anchor, gated entirely on the book's manifest
   `kind`: `anchors.find_triggers` takes a keyword-only `entry_kind`
   (`"errata_entry"`/`"update_entry"`, resolved by `segment/runner.py` from

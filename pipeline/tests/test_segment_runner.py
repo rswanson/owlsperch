@@ -1650,6 +1650,234 @@ def test_phb1_real_corpus_class_segments() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Batch B10c-mand18: a class's own level table, stranded past its end cap
+# ---------------------------------------------------------------------------
+
+#: The fighter's own level-table body as the real PHB p0040 prints it (one
+#: tab-joined grid paragraph). Truncated to the first and last rows -- the
+#: rule under test is about WHICH paragraph lands in which segment, not the
+#: grid's contents.
+_FIGHTER_GRID = "Level\tBase Attack Bonus\tFort Save\n1st\t+1\t+2\n20th\t+20/+15/+10/+5\t+12"
+
+#: A grid belonging to the NEXT class, with its own caption glued on --
+#: the control case: it must NOT be pulled back into the fighter.
+_MONK_GRID = "Table 3\u201310: The Monk\nLevel\tBase Attack Bonus\n20th\t+15/+10/+5"
+
+#: An uncaptioned grid printed LATER on the shared page, after the monk's
+#: own opening prose (the real p0040's "Human Fighter Starting Package"
+#: skill grid): the fighter's own caption's scope has closed by then, so it
+#: must not adopt this one either.
+_LATE_UNCAPTIONED_GRID = "Skill\tRanks\tAbility\nClimb\t4\tStr"
+
+
+def _fighter_monk_toc_entries() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "Chapter 3: Classes",
+            "level": 1,
+            "printed_page": 1,
+            "pdf_page_start": 1,
+            "pdf_page_end": 4,
+            "path": ["Chapter 3: Classes"],
+            "category": "classes",
+        },
+        {
+            "title": "Fighter",
+            "level": 2,
+            "printed_page": 2,
+            "pdf_page_start": 2,
+            "pdf_page_end": 2,
+            "path": ["Chapter 3: Classes", "Fighter"],
+            "category": "classes",
+        },
+        {
+            "title": "Monk",
+            "level": 2,
+            "printed_page": 3,
+            "pdf_page_start": 3,
+            "pdf_page_end": 3,
+            "path": ["Chapter 3: Classes", "Monk"],
+            "category": "classes",
+        },
+    ]
+
+
+def _write_fighter_monk_book(data_dir: Path, *, second_grid: str) -> None:
+    """The real PHB p0040 paragraph order, in miniature: the fighter's own
+    level-table CAPTION, then the NEXT class's heading, then the grid the
+    caption belongs to (or, for the control case, a grid carrying the
+    monk's own caption), then the monk's own body, then a later
+    uncaptioned grid."""
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("FIGHTER"),
+                _para(
+                    "Hit Die: d10. Alignment: Any. Religion: Fighters revere whichever "
+                    "deity favors battle here.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para("Table 3\u20139: The Fighter"),
+                _para("MONK"),
+                _para(second_grid, kind="table", line_count=3),
+                _para(
+                    "Hit Die: d8. Alignment: Any lawful. Religion: Monks revere "
+                    "whichever deity teaches discipline here.",
+                    line_count=3,
+                ),
+                _para(_LATE_UNCAPTIONED_GRID, kind="table", line_count=2),
+            ],
+            4: [
+                _para(
+                    "Monks continue perfecting their bodies across the land for a while "
+                    "longer here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(data_dir, "book", _fighter_monk_toc_entries())
+
+
+def test_class_span_recovers_its_own_level_table_from_past_the_end_cap(tmp_path: Path) -> None:
+    """B10c-mand18: PHB p0040 prints "Table 3-9: The Fighter", then "MONK",
+    then the fighter's own level-table grid. The end cap (the next class's
+    heading index) left the fighter with the bare caption and NO table at
+    all, so the extractor could not fill `level_table`/`bab_progression`/
+    `save_progressions`. The grid must be pulled back into the fighter's
+    own text, without moving the monk's start."""
+    data_dir = tmp_path / "data"
+    _write_fighter_monk_book(data_dir, second_grid=_FIGHTER_GRID)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    classes = _by_kind(_segment_files(data_dir, "book"), "class")
+    by_heading = {s["heading"]: s for s in classes}
+    assert sorted(by_heading) == ["Fighter", "Monk"]
+
+    fighter = by_heading["Fighter"]
+    # Its own caption AND its own grid, each exactly once, in printed order,
+    # with the grid last (nothing past it was pulled in).
+    assert fighter["text"].count("Table 3\u20139: The Fighter") == 1
+    assert fighter["text"].count(_FIGHTER_GRID) == 1
+    assert fighter["text"].index("Table 3\u20139: The Fighter") < fighter["text"].index(
+        _FIGHTER_GRID
+    )
+    assert fighter["text"].rstrip().endswith(_FIGHTER_GRID)
+    # The next class's heading and body are still not the fighter's.
+    assert "MONK" not in fighter["text"]
+    assert "Monks revere" not in fighter["text"]
+    # A caption's scope closes at the prose after its own grid, so the
+    # later uncaptioned grid on the same page is left alone.
+    assert _LATE_UNCAPTIONED_GRID not in fighter["text"]
+    assert fighter["pages"] == [2, 3]
+
+    # The monk's own start is unchanged: still back-extended to the top of
+    # its own page, so its text begins with that page's first paragraph
+    # (the fighter's caption) and still holds the grid too -- the
+    # extraction prompt's pre-heading attribution rule resolves that
+    # overlap, exactly as it already does for every other shared page.
+    monk = by_heading["Monk"]
+    assert monk["text"].startswith("Table 3\u20139: The Fighter")
+    assert _FIGHTER_GRID in monk["text"]
+    assert monk["pages"] == [3, 4]
+
+
+def test_class_span_does_not_pull_in_the_next_classs_own_table(tmp_path: Path) -> None:
+    """The control case for the rule above: the grid printed after the
+    "MONK" heading carries the MONK's own caption ("Table 3-10: The
+    Monk"), so it belongs to the monk and must never be pulled back into
+    the fighter -- even though the fighter's own caption is the last
+    caption before the cut."""
+    data_dir = tmp_path / "data"
+    _write_fighter_monk_book(data_dir, second_grid=_MONK_GRID)
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    by_heading = {s["heading"]: s for s in _by_kind(_segment_files(data_dir, "book"), "class")}
+    fighter = by_heading["Fighter"]
+    assert "Table 3\u201310: The Monk" not in fighter["text"]
+    assert "20th\t+15/+10/+5" not in fighter["text"]
+    # Its own caption is still there (it was already inside the span).
+    assert "Table 3\u20139: The Fighter" in fighter["text"]
+    assert _MONK_GRID in by_heading["Monk"]["text"]
+
+
+@pytest.mark.corpus
+def test_phb1_real_corpus_every_class_segment_has_its_own_level_table() -> None:
+    """B10c-mand18 acceptance, against the REAL extracted text (copied
+    read-only out of `$OWLSPERCH_DATA`, never re-extracted -- this needs no
+    PDFs and no `pdftotext`, only a data dir that `owlsperch text`/`toc`
+    have already run against). Every one of the 11 PHB base classes must
+    end up with its own printed level table's last row in its own segment
+    text; before this fix the fighter's (PHB p0040, whose caption and grid
+    straddle the "MONK" heading) was missing entirely. Skipped, not
+    failed, when that data dir isn't present."""
+    import re
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, load_manifest
+    from owlsperch.text.runner import default_data_dir
+
+    real_data = default_data_dir()
+    book_id = "phb1"
+    real_text = real_data / "text" / book_id
+    real_toc = real_data / "toc" / f"{book_id}.json"
+    if not real_text.is_dir() or not real_toc.is_file():
+        pytest.skip(f"real extracted text/toc for {book_id} not present under {real_data}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        (data_dir / "text").mkdir(parents=True)
+        (data_dir / "toc").mkdir(parents=True)
+        shutil.copytree(real_text, data_dir / "text" / book_id)
+        shutil.copy(real_toc, data_dir / "toc" / f"{book_id}.json")
+
+        entries = [e for e in load_manifest(default_manifest_path()) if e.book_id == book_id]
+        assert entries, f"{book_id} is not in the manifest"
+        segment_book(entries[0], data_dir=data_dir, force=True)
+
+        classes = _by_kind(_segment_files(data_dir, book_id), "class")
+        by_heading = {s["heading"]: s["text"] for s in classes}
+        assert len(by_heading) == 11, sorted(by_heading)
+
+        # Derive each class's expected last table row from the real text
+        # itself rather than hard-coding a guess: find its printed
+        # "Table N-M: The <Class>" caption, then the first grid paragraph
+        # at or after it on that same page that has a level-20 row.
+        caption_re = re.compile(
+            r"^\s*Table\s+\d+\s*[\u2010-\u2015\-]\s*\d+\s*:\s*The\s+(?P<title>.+?)\s*$"
+        )
+        expected: dict[str, str] = {}
+        for page_path in sorted((data_dir / "text" / book_id).glob("p*.txt")):
+            paragraphs = page_path.read_text().split("\n\n")
+            for i, paragraph in enumerate(paragraphs):
+                lines = paragraph.strip().splitlines()
+                if not lines:
+                    continue
+                match = caption_re.match(lines[0])
+                if match is None or match.group("title") not in by_heading:
+                    continue
+                for later in paragraphs[i:]:
+                    rows = [r for r in later.split("\n") if r.startswith("20th\t")]
+                    if rows:
+                        expected.setdefault(match.group("title"), rows[-1])
+                        break
+
+        assert sorted(expected) == sorted(by_heading), sorted(expected)
+        # The fighter's own last row (the concrete defect this fixes).
+        assert expected["Fighter"].startswith("20th\t+20/+15/+10/+5")
+        for heading, row in expected.items():
+            assert row in by_heading[heading], (heading, row)
+
+
+# ---------------------------------------------------------------------------
 # Batch B11: errata_entry/update_entry segments, gated by manifest kind
 # ---------------------------------------------------------------------------
 

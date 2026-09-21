@@ -109,6 +109,25 @@ Per book:
    segment file this way resets it to `pending` with no claims -- delete
    any records it previously claimed first (`queue reset --hard`) or they
    are left orphaned on disk.
+10. (Batch B10c-mand18) The end cap in point 9 can fall BETWEEN a class's
+   own printed level-table caption and the grid that caption belongs to:
+   the real PHB p0040 prints "Table 3-9: The Fighter", then "MONK" (the
+   next class's heading), then the fighter's own grid, so the fighter's
+   segment ended with a bare caption and NO level table at all -- the
+   extractor could not fill `level_table`/`bab_progression`/
+   `save_progressions` and replied `needs_context`. So after the end cap is
+   resolved, `_class_own_table_indices` scans the bounded window
+   `[end_index, page_cap_index)` (never past the span's own D2-extended
+   page range) and adds back every caption-or-grid paragraph whose caption
+   names THIS class -- from the paragraph's own first-line caption, else
+   from the caption in scope, seeded from the cut's own page inside the
+   span's own text. A caption's scope covers its own (possibly
+   poppler-fragmented) consecutive grid paragraphs and closes at the first
+   prose after them, so one caption can't adopt every later uncaptioned
+   grid on the page. The next class's own start index is deliberately
+   unchanged (its text may still hold the same grid -- the extraction
+   prompt's pre-heading attribution rule resolves that, as it already does
+   for every other shared-page overlap).
 """
 
 from __future__ import annotations
@@ -606,6 +625,123 @@ def _back_extend_start_index(
     return max(page_start, previous_heading_index + 1)
 
 
+#: A printed table caption line, e.g. "Table 3-9: The Fighter" (any dash
+#: glyph -- the real PHB prints an EN DASH -- and an optional leading "The"
+#: in the title, stripped by `_table_caption_title` so the remainder can be
+#: compared with `_heading_matches_title` against a toc class title).
+_TABLE_CAPTION_RE = re.compile(
+    r"^\s*Table\s+\d+\s*[\u2010-\u2015\-]\s*\d+\s*:\s*(?P<title>.+?)\s*$"
+)
+
+
+def _table_caption_title(text: str) -> str | None:
+    """The entity a paragraph's own FIRST line captions, when that line is a
+    printed "Table N-M: <title>" caption (with a leading "The " stripped),
+    else `None`. Used by `_class_own_table_indices` below both for a
+    caption-only paragraph and for a caption glued onto its own grid."""
+    lines = text.strip().splitlines()
+    if not lines:
+        return None
+    match = _TABLE_CAPTION_RE.match(lines[0])
+    if match is None:
+        return None
+    title = match.group("title").strip()
+    if title[:4].casefold() == "the ":
+        title = title[4:].strip()
+    return title or None
+
+
+def _is_table_paragraph(text: str) -> bool:
+    """A tab-joined grid, the shape `owlsperch.text.columns` writes a
+    detected table group as (one row per line, cells tab-separated)."""
+    return any("\t" in line for line in text.splitlines())
+
+
+def _class_own_table_indices(
+    paragraphs: list[Paragraph],
+    *,
+    heading: str,
+    text_start_index: int,
+    end_index: int,
+    page_cap_index: int,
+) -> frozenset[int]:
+    """B10c-mand18: the indices of THIS class's own printed table
+    paragraphs that sit at or past its end cap, and so would otherwise be
+    lost from its text entirely.
+
+    The real PHB p0040's paragraph order is [0] "Table 3-9: The Fighter"
+    (the fighter's own level-table caption), [1] "MONK" (the next class's
+    heading), [2] the fighter's level-table body ("Level\tAttack Bonus..."
+    through "20th\t+20/+15/+10/+5..."). The end cap (min of the next
+    class's own heading index and the first paragraph past the span's toc
+    `pdf_page_end` + 1) therefore cut the fighter's text right after the
+    bare caption, leaving its segment with NO level table at all -- the
+    extractor cannot fill `level_table`/`bab_progression`/
+    `save_progressions` and replies `needs_context`.
+
+    So, over the bounded window `[end_index, page_cap_index)` (never past
+    the span's own D2-extended page range), every caption-or-grid paragraph
+    whose caption names THIS class is pulled back into this span's text.
+    Ownership comes from the paragraph's own first-line caption when it has
+    one, else from the caption currently in scope -- seeded from the same
+    page as the cut point inside this span's own text (exactly the
+    fighter's separate, pre-heading caption), and replaced by any later
+    caption in the window, so a control case's "Table 3-10: The Monk" grid
+    is never pulled into the fighter. A grid with no caption in scope at
+    all is left alone.
+
+    A caption's scope covers its own (possibly poppler-fragmented, hence
+    consecutive rather than single) grid paragraphs and ENDS at the first
+    non-grid, non-caption paragraph after them -- the intervening heading/
+    prose before the grid is skipped, but once the grid has been collected,
+    prose closes the caption out. Otherwise one caption would keep adopting
+    every later uncaptioned grid on the page (the real p0040's "Human
+    Fighter Starting Package" skill grid, printed after the monk's own
+    opening prose).
+
+    The next class's own start index is deliberately NOT changed: its
+    back-extended text may still contain the same grid, and the extraction
+    prompt's own pre-heading attribution rule resolves that the way it
+    already does for every other shared-page overlap."""
+    if end_index >= page_cap_index:
+        return frozenset()
+
+    # Seed the caption from this span's OWN text, but only from the page the
+    # cut falls on -- the shared-page case this exists for. Reaching further
+    # back could let a stale caption of this class adopt an unrelated grid.
+    caption_title: str | None = None
+    cut_page = paragraphs[end_index].page
+    for i in range(end_index - 1, text_start_index - 1, -1):
+        if paragraphs[i].page != cut_page:
+            break
+        title = _table_caption_title(paragraphs[i].text)
+        if title is not None:
+            caption_title = title
+            break
+
+    extra: set[int] = set()
+    collecting = False
+    for i in range(end_index, page_cap_index):
+        text = paragraphs[i].text
+        own_caption = _table_caption_title(text)
+        is_grid = _is_table_paragraph(text)
+        if own_caption is not None:
+            caption_title = own_caption
+            collecting = False
+        elif collecting and not is_grid:
+            # The caption's own grid is over -- close its scope so it can't
+            # adopt a later, unrelated uncaptioned grid.
+            caption_title = None
+            collecting = False
+            continue
+        if caption_title is None or not _heading_matches_title(caption_title, heading):
+            continue
+        if own_caption is not None or is_grid:
+            extra.add(i)
+            collecting = collecting or is_grid
+    return frozenset(extra)
+
+
 @dataclass(frozen=True)
 class _ClassSpan:
     """One toc-driven class/prestige_class candidate (batch B10c, design
@@ -682,6 +818,7 @@ def _write_class_segment(
     start_index: int | None,
     end_index: int | None,
     exclude_indices: frozenset[int] = frozenset(),
+    extra_indices: frozenset[int] = frozenset(),
 ) -> None:
     # Lazy import: `owlsperch.queue.ladder` imports `Segment` from this
     # module at module scope, so importing `starting_tier` from it up top
@@ -698,7 +835,13 @@ def _write_class_segment(
         # drops specific paragraphs from THIS span's own range that a
         # later class's back-extension has already claimed as its own
         # opening flavor paragraph -- see `_run_class_pass`'s own comments.
-        kept_indices = [i for i in range(start_index, end_index) if i not in exclude_indices]
+        # `extra_indices` (B10c-mand18, `_class_own_table_indices`) adds
+        # back THIS class's own table paragraph(s) stranded at or past the
+        # end cap; a set union, so a paragraph already inside the range is
+        # never duplicated, and sorting keeps printed order.
+        kept_indices = sorted(
+            (set(range(start_index, end_index)) - exclude_indices) | extra_indices
+        )
         pages = _pages_spanned_indices(paragraphs, kept_indices)
         text = "\n\n".join(paragraphs[i].text for i in kept_indices)
     else:
@@ -933,6 +1076,19 @@ def _run_class_pass(
             if text_start_index <= i < end_index and i not in own_flavor_indices
         )
 
+        # B10c-mand18: the end cap above can fall BETWEEN this class's own
+        # printed level-table caption and its own grid (PHB p0040 prints
+        # "Table 3-9: The Fighter", then "MONK", then the fighter's grid),
+        # leaving the class with no table at all. Pull its own table
+        # paragraph(s) back in -- see `_class_own_table_indices`.
+        extra_indices = _class_own_table_indices(
+            paragraphs,
+            heading=span.heading,
+            text_start_index=text_start_index,
+            end_index=end_index,
+            page_cap_index=page_cap_index,
+        )
+
         _write_class_segment(
             span,
             paragraphs,
@@ -945,6 +1101,7 @@ def _run_class_pass(
             start_index=text_start_index,
             end_index=end_index,
             exclude_indices=exclude_indices,
+            extra_indices=extra_indices,
         )
 
     superseded_total = 0
