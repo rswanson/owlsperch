@@ -1876,6 +1876,246 @@ def test_phb1_real_corpus_every_class_segment_has_its_own_level_table() -> None:
         for heading, row in expected.items():
             assert row in by_heading[heading], (heading, row)
 
+        # B10c-mand21, against the same real text: the fighter's own
+        # Starting Package sections also straddle that "MONK" heading --
+        # p0040 prints the tail of its Dwarf Fighter Starting Package
+        # (ending "Gold: 4d4 gp.") and its whole Human Fighter Starting
+        # Package after it, both of which used to be in no record at all.
+        assert "Gold: 4d4 gp." in by_heading["Fighter"]
+        assert "Human Fighter Starting Package" in by_heading["Fighter"]
+        # ...without swallowing the monk's own opening flavor prose, which
+        # reading order prints in the middle of that package.
+        assert "Dotted across the landscape" not in by_heading["Fighter"]
+        assert "Dotted across the landscape" in by_heading["Monk"]
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand21: a class's own class-structural TAIL sections, stranded
+# past its end cap
+# ---------------------------------------------------------------------------
+
+#: The fighter's own "Dwarf Fighter Starting Package", continued past the
+#: cut: the real PHB p0040 prints these lines AFTER the "MONK" heading,
+#: while the section's own heading and first paragraph are back on p0039.
+_DWARF_PACKAGE_TAIL = (
+    "Feat: Weapon Focus (dwarven waraxe). Bonus Feat (Fighter): If Strength is 13 or "
+    "higher, Power Attack. Gear: Backpack with waterskin. Gold: 4d4 gp."
+)
+
+#: The second package's own body, skill grid and closing line -- printed
+#: after its heading, with the next class's opening prose in between.
+_HUMAN_PACKAGE_BODY = (
+    "Armor: Scale mail (+4 AC, armor check penalty -4, speed 20 ft., 30 lb.). Weapons: "
+    "Greatsword (2d6, crit 19-20/x2, 8 lb., two-handed, slashing)."
+)
+_HUMAN_PACKAGE_GRID = "Skill\tRanks\tAbility\nClimb\t4\tStr\nJump\t4\tStr"
+_HUMAN_PACKAGE_TAIL = (
+    "Feat: Weapon Focus (greatsword). Bonus Feat (Human): Blind-Fight. Gold: 2d4 gp."
+)
+
+#: The next class's own opening flavor prose, printed BETWEEN that package's
+#: body and its skill grid (the real p0040's reading order). It must be
+#: skipped -- not treated as the end of the fighter's package.
+_MONK_OPENING_PROSE = (
+    "Dotted across the landscape are monasteries, small walled cloisters inhabited by "
+    "monks who pursue personal perfection through action as well as contemplation."
+)
+
+#: The NEXT class's own package body, printed BEFORE that class's own
+#: package heading (the shared-page bleed `_back_extend_start_index`
+#: documents) and after this class's own package ended at its Gold line:
+#: package-SHAPED, but the monk's. The `Gold:` bound is what keeps it out.
+_MONK_PACKAGE_BODY = (
+    "Armor: None (monks are not proficient with any armor). Weapons: Quarterstaff (1d6/1d6)."
+)
+_MONK_PACKAGE_FEAT = "Feat: Improved Initiative. Gear: Backpack with waterskin and bedroll."
+
+
+def _fighter_package_toc_entries() -> list[dict[str, Any]]:
+    """The fighter/monk toc above, with the monk's entry running one page
+    further: the page it shares with the fighter carries only its heading
+    and opening prose, and its own "Hit Die: d8" line (the marker design
+    decision D1 discriminates a real class entry by) is printed on its
+    next page -- exactly as the real PHB prints the monk's Game Rule
+    Information on p0041, never on p0040."""
+    entries = _fighter_monk_toc_entries()
+    monk = {**entries[-1], "pdf_page_end": 4}
+    return [*entries[:-1], monk]
+
+
+def _write_fighter_package_book(
+    data_dir: Path, *, package_heading: str, monk_package_after: bool = False
+) -> None:
+    """The real PHB p0039/p0040 paragraph order, in miniature: the fighter's
+    own "Dwarf Fighter Starting Package" heading and first paragraph, then
+    (on the shared page) its level-table caption, the NEXT class's heading,
+    its own grid, the REST of the dwarf package, a second Starting Package
+    heading (this class's own, or -- the control -- the monk's), that
+    package's body, the monk's opening prose, and the package's own skill
+    grid and closing line. With `monk_package_after`, the MONK's own
+    package body is printed after that closing line and before the monk's
+    own package heading -- the shared-page bleed order
+    `_back_extend_start_index` documents, package-shaped but not this
+    class's."""
+    trailing = (
+        [
+            _para(_MONK_PACKAGE_BODY, line_count=3),
+            _para(_MONK_PACKAGE_FEAT, line_count=3),
+            _para("Human Monk Starting Package", height=12.0),
+        ]
+        if monk_package_after
+        else []
+    )
+    _write_book(
+        data_dir,
+        "book",
+        {
+            1: [_para("Front matter opening text for the whole chapter goes here.", line_count=3)],
+            2: [
+                _para("FIGHTER"),
+                _para(
+                    "Hit Die: d10. Alignment: Any. Religion: Fighters revere whichever "
+                    "deity favors battle here.",
+                    line_count=3,
+                ),
+                _para("Dwarf Fighter Starting Package", height=12.0),
+                _para(
+                    "Armor: Scale mail (+4 AC). Weapons: Dwarven waraxe (1d10). Skill "
+                    "Selection: Pick a number of skills equal to 2 + Int modifier.",
+                    line_count=3,
+                ),
+            ],
+            3: [
+                _para("Table 3–9: The Fighter"),
+                _para("MONK"),
+                _para(_FIGHTER_GRID, kind="table", line_count=3),
+                _para(_DWARF_PACKAGE_TAIL, line_count=3),
+                _para(package_heading, height=12.0),
+                _para(_HUMAN_PACKAGE_BODY, line_count=3),
+                _para(_MONK_OPENING_PROSE, line_count=5),
+                _para(_HUMAN_PACKAGE_GRID, kind="table", line_count=3),
+                _para(_HUMAN_PACKAGE_TAIL, line_count=3),
+                *trailing,
+            ],
+            4: [
+                _para(
+                    "Hit Die: d8. Alignment: Any lawful. Religion: Monks revere "
+                    "whichever deity teaches discipline here.",
+                    line_count=3,
+                ),
+            ],
+        },
+    )
+    _write_toc(data_dir, "book", _fighter_package_toc_entries())
+
+
+def test_class_span_recovers_its_own_starting_packages_from_past_the_end_cap(
+    tmp_path: Path,
+) -> None:
+    """B10c-mand21: on PHB p0040 the fighter's own Dwarf Fighter Starting
+    Package CONTINUES past the "MONK" heading, and its whole Human Fighter
+    Starting Package is printed after it -- so the fighter's text ended at
+    its level-table caption and neither section was in any record. Both
+    must come back, in printed order, without the monk's own opening prose
+    (printed in between) coming with them."""
+    data_dir = tmp_path / "data"
+    _write_fighter_package_book(data_dir, package_heading="Human Fighter Starting Package")
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    by_heading = {s["heading"]: s for s in _by_kind(_segment_files(data_dir, "book"), "class")}
+    fighter = by_heading["Fighter"]["text"]
+
+    # The cut-off continuation of the section that began inside the span...
+    assert fighter.count(_DWARF_PACKAGE_TAIL) == 1
+    # ...and the whole package printed after the next class's heading.
+    assert fighter.count("Human Fighter Starting Package") == 1
+    for part in (_HUMAN_PACKAGE_BODY, _HUMAN_PACKAGE_GRID, _HUMAN_PACKAGE_TAIL):
+        assert fighter.count(part) == 1
+    # Printed order is preserved, and the text ends with that package.
+    assert (
+        fighter.index(_DWARF_PACKAGE_TAIL)
+        < fighter.index("Human Fighter Starting Package")
+        < fighter.index(_HUMAN_PACKAGE_BODY)
+        < fighter.index(_HUMAN_PACKAGE_GRID)
+        < fighter.index(_HUMAN_PACKAGE_TAIL)
+    )
+    assert fighter.rstrip().endswith(_HUMAN_PACKAGE_TAIL)
+    # The next class's own heading and body are still not the fighter's --
+    # its opening prose is skipped over, not collected, even though the
+    # package continues past it.
+    assert "MONK" not in fighter
+    assert _MONK_OPENING_PROSE not in fighter
+    assert by_heading["Fighter"]["pages"] == [2, 3]
+
+    # The next class's own start is unchanged (still back-extended to the
+    # top of its own page); the extraction prompt's pre-heading attribution
+    # rule resolves the overlap, exactly as before this change.
+    monk = by_heading["Monk"]
+    assert monk["text"].startswith("Table 3–9: The Fighter")
+    assert _MONK_OPENING_PROSE in monk["text"]
+    assert monk["pages"] == [3, 4]
+
+
+def test_class_span_does_not_pull_in_another_classs_starting_package(tmp_path: Path) -> None:
+    """The control case for the rule above: the package printed after the
+    cut is the MONK's ("Human Monk Starting Package"), so neither it nor
+    its body belongs to the fighter -- and a different class's structural
+    heading also CLOSES the continuation, so nothing after it is collected
+    either. The fighter's own cut-off continuation, printed before that
+    heading, still comes back."""
+    data_dir = tmp_path / "data"
+    _write_fighter_package_book(data_dir, package_heading="Human Monk Starting Package")
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    by_heading = {s["heading"]: s for s in _by_kind(_segment_files(data_dir, "book"), "class")}
+    fighter = by_heading["Fighter"]["text"]
+
+    assert _DWARF_PACKAGE_TAIL in fighter
+    assert "Human Monk Starting Package" not in fighter
+    for part in (_HUMAN_PACKAGE_BODY, _HUMAN_PACKAGE_GRID, _HUMAN_PACKAGE_TAIL):
+        assert part not in fighter
+
+    monk = by_heading["Monk"]
+    assert monk["text"].startswith("Table 3–9: The Fighter")
+    assert "Human Monk Starting Package" in monk["text"]
+    assert monk["pages"] == [3, 4]
+
+
+def test_class_span_tail_stops_at_its_own_packages_gold_line(tmp_path: Path) -> None:
+    """A collected package run is bounded by the package's own printed
+    "Gold: NdN gp." line: the NEXT class's own package body paragraphs are
+    routinely printed BEFORE that class's own package heading on a shared
+    page (the bleed `_back_extend_start_index` documents), and they are
+    package-SHAPED, so without that bound they would be collected as this
+    class's continuation."""
+    data_dir = tmp_path / "data"
+    _write_fighter_package_book(
+        data_dir,
+        package_heading="Human Fighter Starting Package",
+        monk_package_after=True,
+    )
+
+    segment_book(_entry("book"), data_dir=data_dir)
+
+    by_heading = {s["heading"]: s for s in _by_kind(_segment_files(data_dir, "book"), "class")}
+    fighter = by_heading["Fighter"]["text"]
+
+    # The fighter's own two packages, whole, ending at its own Gold line.
+    assert _DWARF_PACKAGE_TAIL in fighter
+    assert _HUMAN_PACKAGE_TAIL in fighter
+    assert fighter.rstrip().endswith(_HUMAN_PACKAGE_TAIL)
+    # The monk's own package body, printed after that line, is not the
+    # fighter's -- nor is the heading it belongs to.
+    assert _MONK_PACKAGE_BODY not in fighter
+    assert _MONK_PACKAGE_FEAT not in fighter
+    assert "Human Monk Starting Package" not in fighter
+
+    monk = by_heading["Monk"]["text"]
+    assert _MONK_PACKAGE_BODY in monk
+    assert _MONK_PACKAGE_FEAT in monk
+
 
 # ---------------------------------------------------------------------------
 # Batch B11: errata_entry/update_entry segments, gated by manifest kind

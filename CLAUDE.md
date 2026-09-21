@@ -420,6 +420,40 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   classes (`test_phb1_real_corpus_every_class_segment_has_its_own_level_table`,
   which copies the real `text/`+`toc/` into a tmp data dir rather than
   re-extracting, so it needs no PDFs or `pdftotext`).
+  Batch B10c-mand21 extends that same mechanism to a class's own
+  class-structural TAIL sections: the real PHB p0040 also prints the REST
+  of the fighter's "Dwarf Fighter Starting Package" (its Feat:/Bonus Feat:/
+  Gear:/Gold: lines) and its whole "Human Fighter Starting Package" after
+  the "MONK" heading, so both were in no record at all. Over the same
+  bounded window, `_class_own_tail_indices` adds back (a) any run headed by
+  a class-structural heading NAMING this class ("<Race> <Title> Starting
+  Package", "Ex-<Title>" -- `supersede.is_class_owned_fragment`, minus the
+  three generic headings every class prints, which past the cap are if
+  anything the NEXT class's), heading plus the package-body paragraphs
+  after it; and (b) the continuation of a Starting Package section the cut
+  fell inside (decided by the last printed heading before the cut inside
+  the span's own text) -- the cut heading itself, being what stranded that
+  continuation, doesn't close the run, every other heading does. A package
+  run is BOUNDED by the package's own printed "Gold: NdN gp." line (up to
+  and INCLUDING the paragraph carrying it) or the next heading, whichever
+  comes first; an `Ex-<Title>` run, printing no such line, ends at the next
+  heading. That bound is load-bearing: the NEXT class's own package body
+  paragraphs are routinely printed BEFORE that class's own package heading
+  on a shared page (the same bleed `_back_extend_start_index` documents)
+  and are package-SHAPED, so without it they would be collected as this
+  class's continuation. Only package-shaped paragraphs are collected (a
+  label-led run-in, `_PACKAGE_BODY_LABEL_RE`, or a grid), so NON-package
+  prose inside a run -- e.g. the next class's own opening flavor prose,
+  which reading order interleaves with the package -- is SKIPPED rather
+  than ending the run (which is what still brings the rest of the human
+  package back, up to its own Gold line), and a
+  class LEVEL table is never collected here -- which class a stranded one
+  belongs to is mand18's caption-based decision, and a neighbour's
+  routinely lands in the window (the real PHB's rogue table inside the
+  ranger's, its wizard table inside the sorcerer's). Another class's own
+  structural heading never starts a run and closes an open one, and the
+  next class's own start index is again unchanged. On the real phb1 text
+  this changes exactly one class span, the fighter's.
   Batch B11 adds an errata/update anchor, gated entirely on the book's manifest
   `kind`: `anchors.find_triggers` takes a keyword-only `entry_kind`
   (`"errata_entry"`/`"update_entry"`, resolved by `segment/runner.py` from
