@@ -31,6 +31,7 @@ from owlsperch.validate.checks import (
     check_pages_within_segment,
     check_rules_section_fields,
     check_spell_fields,
+    check_table_cells_in_segment,
     check_table_fields,
     check_update_entry_fields,
     expected_id,
@@ -993,6 +994,167 @@ def test_check_table_fields_flags_mixed_empty_cell_styles() -> None:
     assert len(matching) == 1
     assert "1" in matching[0]
     assert "Special" in matching[0]
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand20 (judge round 4, blocker 1): check_table_cells_in_segment
+# -- every table cell must be traceable to the owning segment's own text, so
+# an extractor can't invent a plausible-looking grid to satisfy the "each
+# printed grid is its own table" rule when its segment is truncated before
+# the real one.
+# ---------------------------------------------------------------------------
+
+
+def _table_record(
+    columns: list[str], rows: list[list[str]], *, name: str = "Sample Table"
+) -> dict[str, Any]:
+    return {
+        "id": f"table:phb1:{slugify(name)}",
+        "type": "table",
+        "name": name,
+        "slug": slugify(name),
+        "book_id": "phb1",
+        "fields": {"caption": name, "columns": columns, "rows": rows},
+    }
+
+
+def test_check_table_cells_in_segment_passes_when_every_cell_is_present() -> None:
+    """Every cell (including a dash placeholder and a stacked, merged
+    header) is traceable to the segment's own text."""
+    text = (
+        "Table 3-6: The Cleric\n\n"
+        "Base\nAttack Bonus\nLevel\tSpecial\n"
+        "1st\t+0\tBonus feat\n"
+        "2nd\t+1\t—\n"
+    )
+    record = _table_record(
+        columns=["Level", "Base Attack Bonus", "Special"],
+        rows=[["1st", "+0", "Bonus feat"], ["2nd", "+1", "—"]],
+    )
+    segment = _segment(text)
+    assert check_table_cells_in_segment(record, segment) == []
+
+
+def test_check_table_cells_in_segment_flags_invented_cells() -> None:
+    """The real-corpus defect this check exists for: a haiku extractor
+    handed a truncated 639-character sidebar segment invented a whole
+    progression grid (`table:phb1:the-paladins-mount`) -- "Natural Armor
+    Adj." values and a "Regeneration 1/round" Special entry that appear
+    nowhere in the segment's own text."""
+    text = (
+        "THE PALADIN'S MOUNT\n\n"
+        "The paladin's mount is superior to a normal mount of its kind and "
+        "has special powers, as described below."
+    )
+    record = _table_record(
+        columns=["Paladin Level", "Bonus HD", "Natural Armor Adj.", "Special"],
+        rows=[
+            ["5th-7th", "+2", "+2", "Improved evasion"],
+            ["15th-20th", "+8", "+8", "Regeneration 1/round"],
+        ],
+        name="The Paladin's Mount",
+    )
+    segment = _segment(text)
+    errors = check_table_cells_in_segment(record, segment)
+    assert len(errors) == 1
+    assert "cells are not in the owning segment's text" in errors[0]
+    assert "11 of 12" in errors[0]
+    assert "Paladin Level" in errors[0]
+
+
+def test_check_table_cells_in_segment_rejects_a_vacuous_short_cell_match() -> None:
+    """B10c-mand20 review finding 1: the token-subsequence fallback's
+    bidirectional prefix tolerance let a short/numeric cell like "3rd"
+    vacuously match an unrelated token sharing its prefix (e.g. "3" from
+    "Table 3-12") -- a real invented row label ("1st-2nd", "3rd-4th", ...
+    in `familiar-progression`) only partly failed under the old rule. A
+    cell with no alphabetic word of >= 3 letters must now match by literal
+    substring alone."""
+    text = "Table 3-12: The Sample\n\nLevel\tSpecial\nSome unrelated prose."
+    record = _table_record(
+        columns=["Level", "Special"],
+        rows=[["3rd", "Something not in the text"]],
+    )
+    segment = _segment(text)
+    errors = check_table_cells_in_segment(record, segment)
+    assert len(errors) == 1
+    assert "2 of 4" in errors[0]
+    assert "3rd" in errors[0]
+
+
+def test_check_table_cells_in_segment_collapses_a_space_after_slash() -> None:
+    """B10c-mand20 review finding 1: the real PHB barbarian's iterative-
+    attack cell ("+18/+13/+8/+3") is reconstructed with a stray space
+    after each slash ("+18/ +13/ +8/ +3") -- normalization must collapse
+    that away rather than fail a real, correctly-extracted cell."""
+    text = "Level\tBase Attack Bonus\n20th\t+18/ +13/ +8/ +3\n"
+    record = _table_record(
+        columns=["Level", "Base Attack Bonus"],
+        rows=[["20th", "+18/+13/+8/+3"]],
+    )
+    segment = _segment(text)
+    assert check_table_cells_in_segment(record, segment) == []
+
+
+def test_check_table_cells_in_segment_skips_a_missing_segment() -> None:
+    record = _table_record(columns=["A"], rows=[["invented value"]])
+    assert check_table_cells_in_segment(record, None) == []
+
+
+def test_check_table_cells_in_segment_skips_a_textless_segment() -> None:
+    record = _table_record(columns=["A"], rows=[["invented value"]])
+    assert check_table_cells_in_segment(record, {"seg_id": "x", "pages": [1]}) == []
+
+
+# ---------------------------------------------------------------------------
+# The real corpus: pin the B10c-mand20 calibration against every real
+# `table` record under phb1. Skipped (not failed) unless the real data dir
+# has them.
+# ---------------------------------------------------------------------------
+
+
+def _real_phb1_table_records() -> list[tuple[str, dict[str, Any], dict[str, Any] | None]]:
+    """Loads every real phb1 `table` record with its owning segment
+    resolved the same way `owlsperch.validate.runner._resolve_segment_for_
+    record` does in production -- `load_segment` (`segments/<book_id>/
+    <seg_id>.json` only) -- so this calibration can't diverge from what
+    `owlsperch validate`/`build-db` actually see."""
+    from owlsperch.validate.loader import load_segment
+
+    data_dir = Path(os.environ.get("OWLSPERCH_DATA", str(Path.home() / "owlsperch-data")))
+    records_dir = data_dir / "records" / "phb1" / "table"
+    if not records_dir.is_dir():
+        return []
+    loaded: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+    for path in sorted(records_dir.glob("*.json")):
+        record = json.loads(path.read_text())
+        extraction = record.get("extraction") or {}
+        seg_id = extraction.get("segment_id")
+        segment = load_segment(data_dir, "phb1", seg_id) if isinstance(seg_id, str) else None
+        loaded.append((path.stem, record, segment))
+    return loaded
+
+
+@pytest.mark.corpus
+def test_phb1_real_corpus_table_cells_calibration() -> None:
+    loaded = _real_phb1_table_records()
+    if not loaded:
+        pytest.skip("the real phb1 table records are not present")
+
+    failing = {
+        stem for stem, record, segment in loaded if check_table_cells_in_segment(record, segment)
+    }
+    # Pinned to the 2026-09-21 calibration: the fabricated Paladin's Mount
+    # fails, along with `familiar-progression` (a second, smaller real
+    # instance of the same defect -- its row labels are a generic D&D
+    # level-bracket guess for a table its own segment's text never
+    # reaches). Every other real table, including `table-3-6-the-cleric`
+    # (a class level table with stacked/merged headers) and
+    # `familiar-bonuses` (a plain two-column table), must pass.
+    assert "the-paladins-mount" in failing
+    assert "familiar-progression" in failing
+    assert "table-3-6-the-cleric" not in failing
+    assert "familiar-bonuses" not in failing
 
 
 # ---------------------------------------------------------------------------

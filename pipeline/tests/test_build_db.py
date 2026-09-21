@@ -53,7 +53,27 @@ def _write_manifest(tmp_path: Path) -> Path:
     return path
 
 
-def _write_segment(data_dir: Path, book_id: str, seg_id: str, pages: list[int]) -> None:
+#: A `table` record's own cells must now (B10c-mand20) be traceable to its
+#: owning segment's text -- appended to the default segment text below for
+#: any segment that also owns the default `_valid_table_record()` grid
+#: (Rank/Title/1/Initiate/2/Adept), so the many pre-existing dangling-
+#: parent/superseding fixtures that reuse it don't trip the new check.
+_DEFAULT_TABLE_GRID_TEXT = "Table 1-1: Sable Ranks\nRank\tTitle\n1\tInitiate\n2\tAdept"
+
+#: Likewise for `_owned_level_table_record()`'s own grid, owned by the
+#: "book-class-p0002" segment alongside `_valid_class_record()`.
+_OWNED_LEVEL_TABLE_GRID_TEXT = (
+    "Testclass Level Progression\n"
+    "Level\tBase Attack Bonus\tFort Save\tRef Save\tWill Save\tSpecial\n"
+    "1st\t+1\t+2\t+0\t+0\tRage 1/day\n"
+    "2nd\t+2\t+3\t+0\t+0\tUncanny dodge\n"
+    "3rd\t+3\t+3\t+1\t+1\tTrap sense +1"
+)
+
+
+def _write_segment(
+    data_dir: Path, book_id: str, seg_id: str, pages: list[int], *, text: str | None = None
+) -> None:
     seg_dir = data_dir / "segments" / book_id
     seg_dir.mkdir(parents=True, exist_ok=True)
     segment = {
@@ -63,7 +83,7 @@ def _write_segment(data_dir: Path, book_id: str, seg_id: str, pages: list[int]) 
         "printed_pages": pages,
         "kind_hint": "spell",
         "heading": "Test Spell",
-        "text": "Test Spell\n\nEvocation Level: Sor/Wiz 3.",
+        "text": text if text is not None else "Test Spell\n\nEvocation Level: Sor/Wiz 3.",
         "status": "pending",
         "tier": "haiku",
         "attempts": [],
@@ -644,7 +664,7 @@ def _valid_table_record(
 def test_build_db_creates_tables_table(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(data_dir, "book", "table", "table-1-1-sable-ranks", _valid_table_record())
 
     result = build_db(
@@ -668,7 +688,7 @@ def test_build_db_creates_tables_table(tmp_path: Path) -> None:
 def test_build_db_tables_row_round_trips_columns_and_rows_as_json(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(
         data_dir,
         "book",
@@ -712,7 +732,7 @@ def test_build_db_tables_row_round_trips_columns_and_rows_as_json(tmp_path: Path
 def test_build_db_reports_dangling_table_parent(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(
         data_dir,
         "book",
@@ -734,7 +754,7 @@ def test_build_db_reports_dangling_table_parent(tmp_path: Path) -> None:
 def test_build_db_reports_no_dangling_parent_when_the_owner_loads(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(
         data_dir,
         "book",
@@ -762,7 +782,7 @@ def test_build_db_reports_no_dangling_parent_when_the_owner_loads(tmp_path: Path
 def test_run_build_db_prints_dangling_parent_warning(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(
         data_dir,
         "book",
@@ -793,7 +813,7 @@ def test_run_build_db_strict_fails_on_dangling_parent_even_with_no_skipped_inval
 ) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(
         data_dir,
         "book",
@@ -820,7 +840,7 @@ def test_build_db_table_rows_produce_no_record_fields_rows(tmp_path: Path) -> No
     `tables` table."""
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-p0010-01", [10])
+    _write_segment(data_dir, "book", "book-p0010-01", [10], text=_DEFAULT_TABLE_GRID_TEXT)
     _write_record(data_dir, "book", "table", "table-1-1-sable-ranks", _valid_table_record())
 
     result = build_db(
@@ -1237,7 +1257,7 @@ def _rules_section_record(
 def test_build_db_supersedes_fragments_inside_a_class_span(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3], text=_OWNED_LEVEL_TABLE_GRID_TEXT)
     _write_segment(data_dir, "book", "book-p0003-01", [3])
     _write_segment(data_dir, "book", "book-p0010-01", [10])
 
@@ -1317,7 +1337,7 @@ def test_build_db_leaves_a_sidebar_inside_a_class_span_canonical(tmp_path: Path)
     `canonical = 0` and so existed in no canonical record at all."""
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3], text=_OWNED_LEVEL_TABLE_GRID_TEXT)
     _write_segment(data_dir, "book", "book-p0003-01", [3])
     _write_segment(data_dir, "book", "book-p0003-02", [3])
 
@@ -1379,7 +1399,7 @@ def test_build_db_supersedes_a_class_records_own_feature_sections(tmp_path: Path
     normalizes away, so it matches the plainly named record."""
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3], text=_OWNED_LEVEL_TABLE_GRID_TEXT)
     for ordinal in range(1, 5):
         _write_segment(data_dir, "book", f"book-p0003-0{ordinal}", [3])
 
@@ -1450,9 +1470,13 @@ def test_build_db_keeps_a_sidebars_own_table_canonical_with_its_parent(tmp_path:
     is still demoted with it."""
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3], text=_OWNED_LEVEL_TABLE_GRID_TEXT)
     for ordinal in range(4, 8):
-        _write_segment(data_dir, "book", f"book-p0003-0{ordinal}", [3])
+        # ordinals 6/7 own the `familiar-progression`/`class-features-grid`
+        # tables below (B10c-mand20: their default grid must be in the
+        # segment's own text too).
+        text = _DEFAULT_TABLE_GRID_TEXT if ordinal in (6, 7) else None
+        _write_segment(data_dir, "book", f"book-p0003-0{ordinal}", [3], text=text)
     class_record = _valid_class_record()
     _write_record(data_dir, "book", "class", "testclass", class_record)
     _write_record(data_dir, "book", "table", "table-x-the-testclass", _owned_level_table_record())
@@ -1558,7 +1582,7 @@ def test_class_owned_names_collects_every_printed_heading() -> None:
 def test_run_build_db_prints_superseded_count(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifest_path = _write_manifest(tmp_path)
-    _write_segment(data_dir, "book", "book-class-p0002", [2, 3])
+    _write_segment(data_dir, "book", "book-class-p0002", [2, 3], text=_OWNED_LEVEL_TABLE_GRID_TEXT)
     _write_segment(data_dir, "book", "book-p0003-01", [3])
     _write_toc(data_dir, "book", [_CHAPTER_ENTRY, _SECTION_ENTRY])
 

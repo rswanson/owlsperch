@@ -886,7 +886,35 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the real corpus calibration (a new `abilities` key in
   `_EXPECTED_CORPUS_FAILURES`) confirms fails exactly the six classes
   extracted before the B10c-mand13 prompt rule existed (barbarian,
-  fighter, monk, ranger, rogue, wizard).
+  fighter, monk, ranger, rogue, wizard). Batch B10c-mand20 (judge round 4,
+  blocker 1: a haiku extractor handed a 639-character truncated segment
+  invented a whole progression grid, `table:phb1:the-paladins-mount`, to
+  satisfy the "each printed grid is its own table" prompt rule) adds
+  `check_table_cells_in_segment` to `TYPE_SEGMENT_CHECKS["table"]`: every
+  non-empty `columns`/`rows` cell must be traceable to the owning
+  segment's own text, after normalization (dash/footnote-mark stripping,
+  curly-quote/prime folding to ASCII, a collapsed space after `/`, and
+  casefolding). A cell WITH a real word (an alphabetic run of >= 3 letters,
+  `_ALPHA_WORD_RE`) passes on a literal substring match OR an in-order
+  alphanumeric-token subsequence match (tolerating a merged stacked header
+  or a footnote digit glued onto a word); a short/numeric cell with no
+  real word ("3rd", "+18/+13/+8/+3") is held to the literal-substring test
+  ALONE -- the token fallback's bidirectional prefix tolerance, run over
+  the whole segment's token stream, made a short cell vacuously matchable
+  (a review finding: "3rd" passed via the "3" in "Table 3-12"). Calibrated
+  against all 65 real phb1 `table` records with zero new false positives
+  (the one near-miss, the barbarian's "+18/+13/+8/+3" reconstructed with a
+  stray space after each slash, is fixed by the `/`-space collapse); it
+  also catches a second, smaller real instance of the fabrication defect
+  (`familiar-progression`'s guessed level-bracket row labels, now caught
+  on ALL 10 rows instead of 3, for a table its own segment's text never
+  reaches). Residual, accepted risk: a long word-bearing cell can still be
+  vacuously satisfied if its words happen to all appear, in order,
+  elsewhere in the segment's prose without actually describing that cell's
+  claim, and a short/numeric cell that is genuinely correct but whose
+  segment is too short to print it verbatim anywhere (e.g. a synthesized
+  header like "Spells per Day 1st" that never appears as literal text) can
+  still be falsely flagged.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -982,6 +1010,15 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `schema_version`, `_KIND_RULES["table"]`, and its own EXAMPLE RECORD
   alongside the segment's own kind's, since the subagent is being told to
   write a record of a different type than the rest of the prompt is about),
+  plus (batch B10c-mand20, the judge round 4 fabricated-table blocker) a
+  rule that a `table` record may only be written from a grid whose cells
+  are present in THIS segment's own text, never invented -- and that a
+  grid referenced but not present (a truncated segment) means writing the
+  entity's own record WITHOUT that table (omitted from `tables`, noted in
+  `notes`), NOT `needs_context`, since `queue complete` returns on
+  `needs_context` before ever ingesting a reply's `records` and would
+  discard an otherwise-correct entity record; `needs_context` stays
+  reserved for when the entity itself is truncated,
   an explicit never-`null` instruction for `fields` (write nothing rather
   than `null` -- envelope build-time keys may simply be omitted), the output
   contract including `needs_context`/`proposed_type`, and

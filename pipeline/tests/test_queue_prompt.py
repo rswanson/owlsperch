@@ -1068,6 +1068,39 @@ def test_prompt_table_writing_convention_prints_both_output_dirs(tmp_path: Path)
     assert "`tables` array" in text or "owning record's `tables`" in text
 
 
+def test_table_convention_forbids_inventing_a_grid_not_in_this_segment(tmp_path: Path) -> None:
+    """B10c-mand20 (judge round 4, blocker 1): a haiku extractor handed a
+    truncated segment invented a whole progression grid to satisfy the
+    "each printed grid is its own table" rule instead of writing its
+    entity record without the table. The "Tables belonging to this
+    entity" convention block must tell a subagent to omit a table it
+    can't actually see from `tables` (noting it) rather than invent one --
+    and NOT to answer `needs_context` for a missing table alone, since
+    that would discard the entity record it already extracted correctly
+    (`complete.py` returns on `needs_context` before ingesting any
+    `records`); `needs_context` is reserved for when the entity itself is
+    truncated."""
+    segment = _segment(kind_hint="rules_section")
+    manifest_path = _write_manifest(tmp_path)
+
+    text = render_prompt(
+        segment,
+        data_dir=tmp_path / "data",
+        manifest_path=manifest_path,
+        schemas_dir=_repo_schemas_dir(),
+    )
+
+    convention_start = text.index("### Tables belonging to this entity")
+    convention_end = text.index("#### `fields` schema for the table record you write")
+    convention_text = " ".join(text[convention_start:convention_end].split())
+    assert "grid whose cells are present in THIS segment's own text" in convention_text
+    assert "never invented" in convention_text
+    assert "write the entity's own record WITHOUT that table" in convention_text
+    assert "omit its id from `tables`" in convention_text
+    assert "do NOT answer `needs_context` for a missing table alone" in convention_text
+    assert "ENTITY ITSELF is truncated" in convention_text
+
+
 def test_prompt_never_null_instruction_is_explicit(tmp_path: Path) -> None:
     """B8 follow-up (criterion 8): the prompt states a `fields` property
     with no supported value must be OMITTED, never written as `null`."""

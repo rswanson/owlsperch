@@ -508,6 +508,14 @@ def _write_superseded_fixture(tmp_path: Path) -> Path:
 
     seg_dir = data_dir / "segments" / "book"
     seg_dir.mkdir(parents=True)
+    # (B10c-mand20) "book-class-p0002" owns `table_record` below -- its own
+    # grid must be traceable to this segment's own text.
+    segment_text = {
+        "book-class-p0002": (
+            "Table X\nLevel\tBase Attack Bonus\tFort Save\tRef Save\tWill Save\n1st\t+1\t+2\t+0\t+0"
+        ),
+        "book-p0003-01": "x",
+    }
     for seg_id, pages in (("book-class-p0002", [2, 3]), ("book-p0003-01", [3])):
         segment = {
             "seg_id": seg_id,
@@ -516,7 +524,7 @@ def _write_superseded_fixture(tmp_path: Path) -> Path:
             "printed_pages": pages,
             "kind_hint": "spell",
             "heading": "x",
-            "text": "x",
+            "text": segment_text[seg_id],
             "status": "pending",
             "tier": "haiku",
             "attempts": [],
