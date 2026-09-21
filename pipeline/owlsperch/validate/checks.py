@@ -597,6 +597,42 @@ def _strip_trailing_parens(skill_name: str) -> str:
     return stripped
 
 
+def _check_source_pages(record: dict[str, Any], fields: dict[str, Any], name: str) -> list[str]:
+    """B10c-mand12 rule 1: `fields.source_pages` is a PDF page span --
+    `owlsperch.build_db.runner._apply_superseding` reads it as one when it
+    decides which `rules_section`/`table` records a class swallows -- so it
+    must agree with the record's own (also pdf) envelope `pages`:
+    `start == min(pages)` and `end == max(pages)`. The real-corpus catch is
+    the PHB druid, whose `source_pages` was written as the PRINTED span
+    33-37 while its `pages` are pdf 34-38, so the supersede pass looked one
+    page too low at both ends. Skipped entirely when either side is
+    missing or malformed -- the schema and `check_pages_within_segment`
+    already report that."""
+    source_pages = fields.get("source_pages")
+    if not isinstance(source_pages, dict):
+        return []
+    start = source_pages.get("start")
+    end = source_pages.get("end")
+    if not isinstance(start, int) or isinstance(start, bool):
+        return []
+    if not isinstance(end, int) or isinstance(end, bool):
+        return []
+    pages = record.get("pages")
+    if not isinstance(pages, list):
+        return []
+    page_numbers = [p for p in pages if isinstance(p, int) and not isinstance(p, bool)]
+    if not page_numbers:
+        return []
+    expected_start, expected_end = min(page_numbers), max(page_numbers)
+    if start == expected_start and end == expected_end:
+        return []
+    return [
+        f"{name}: source_pages {start}-{end} does not match this record's pdf pages "
+        f"{expected_start}-{expected_end} (source_pages is a PDF page span, not the "
+        "printed one)"
+    ]
+
+
 def check_class_fields(record: dict[str, Any], context: ValidationContext) -> list[str]:
     """The class/prestige_class consistency checks from design decision D9:
     a valid `hit_die`, a `level_table` that resolves to a real `table`
@@ -613,7 +649,8 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
     if not isinstance(fields, dict):
         return ["fields is missing or not an object"]
 
-    name = record.get("name") if isinstance(record.get("name"), str) else "<unnamed>"
+    raw_name = record.get("name")
+    name = raw_name if isinstance(raw_name, str) else "<unnamed>"
 
     hit_die = fields.get("hit_die")
     if hit_die not in _VALID_HIT_DICE:
@@ -644,6 +681,8 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
     max_level = fields.get("max_level")
     if not isinstance(max_level, int):
         errors.append(f"{name}: max_level is missing or not an integer")
+
+    errors.extend(_check_source_pages(record, fields, name))
 
     class_skills = fields.get("class_skills")
     if isinstance(class_skills, list):
@@ -904,4 +943,381 @@ def check_class_fields(record: dict[str, Any], context: ValidationContext) -> li
 TYPE_CONTEXT_CHECKS: dict[str, Callable[[dict[str, Any], ValidationContext], list[str]]] = {
     "class": check_class_fields,
     "prestige_class": check_class_fields,
+}
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand12: segment-aware class/prestige_class coverage checks. The
+# 2026-09-18 class quality judgement found three whole-record omissions that
+# no per-record check could see, because the evidence they're missing lives
+# in the OWNING SEGMENT's own `text`, not in the record: a dropped
+# "<Race> <Class> Starting Package"/"Ex-<Class>" section, a printed run-in
+# Class Features heading nested inside a sibling feature's `text_md` instead
+# of becoming its own `class_features` entry, and a feature whose `text_md`
+# is a condensed paraphrase of the printed span. These live in
+# `TYPE_SEGMENT_CHECKS` and receive the same already-resolved segment dict
+# `check_pages_within_segment` does.
+# ---------------------------------------------------------------------------
+
+#: A run-in heading inside a class's printed Class Features section:
+#: `<Heading>:` at a sentence start, 2-60 characters of letters, an
+#: apostrophe, a comma, parentheses, a slash, a space or a hyphen, beginning
+#: with a capital -- which covers both the plain form ("Bonus Languages:")
+#: and the supernatural-tagged one ("Wild Shape (Su):").
+_RUN_IN_HEADING_RE = re.compile(r"([A-Z][A-Za-z'’,()/ -]{1,59}):")
+
+#: Sentence-final punctuation, allowing the closing bracket/quote a citation
+#: puts after the period -- PHB's paladin prints "(See Turn or Rebuke
+#: Undead, page 159.) Spells: ..." and a bare `\.$` test would refuse to see
+#: `Spells:` as a run-in heading there at all.
+_SENTENCE_END_RE = re.compile(r"[.!?][)\]\"”’]*$")
+
+#: Printed run-in labels inside (or leaking into) a class entry that are NOT
+#: class features: the GAME RULE INFORMATION labels, the flavor-section
+#: labels that become `description_sections` instead, the starting-package
+#: labels, and the in-prose clarifiers ("Exceptions:", "Note:") the PHB
+#: prints mid-feature. Calibrated against all 11 real PHB class segments:
+#: only "Exceptions" (cleric, twice) and "Skill Selection" (rogue, from the
+#: starting-package paragraph) actually leak today; the rest are listed
+#: pre-emptively because they are printed the same way elsewhere in the same
+#: chapter. Deliberately NOT listed: "Feat"/"Feats", which the rogue prints
+#: as a real special-ability heading.
+_NON_FEATURE_RUN_IN_HEADINGS = (
+    "Weapon and Armor Proficiency",
+    "Note",
+    "Notes",
+    "Exception",
+    "Exceptions",
+    "Example",
+    "Examples",
+    "Special",
+    "Abilities",
+    "Alignment",
+    "Hit Die",
+    "Class Skills",
+    "Class Features",
+    "Other Features",
+    "Skill Points at 1st Level",
+    "Skill Points at Each Additional Level",
+    "Adventures",
+    "Characteristics",
+    "Religion",
+    "Background",
+    "Races",
+    "Other Classes",
+    "Role",
+    "Starting Package",
+    "Skill Selection",
+    "Armor",
+    "Weapon",
+    "Weapons",
+    "Gear",
+    "Spells Known",
+    "Spells Prepared",
+    "Deity/Domains",
+)
+
+#: A matched feature's `text_md` must carry at least this fraction of its
+#: printed span's word count. Calibrated on the 90 real (heading, feature)
+#: pairs across the 11 PHB class records: 87 land at >= 0.92 (most at
+#: exactly 1.00 -- verbatim), one at 0.85 (the rogue's Trapfinding, which
+#: drops a single printed sentence -- a MINOR the judgement did not raise),
+#: and one at 0.67 (the bard's Spells, the condensed paraphrase the
+#: judgement raised as a MAJOR). 0.75 sits in the widest gap in that
+#: distribution; the 0.60 originally proposed catches nothing at all on the
+#: real corpus, including the record the rule exists for.
+_FEATURE_TEXT_COVERAGE_RATIO = 0.75
+
+#: A paragraph must be at least this many words to count as prose for the
+#: column-break stitch below -- a table row, a caption or a stray cell is
+#: never a truncated paragraph or its continuation.
+_MIN_PROSE_WORDS = 20
+
+
+def _normalize_heading(text: str) -> str:
+    """The comparison form for a printed heading against a
+    `description_sections[].heading`/`class_features[].name`: drop every
+    parenthetical group (so "Wild Shape (Su)" compares equal to a record
+    that spells the feature without its tag), fold all other punctuation to
+    a space (case/punctuation/whitespace-insensitive -- "Ex-Paladins" and
+    "Ex Paladins" agree), lowercase, and singularize each word with
+    `_fold_trailing_plural` (plural-tolerant -- "Ex-Druid"/"Ex-Druids").
+
+    Unlike `_normalize_special_token` this keeps a trailing numeric bonus or
+    ordinal, because a printed HEADING never carries the per-level rank a
+    level table's Special cell does."""
+    collapsed = _PAREN_RE.sub(" ", text)
+    collapsed = re.sub(r"[^0-9A-Za-z]+", " ", collapsed).strip().lower()
+    if not collapsed:
+        return collapsed
+    return " ".join(_fold_trailing_plural(word) for word in collapsed.split(" "))
+
+
+_ALLOWED_RUN_IN_HEADINGS = frozenset(
+    _normalize_heading(heading) for heading in _NON_FEATURE_RUN_IN_HEADINGS
+)
+
+
+def _is_caps_heading(line: str) -> bool:
+    """Whether `line` is a standalone ALL-CAPS heading paragraph -- the
+    marker `text`/`segment` emit for a sidebar or the next printed section
+    ("THE DRUID'S ANIMAL COMPANION", "GAME RULE INFORMATION", "SCHOOL
+    SPECIALIZATION"). Used to close the Class Features window, which is what
+    keeps an animal companion's or a specialist school's own run-in headings
+    from being demanded as class features of the class."""
+    stripped = line.strip()
+    if not stripped or "\t" in stripped or len(stripped) > 60:
+        return False
+    if not re.search(r"[A-Z]", stripped):
+        return False
+    return not re.search(r"[a-z]", stripped)
+
+
+def _extra_section_patterns(class_name: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """The two standalone-heading patterns rule (a) looks for in a class
+    segment's own text: `<Words> <Class> Starting Package` and
+    `Ex-<Class>[s]`, both anchored to a whole line and plural-tolerant."""
+    escaped = re.escape(class_name)
+    # "es" as well as "s": most class names pluralize with a bare "s"
+    # ("Ex-Paladins", "Ex-Druids"), but a sibilant-stemmed one would not.
+    package = re.compile(
+        rf"(?:[A-Za-z'’-]+\s+)*{escaped}(?:es|s)?\s+Starting\s+Package",
+        re.IGNORECASE,
+    )
+    ex_class = re.compile(rf"Ex[-‐-―]{escaped}(?:es|s)?", re.IGNORECASE)
+    return package, ex_class
+
+
+def _class_features_window(paragraphs: list[str], class_name: str) -> list[str] | None:
+    """The stripped paragraphs of a class's printed Class Features section,
+    or `None` when the segment has no recognizable one.
+
+    Starts at the first paragraph that is exactly the "Class Features"
+    heading or that opens "All of the following are class features" -- NOT
+    merely one starting with the words "Class Features", since the chapter
+    intro prints "Class Features: Special characteristics of the class..."
+    as a run-in and the class segments' back-extended text routinely carries
+    it. Ends at the first following `Ex-<Class>`/`... Starting Package`
+    heading (those are `description_sections`, checked by rule (a)) or the
+    first ALL-CAPS sidebar/section heading, whichever comes first."""
+    package_re, ex_class_re = _extra_section_patterns(class_name)
+    start: int | None = None
+    for index, paragraph in enumerate(paragraphs):
+        stripped = paragraph.strip()
+        lowered = stripped.lower()
+        if lowered == "class features" or lowered.startswith(
+            "all of the following are class features"
+        ):
+            start = index
+            break
+    if start is None:
+        return None
+    end = len(paragraphs)
+    for index in range(start + 1, len(paragraphs)):
+        stripped = paragraphs[index].strip()
+        if (
+            ex_class_re.fullmatch(stripped)
+            or package_re.fullmatch(stripped)
+            or _is_caps_heading(stripped)
+        ):
+            end = index
+            break
+    return [paragraph.strip() for paragraph in paragraphs[start:end]]
+
+
+def _run_in_headings(paragraph: str) -> list[tuple[int, int, str]]:
+    """Every `(start, end, heading)` run-in heading in one paragraph: a
+    `_RUN_IN_HEADING_RE` match that begins the paragraph or follows
+    sentence-final punctuation."""
+    found: list[tuple[int, int, str]] = []
+    for match in _RUN_IN_HEADING_RE.finditer(paragraph):
+        preceding = paragraph[: match.start()].rstrip()
+        if preceding == "" or _SENTENCE_END_RE.search(preceding):
+            found.append((match.start(), match.end(), match.group(1).strip()))
+    return found
+
+
+def _is_prose(paragraph: str) -> bool:
+    return "\t" not in paragraph and len(paragraph.split()) >= _MIN_PROSE_WORDS
+
+
+def _column_break_continuation(paragraphs: list[str]) -> tuple[int, str] | None:
+    """The one unambiguous column-break stitch in a Class Features window,
+    as `(index of the truncated paragraph, the continuation's own prefix)`,
+    or `None`.
+
+    `owlsperch.text.columns` reconstructs reading order paragraph by
+    paragraph, and a printed feature description that spans a column break
+    arrives as two paragraphs -- often out of order (the PHB bard's "Spells:"
+    body ends mid-word at "Cha 11 for 1st-" and continues in a paragraph
+    printed EARLIER in the segment text, "level spells, and so forth)...").
+    Without stitching them back together the last feature in the truncated
+    paragraph is measured against a fraction of its own printed span, and
+    rule (c) can't see a paraphrase there at all.
+
+    Stitched only when the window holds EXACTLY ONE truncated prose
+    paragraph (one that doesn't end at a sentence boundary) and EXACTLY ONE
+    prose paragraph that begins mid-sentence (a lowercase first letter), so
+    the pairing needs no guessing. Anything more ambiguous is left alone:
+    the resulting span is then too SHORT, which only ever makes the ratio
+    larger, so an unstitched window can never produce a false failure."""
+    truncated = [
+        index
+        for index, paragraph in enumerate(paragraphs)
+        if _is_prose(paragraph) and not _SENTENCE_END_RE.search(paragraph.strip())
+    ]
+    continuations = [
+        index
+        for index, paragraph in enumerate(paragraphs)
+        if _is_prose(paragraph) and paragraph.strip()[:1].islower()
+    ]
+    if len(truncated) != 1 or len(continuations) != 1 or truncated[0] == continuations[0]:
+        return None
+    continuation = paragraphs[continuations[0]]
+    headings = _run_in_headings(continuation)
+    prefix = continuation[: headings[0][0]] if headings else continuation
+    return truncated[0], prefix
+
+
+def _check_extra_sections(
+    record: dict[str, Any], text: str, class_name: str, name: str
+) -> list[str]:
+    """Rule (a): every `<Words> <Class> Starting Package` and
+    `Ex-<Class>[s]` heading the segment text prints on a line of its own
+    must be recorded, as a `description_sections[].heading` or (the cleric's
+    own "Ex-Clerics", which its record files under Class Features instead --
+    an equally faithful placement) a `class_features[].name`."""
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return []
+    package_re, ex_class_re = _extra_section_patterns(class_name)
+
+    printed: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if package_re.fullmatch(stripped) or ex_class_re.fullmatch(stripped):
+            if stripped not in printed:
+                printed.append(stripped)
+    if not printed:
+        return []
+
+    recorded: set[str] = set()
+    sections = fields.get("description_sections")
+    if isinstance(sections, list):
+        for section in sections:
+            if isinstance(section, dict) and isinstance(section.get("heading"), str):
+                recorded.add(_normalize_heading(section["heading"]))
+    features = fields.get("class_features")
+    if isinstance(features, list):
+        for feature in features:
+            if isinstance(feature, dict) and isinstance(feature.get("name"), str):
+                recorded.add(_normalize_heading(feature["name"]))
+
+    return [
+        f"{name}: segment text prints a {heading!r} section that no "
+        "description_sections/class_features entry records"
+        for heading in printed
+        if _normalize_heading(heading) not in recorded
+    ]
+
+
+def check_class_segment_coverage(
+    record: dict[str, Any], segment: dict[str, Any] | None
+) -> list[str]:
+    """Batch B10c-mand12: the class/prestige_class checks that need the
+    OWNING SEGMENT's own `text` as the evidence of what the page printed.
+
+    (a) Every `<Words> <Class> Starting Package`/`Ex-<Class>` heading the
+        text prints on its own line is recorded somewhere in the record
+        (`_check_extra_sections`).
+    (b) Every run-in heading inside the printed Class Features window
+        (`_class_features_window`) either matches a `class_features[].name`
+        (exactly, once both sides go through `_normalize_heading`) or is a
+        known non-feature label (`_NON_FEATURE_RUN_IN_HEADINGS`). Exact
+        normalized equality rather than `_special_token_matches_feature`'s
+        containment on purpose: a heading like "Deity, Domains, and Domain
+        Spells" CONTAINS the word "spell" and would be satisfied by the
+        sibling "Spells" feature it was wrongly nested inside, which is the
+        exact PHB cleric defect this rule exists to catch.
+    (c) A matched feature's `text_md` carries at least
+        `_FEATURE_TEXT_COVERAGE_RATIO` of the printed span's word count --
+        the span running from its heading to the next run-in heading in the
+        same paragraph, extended through `_column_break_continuation` when
+        the paragraph is cut off at a column break.
+
+    Skipped silently (returns `[]`) when there is no segment, no `text`, or
+    no recognizable Class Features window -- a missing segment is already
+    its own failure via `check_pages_within_segment`, and a page layout this
+    can't read must not be reported as a missing feature."""
+    if segment is None:
+        return []
+    text = segment.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return []
+    class_name = record.get("name")
+    if not isinstance(class_name, str) or not class_name.strip():
+        return []
+    name = class_name
+
+    errors = _check_extra_sections(record, text, class_name, name)
+
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return errors
+    features_by_name: dict[str, dict[str, Any]] = {}
+    raw_features = fields.get("class_features")
+    if isinstance(raw_features, list):
+        for feature in raw_features:
+            if isinstance(feature, dict) and isinstance(feature.get("name"), str):
+                features_by_name.setdefault(_normalize_heading(feature["name"]), feature)
+
+    paragraphs = _class_features_window(text.split("\n"), class_name)
+    if paragraphs is None:
+        return errors
+    stitch = _column_break_continuation(paragraphs)
+
+    for index, paragraph in enumerate(paragraphs):
+        headings = _run_in_headings(paragraph)
+        for position, (_start, heading_end, heading) in enumerate(headings):
+            normalized = _normalize_heading(heading)
+            feature = features_by_name.get(normalized)
+            if feature is None:
+                if normalized not in _ALLOWED_RUN_IN_HEADINGS:
+                    errors.append(
+                        f"{name}: printed Class Features heading {heading!r} has no "
+                        "class_features entry of its own"
+                    )
+                continue
+            if position + 1 < len(headings):
+                span = paragraph[heading_end : headings[position + 1][0]]
+            else:
+                span = paragraph[heading_end:]
+                if stitch is not None and stitch[0] == index:
+                    span = f"{span} {stitch[1]}"
+            span_words = len(span.split())
+            if span_words == 0:
+                continue
+            text_md = feature.get("text_md")
+            text_words = len(text_md.split()) if isinstance(text_md, str) else 0
+            ratio = text_words / span_words
+            if ratio < _FEATURE_TEXT_COVERAGE_RATIO:
+                errors.append(
+                    f"{name}: class_features {heading!r} text_md has {text_words} word(s) "
+                    f"against {span_words} printed word(s) (ratio {ratio:.2f}, minimum "
+                    f"{_FEATURE_TEXT_COVERAGE_RATIO:.2f}) -- looks condensed rather than "
+                    "verbatim"
+                )
+
+    return errors
+
+
+#: Segment-aware checks (B10c-mand12), keyed by type name. Like
+#: `TYPE_CONTEXT_CHECKS` these are dispatched by
+#: `owlsperch.validate.runner.validate_record`, which already resolves the
+#: originating segment for `check_pages_within_segment`.
+TYPE_SEGMENT_CHECKS: dict[str, Callable[[dict[str, Any], dict[str, Any] | None], list[str]]] = {
+    "class": check_class_segment_coverage,
+    "prestige_class": check_class_segment_coverage,
 }

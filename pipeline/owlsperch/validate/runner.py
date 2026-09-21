@@ -132,6 +132,7 @@ from owlsperch.validate.checks import (
     NULL_CONTEXT,
     TYPE_CONTEXT_CHECKS,
     TYPE_FIELD_CHECKS,
+    TYPE_SEGMENT_CHECKS,
     ValidationContext,
     check_envelope_consistency,
     check_pages_within_segment,
@@ -520,7 +521,8 @@ def validate_record(
     context: ValidationContext = NULL_CONTEXT,
 ) -> list[str]:
     """Pure validation of one already-loaded record: JSON Schema conformance
-    (envelope + type fields), envelope/type-specific consistency checks, and
+    (envelope + type fields), envelope/type-specific consistency checks, the
+    segment-aware checks of `TYPE_SEGMENT_CHECKS` (B10c-mand12), and
     the page-within-segment check -- everything `validate_record_file` does
     *except* loading the record/segment from disk and writing back to the
     segment. No I/O, no side effects: reused by `owlsperch build-db` (batch
@@ -556,6 +558,10 @@ def validate_record(
     context_check = TYPE_CONTEXT_CHECKS.get(type_dir)
     if context_check is not None:
         errors.extend(context_check(record, context))
+
+    segment_check = TYPE_SEGMENT_CHECKS.get(type_dir)
+    if segment_check is not None:
+        errors.extend(segment_check(record, segment))
 
     errors.extend(check_pages_within_segment(record, segment))
     return errors

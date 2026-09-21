@@ -598,7 +598,72 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `replacement_text`, `target_page` either absent/null or a positive
   integer, and -- the mandatory rule schemas alone can't express -- the
   record's `name` matches exactly `"<target_name> (p. <target_page>)"`
-  when a page is present, else the bare `target_name`.
+  when a page is present, else the bare `target_name`. Batch B10c-mand12
+  adds three class/`prestige_class` rules the 2026-09-18 class quality
+  judgement found nothing caught. (1) In `check_class_fields`,
+  `_check_source_pages`: `fields.source_pages` is a PDF page span (that's
+  how `build_db._apply_superseding` reads it), so `start`/`end` must equal
+  `min(pages)`/`max(pages)` of the record's own envelope `pages` -- the real
+  catch is the PHB druid, whose `source_pages` were written as the PRINTED
+  span 33-37 against pdf pages 34-38. (2)/(3) A new, SEGMENT-aware
+  `check_class_segment_coverage(record, segment)`, dispatched from a third
+  registry, `TYPE_SEGMENT_CHECKS` (`validate/runner.py`'s `validate_record`
+  passes it the same already-resolved segment dict
+  `check_pages_within_segment` gets, so `build-db` gets it for free too),
+  which reads the owning segment's own `text` as the evidence of what the
+  page printed and returns `[]` silently when there is no segment, no
+  `text`, or no recognizable Class Features section: (a) every
+  `<Words> <Class> Starting Package`/`Ex-<Class>` heading printed on a line
+  of its own must be recorded as a `description_sections[].heading` OR a
+  `class_features[].name` (the real cleric files "Ex-Clerics" as a feature
+  -- an equally faithful placement), which is what catches the paladin
+  (both) and sorcerer (starting package) dropping theirs; (b) inside the
+  printed Class Features WINDOW -- from the paragraph that is exactly the
+  "Class Features" heading (never merely one STARTING with those words: the
+  chapter intro prints "Class Features: Special characteristics of the
+  class..." as a run-in and a class segment's back-extended text routinely
+  carries it) or that opens "All of the following are class features", up to
+  the first `Ex-<Class>`/`... Starting Package` heading or the first
+  ALL-CAPS sidebar/section heading (`_is_caps_heading` -- this is what stops
+  "THE DRUID'S ANIMAL COMPANION"'s and "SCHOOL SPECIALIZATION"'s own run-in
+  headings from being demanded as class features) -- every run-in heading
+  (`_RUN_IN_HEADING_RE`: `<Heading>:` at a paragraph start or after
+  sentence-final punctuation, `_SENTENCE_END_RE` allowing the `.)` a
+  trailing citation prints, 2-60 chars of `[A-Za-z'’,()/ -]` starting with a
+  capital) must equal, after `_normalize_heading` (parentheticals dropped,
+  punctuation folded, lowercased, per-word singularized), either a
+  `class_features[].name` or one of `_NON_FEATURE_RUN_IN_HEADINGS` (the
+  printed GAME RULE INFORMATION/flavor-section/starting-package labels plus
+  the in-prose "Exceptions:"/"Note:" clarifiers; only "Exceptions" and
+  "Skill Selection" actually leak on the real corpus, and "Feat"/"Feats" are
+  deliberately NOT listed since the rogue prints one as a real ability).
+  EXACT normalized equality, not `_special_token_matches_feature`'s
+  containment, on purpose: "Deity, Domains, and Domain Spells" CONTAINS
+  "spell" and would be satisfied by the sibling `Spells` feature it was
+  wrongly nested inside, which is precisely the cleric defect (3 printed
+  run-in headings nested as bold paragraphs inside `Spells`) this rule
+  exists to catch; and (c) each heading matched to a `class_features` entry
+  must have a `text_md` whose word count is at least
+  `_FEATURE_TEXT_COVERAGE_RATIO` (0.75) of its printed span's -- the span
+  running from the heading to the next run-in heading in the SAME paragraph,
+  extended by `_column_break_continuation` when the paragraph is cut off at
+  a column break (the bard's printed "Spells:" body ends mid-word at "Cha 11
+  for 1st-" and continues in a paragraph the column reconstructor emitted
+  EARLIER; stitched only when the window holds exactly one truncated prose
+  paragraph and exactly one that begins mid-sentence, so the pairing needs
+  no guessing -- anything more ambiguous is left unstitched, which only ever
+  makes the span shorter and the ratio larger, never a false failure). 0.75,
+  not the 0.60 first proposed, because the real distribution over all 90
+  (heading, feature) pairs in the 11 PHB class records is 87 at >= 0.92
+  (mostly exactly 1.00 -- verbatim), one at 0.85 (the rogue's Trapfinding,
+  which drops a single printed sentence -- a MINOR nobody raised) and one at
+  0.67 (the bard's condensed `Spells`, the MAJOR this rule exists for): 0.60
+  catches nothing at all. `pipeline/tests/test_validate_checks.py`'s
+  `test_phb1_real_corpus_class_validator_calibration` (a `@pytest.mark.
+  corpus` test, skipped unless `$OWLSPERCH_DATA` has all 11 phb1 class
+  records and their segments) pins that calibration: druid fails (1),
+  paladin + sorcerer fail (2a), cleric fails (2b), bard fails (2c), and
+  nothing else fails anything.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the

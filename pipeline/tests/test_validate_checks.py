@@ -5,7 +5,12 @@ checks."""
 from __future__ import annotations
 
 import copy
+import json
+import os
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from owlsperch.validate.checks import (
     NULL_CONTEXT,
@@ -16,6 +21,7 @@ from owlsperch.validate.checks import (
     _special_token_matches_feature,
     _split_special_cell,
     check_class_fields,
+    check_class_segment_coverage,
     check_envelope_consistency,
     check_errata_entry_fields,
     check_feat_fields,
@@ -984,3 +990,316 @@ def test_check_table_fields_flags_mixed_empty_cell_styles() -> None:
     assert len(matching) == 1
     assert "1" in matching[0]
     assert "Special" in matching[0]
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand12 rule 1: fields.source_pages is a PDF page span and must
+# agree with the record's own envelope `pages`.
+# ---------------------------------------------------------------------------
+
+
+def test_check_class_fields_passes_when_source_pages_match_pages() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["pages"] = [34, 35, 36, 37, 38]
+    record["fields"]["source_pages"] = {"start": 34, "end": 38}
+    assert check_class_fields(record, _default_context()) == []
+
+
+def test_check_class_fields_flags_printed_source_pages() -> None:
+    """The real-corpus catch: the PHB druid's `source_pages` were written as
+    the PRINTED span 33-37 while its `pages` are pdf 34-38."""
+    record = copy.deepcopy(_valid_class_record())
+    record["pages"] = [34, 35, 36, 37, 38]
+    record["fields"]["source_pages"] = {"start": 33, "end": 37}
+    errors = [e for e in check_class_fields(record, _default_context()) if "source_pages" in e]
+    assert len(errors) == 1
+    assert "33-37" in errors[0]
+    assert "34-38" in errors[0]
+
+
+def test_check_class_fields_skips_source_pages_when_pages_missing() -> None:
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["source_pages"] = {"start": 33, "end": 37}
+    assert [e for e in check_class_fields(record, _default_context()) if "source_pages" in e] == []
+
+
+# ---------------------------------------------------------------------------
+# Batch B10c-mand12 rule 2: check_class_segment_coverage -- the class checks
+# whose evidence lives in the owning segment's own `text`.
+# ---------------------------------------------------------------------------
+
+#: One synthetic class segment text in the shape the real PHB class segments
+#: have: a flavor run-in paragraph, the GAME RULE INFORMATION block, a
+#: "Class Features" heading paragraph, the features prose, then the
+#: `Ex-<Class>` and `<Race> <Class> Starting Package` sections.
+_SEGMENT_TEXT = "\n".join(
+    [
+        "TESTCLASS",
+        "",
+        "Testclasses are brave. Adventures: They adventure. Alignment: Any.",
+        "",
+        "GAME RULE INFORMATION",
+        "",
+        "Testclasses have the following game statistics. Abilities: Strength matters.",
+        "",
+        "Class Features",
+        "",
+        (
+            "All of the following are class features of the testclass. "
+            "Weapon and Armor Proficiency: A testclass is proficient with all simple "
+            "weapons. "
+            "Rage: Once per day a testclass may fly into a rage. "
+            "Uncanny Dodge: A testclass retains her Dexterity bonus to AC. "
+            "Trap Sense: A testclass gains an intuitive sense for traps."
+        ),
+        "",
+        "Ex-Testclasses",
+        "",
+        "A testclass who becomes lawful loses the ability to rage.",
+        "",
+        "Half-Orc Testclass Starting Package",
+        "",
+        "Armor: Studded leather. Weapons: Greataxe. Skill Selection: Pick four skills.",
+    ]
+)
+
+
+def _coverage_record() -> dict[str, Any]:
+    """A class record whose `class_features`/`description_sections` cover
+    every printed heading in `_SEGMENT_TEXT`, verbatim."""
+    record = copy.deepcopy(_valid_class_record())
+    record["fields"]["description_sections"] = [
+        {"heading": "Adventures", "text_md": "They adventure."},
+        {"heading": "Ex-Testclasses", "text_md": "A testclass who becomes lawful loses it."},
+        {
+            "heading": "Half-Orc Testclass Starting Package",
+            "text_md": "Armor: Studded leather.",
+        },
+    ]
+    record["fields"]["class_features"] = [
+        {
+            "name": "Rage",
+            "level": 1,
+            "text_md": "Once per day a testclass may fly into a rage.",
+        },
+        {
+            "name": "Uncanny Dodge",
+            "level": 2,
+            "text_md": "A testclass retains her Dexterity bonus to AC.",
+        },
+        {
+            "name": "Trap Sense",
+            "level": 3,
+            "text_md": "A testclass gains an intuitive sense for traps.",
+        },
+    ]
+    return record
+
+
+def _segment(text: str = _SEGMENT_TEXT) -> dict[str, Any]:
+    return {"seg_id": "phb1-class-p0001", "pages": [1], "text": text}
+
+
+def test_check_class_segment_coverage_passes_for_a_complete_record() -> None:
+    assert check_class_segment_coverage(_coverage_record(), _segment()) == []
+
+
+def test_check_class_segment_coverage_skips_a_missing_segment() -> None:
+    assert check_class_segment_coverage(_coverage_record(), None) == []
+
+
+def test_check_class_segment_coverage_skips_a_textless_segment() -> None:
+    assert check_class_segment_coverage(_coverage_record(), {"seg_id": "x", "pages": [1]}) == []
+
+
+def test_check_class_segment_coverage_flags_a_dropped_starting_package() -> None:
+    """Rule (a), the real-corpus paladin/sorcerer defect: the page prints a
+    Starting Package section the record never records."""
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if "Starting Package" not in section["heading"]
+    ]
+    errors = check_class_segment_coverage(record, _segment())
+    assert len(errors) == 1
+    assert "Half-Orc Testclass Starting Package" in errors[0]
+
+
+def test_check_class_segment_coverage_flags_a_dropped_ex_class_section() -> None:
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if not section["heading"].startswith("Ex-")
+    ]
+    errors = check_class_segment_coverage(record, _segment())
+    assert len(errors) == 1
+    assert "Ex-Testclasses" in errors[0]
+
+
+def test_check_class_segment_coverage_accepts_an_ex_class_filed_as_a_feature() -> None:
+    """The real PHB cleric files its "Ex-Clerics" section as a
+    `class_features` entry rather than a `description_sections` one -- an
+    equally faithful placement, so either satisfies rule (a)."""
+    record = _coverage_record()
+    record["fields"]["description_sections"] = [
+        section
+        for section in record["fields"]["description_sections"]
+        if not section["heading"].startswith("Ex-")
+    ]
+    record["fields"]["class_features"].append(
+        {"name": "Ex-Testclasses", "level": 1, "text_md": "You lose it."}
+    )
+    assert check_class_segment_coverage(record, _segment()) == []
+
+
+def test_check_class_segment_coverage_flags_a_nested_run_in_heading() -> None:
+    """Rule (b), the real-corpus cleric defect: a printed run-in heading
+    nested inside a sibling feature's own text_md instead of becoming its
+    own class_features entry."""
+    record = _coverage_record()
+    features = record["fields"]["class_features"]
+    dodge = next(f for f in features if f["name"] == "Uncanny Dodge")
+    rage = next(f for f in features if f["name"] == "Rage")
+    rage["text_md"] = f"{rage['text_md']}\n\n**Uncanny Dodge:** {dodge['text_md']}"
+    features.remove(dodge)
+    errors = check_class_segment_coverage(record, _segment())
+    assert len(errors) == 1
+    assert "Uncanny Dodge" in errors[0]
+    assert "no class_features entry of its own" in errors[0]
+
+
+def test_check_class_segment_coverage_does_not_demand_non_feature_labels() -> None:
+    """The GAME RULE INFORMATION/flavor/starting-package run-in labels
+    ("Abilities:", "Adventures:", "Skill Selection:") are never class
+    features, and the printed window never has to cover a sidebar's own
+    headings either -- an ALL-CAPS heading closes it."""
+    text = _SEGMENT_TEXT.replace(
+        "Ex-Testclasses",
+        "THE TESTCLASS'S ANIMAL COMPANION\n\nTotem Bond: The companion bonds.\n\nEx-Testclasses",
+        1,
+    )
+    assert check_class_segment_coverage(_coverage_record(), _segment(text)) == []
+
+
+def test_check_class_segment_coverage_allows_a_generic_class_features_run_in() -> None:
+    """The chapter intro prints "Class Features: Special characteristics of
+    the class..." as a run-in, and a class segment's back-extended text
+    routinely carries it -- the window must not start there."""
+    text = (
+        "Class Features: Special characteristics of the class. Nonsense: leaks.\n\n" + _SEGMENT_TEXT
+    )
+    assert check_class_segment_coverage(_coverage_record(), _segment(text)) == []
+
+
+def test_check_class_segment_coverage_flags_a_condensed_feature_text() -> None:
+    """Rule (c), the real-corpus bard defect: a feature's text_md is a
+    condensed paraphrase of the printed span."""
+    record = _coverage_record()
+    rage = next(f for f in record["fields"]["class_features"] if f["name"] == "Rage")
+    rage["text_md"] = "A testclass rages."
+    errors = check_class_segment_coverage(record, _segment())
+    assert len(errors) == 1
+    assert "Rage" in errors[0]
+    assert "ratio" in errors[0]
+
+
+def test_check_class_segment_coverage_stitches_a_column_break() -> None:
+    """The printed span of the LAST feature in a paragraph cut off at a
+    column break continues in another paragraph (out of reading order, as
+    `owlsperch.text.columns` emits it). Without the stitch the span is a
+    fraction of the printed one and a paraphrase there is invisible."""
+    text = "\n".join(
+        [
+            "Class Features",
+            "",
+            (
+                "traps, and she never loses her bearings in the deep woods even after "
+                "many days of travel without rest, food, or the light of the sun above "
+                "her head, which is more than most can say for themselves."
+            ),
+            "",
+            (
+                "All of the following are class features of the testclass. "
+                "Rage: Once per day a testclass may fly into a rage. "
+                "Trap Sense: A testclass gains an intuitive sense for hidden"
+            ),
+        ]
+    )
+    record = _coverage_record()
+    record["fields"]["description_sections"] = []
+    record["fields"]["class_features"] = [
+        {
+            "name": "Rage",
+            "level": 1,
+            "text_md": "Once per day a testclass may fly into a rage.",
+        },
+        {"name": "Trap Sense", "level": 3, "text_md": "A testclass senses traps."},
+    ]
+    errors = check_class_segment_coverage(record, _segment(text))
+    assert len(errors) == 1
+    assert "Trap Sense" in errors[0]
+    # The stitched span is the truncated tail plus the continuation's whole
+    # prefix (46 words), not just the 8 the truncated paragraph itself holds.
+    assert "against 46 printed word(s)" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# The real corpus: pin the B10c-mand12 calibration against the 11 real PHB
+# class records, so a later change to any of the three rules that alters
+# which of them fail shows up here. Skipped (not failed) unless the real
+# data dir has all 11 records and their owning segments.
+# ---------------------------------------------------------------------------
+
+#: The exact real-data outcome each rule must produce, per class record, as
+#: measured on 2026-09-21 against `$OWLSPERCH_DATA/records/phb1/class/`.
+_EXPECTED_CORPUS_FAILURES = {
+    "source_pages": {"druid"},
+    "extra_sections": {"paladin", "sorcerer"},
+    "run_in_headings": {"cleric"},
+    "feature_coverage": {"bard"},
+}
+
+
+def _real_phb1_class_records() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    data_dir = Path(os.environ.get("OWLSPERCH_DATA", str(Path.home() / "owlsperch-data")))
+    records_dir = data_dir / "records" / "phb1" / "class"
+    if not records_dir.is_dir():
+        return []
+    loaded: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for path in sorted(records_dir.glob("*.json")):
+        record = json.loads(path.read_text())
+        extraction = record.get("extraction") or {}
+        seg_id = extraction.get("segment_id")
+        if not isinstance(seg_id, str):
+            return []
+        segment_path = data_dir / "segments" / "phb1" / f"{seg_id}.json"
+        if not segment_path.is_file():
+            return []
+        loaded.append((path.stem, record, json.loads(segment_path.read_text())))
+    return loaded
+
+
+@pytest.mark.corpus
+def test_phb1_real_corpus_class_validator_calibration() -> None:
+    loaded = _real_phb1_class_records()
+    if len(loaded) != 11:
+        pytest.skip("the real phb1 class records/segments are not all present")
+
+    failures: dict[str, set[str]] = {key: set() for key in _EXPECTED_CORPUS_FAILURES}
+    for stem, record, segment in loaded:
+        # An empty context is enough here: the source_pages check runs before
+        # `check_class_fields` gives up on an unresolvable `level_table`.
+        for error in check_class_fields(record, _context({})):
+            if "source_pages" in error:
+                failures["source_pages"].add(stem)
+        for error in check_class_segment_coverage(record, segment):
+            if "that no description_sections/class_features entry records" in error:
+                failures["extra_sections"].add(stem)
+            elif "no class_features entry of its own" in error:
+                failures["run_in_headings"].add(stem)
+            elif "looks condensed rather than verbatim" in error:
+                failures["feature_coverage"].add(stem)
+
+    assert failures == _EXPECTED_CORPUS_FAILURES
