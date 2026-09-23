@@ -767,7 +767,13 @@ _MONSTER: dict[str, Any] = {
         "size": "Large",
         "type": "Magical Beast",
         "subtypes": [],
-        "hd": {"count": 3, "die": 10, "bonus": 6, "text": "3d10+6 (22 hp)"},
+        "hd": {
+            "count": 3,
+            "groups": [{"count": 3, "die": 10, "bonus": 6}],
+            "die": 10,
+            "bonus": 6,
+            "text": "3d10+6 (22 hp)",
+        },
         "hp": 22,
         "initiative": 1,
         "speed": {

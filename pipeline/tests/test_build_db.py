@@ -645,8 +645,9 @@ def test_flatten_fields_writes_a_combined_row_for_an_object_with_its_own_text() 
 
 def test_flatten_fields_writes_no_combined_row_for_an_object_without_text() -> None:
     """A plain object field with no `text` sub-key (spell `costs`, class
-    `skill_points`, `spellcasting`) is unaffected -- `owlsperch_server
-    .browse.FilterableField.combined` relies on there being no such row."""
+    `skill_points`, `spellcasting`) is unaffected: the combined row is keyed
+    off a `text` sub-key, not off the field being an object, so the existing
+    object fields behave exactly as before."""
     rows = flatten_fields("skill_points", {"base": 2, "ability": "Int"})
     assert [r.key for r in rows] == ["skill_points.base", "skill_points.ability"]
 

@@ -1644,9 +1644,58 @@ def test_monster_rules_state_the_grouped_entry_naming_convention(tmp_path: Path)
 def test_monster_rules_say_the_multi_column_stat_table_is_not_a_table_record(
     tmp_path: Path,
 ) -> None:
-    section = _rules_section_for("monster", tmp_path)
-    assert "MULTI-COLUMN" in section
-    assert "NOT" in section and "also written as a `table` record" in section
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "MULTI-COLUMN" in one_line
+    assert "NOT also written as a `table` record" in one_line
+    # (B12 review) The real text layer gives the shared stat table as
+    # tab-separated ROWS whose first cell is the stat-block label.
+    assert "TAB-SEPARATED ROWS" in one_line
+    assert '"Hit Dice (hp)"' in one_line
+    assert "Write ONE record per COLUMN" in one_line
+
+
+def test_monster_rules_cover_a_multi_part_hit_dice_line(tmp_path: Path) -> None:
+    """B12 review finding 4: the `plus` form a lycanthrope or any
+    class-levelled creature prints."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "`hd.groups` has ONE ENTRY PER PRINTED DICE TERM" in one_line
+    assert '"1d8+1 plus 6d8+18 (50 hp)"' in one_line
+    assert "`hd.count` 7" in one_line
+    assert "Never keep only the first term" in one_line
+
+
+def test_monster_rules_say_a_dash_only_line_is_an_empty_array(tmp_path: Path) -> None:
+    """B12 review finding 3: "Special Attacks: —" appears 65 times."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "means NONE: write an EMPTY array" in one_line
+    assert '`["\u2014"]` is wrong' in one_line
+
+
+def test_monster_rules_name_the_mm3_labels_for_every_required_field(tmp_path: Path) -> None:
+    """B12 review finding 6: Speed, Space/Reach, CR and Alignment are all
+    REQUIRED fields, so the MM III+ label map has to mention them."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    for label in ("Speed ->", "Space/Reach ->", "CR ->", "Alignment ->"):
+        assert label in one_line, label
+    assert "A field the schema above marks REQUIRED is different" in one_line
+
+
+def test_monster_rules_cover_a_neighbouring_stat_block_and_a_missing_one(tmp_path: Path) -> None:
+    """B12 review, real segmentation: 28 of 338 real spans fall back to whole
+    pages, so a segment can hold a neighbour's whole stat block; and the
+    aboleth's own block is missing from the PDF text layer entirely."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "WHOLE PAGES" in one_line
+    assert "by the creature it actually NAMES, never by its position" in one_line
+    assert "A neighbouring creature's stat block here is NOT yours to extract" in one_line
+    assert "answer `needs_context` naming the NEXT segment id" in one_line
+
+
+def test_monster_rules_put_an_alias_parenthetical_in_aliases(tmp_path: Path) -> None:
+    """B12 review: "Barbed devil (hamatula)" is an alias, not a group."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert '"Barbed devil (hamatula)"' in one_line
+    assert "`aliases`" in one_line
 
 
 def test_monster_rules_give_the_cr_fraction_normalization(tmp_path: Path) -> None:

@@ -367,8 +367,14 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
         # without loading the record JSON, the same way an array-of-object
         # field's combined row makes its pairs queryable. An object field
         # with no `text` sub-key (spell `costs`, class `skill_points`,
-        # `spellcasting`) is unaffected and still has no combined row -- see
-        # `owlsperch_server.browse.FilterableField.combined`.
+        # `spellcasting`) is unaffected and still has no combined row.
+        #
+        # Interaction with `owlsperch_server.browse.FilterableField.combined`,
+        # which is `False` for every plain object field: a FILTERABLE object
+        # field that gained a combined row here would have one that `browse`
+        # never queries (harmless -- it just isn't used for filtering), but if
+        # that ever becomes confusing, `combined` is where to reconcile it.
+        # No filterable object field carries a `text` sub-key today.
         text_value = value.get("text")
         if isinstance(text_value, str) and text_value.strip():
             rows.append(_FieldRow(key, text_value, None))

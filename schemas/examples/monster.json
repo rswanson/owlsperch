@@ -3,7 +3,7 @@
   "type": "monster",
   "name": "Sable Hound, Lesser",
   "slug": "sable-hound-lesser",
-  "aliases": [],
+  "aliases": ["Lesser Sable Hound"],
   "book_id": "example",
   "pages": [1],
   "citation": "Example p. 1",
@@ -12,7 +12,13 @@
     "size": "Small",
     "type": "Magical Beast",
     "subtypes": ["Extraplanar"],
-    "hd": { "count": 1, "die": 10, "bonus": 1, "text": "1d10+1 (6 hp)" },
+    "hd": {
+      "count": 1,
+      "groups": [{ "count": 1, "die": 10, "bonus": 1 }],
+      "die": 10,
+      "bonus": 1,
+      "text": "1d10+1 (6 hp)"
+    },
     "hp": 6,
     "initiative": 3,
     "speed": {

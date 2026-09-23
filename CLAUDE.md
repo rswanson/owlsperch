@@ -705,8 +705,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `{section, text_md}` entry per printed labelled paragraph, since a
   template has no stat block of its own). Monster fields follow spec 4.6
   but are TYPED, not strings: `size`/`type` are enums, `subtypes` an
-  array, `hd` is `{count, die, bonus, text}` (`count` is a NUMBER, so a
-  Tiny construct's "1/2 d10" is 0.5), `speed`/`ac`/`attack`/`full_attack`/
+  array, `hd` is `{count, groups, die, bonus, text}` -- `groups` (required)
+  has ONE entry per printed dice TERM, so the multi-part `plus` form the MM
+  prints for a lycanthrope or any class-levelled creature ("1d8+1 plus
+  6d8+18 (50 hp)", the norm for an `npc` record) is modeled in full, with
+  `count` their SUM and `die`/`bonus` an optional convenience copy of a
+  single term; `count` is a NUMBER, so a Tiny construct's "1/2 d10" is
+  0.5 -- `speed`/`ac`/`attack`/`full_attack`/
   `space_reach`/`skills` each keep the book's own printed line verbatim in
   their own `text` sub-key BESIDE the parsed structure, `grapple`/
   `abilities.*`/`level_adjustment.value` are nullable for a printed dash,
@@ -727,7 +732,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `load_creature_types` (the latter returning a `CreatureTypes(types,
   subtypes)`) and used by the validators below; because a JSON Schema
   can't read an external list, `monster.json`/`npc.json` spell the same
-  values out inline as enums and a test keeps the two in sync.
+  `size`/`type` values out inline as enums and a test keeps the two in
+  sync -- so the `size`/`type` CHECK compares exactly (the enum has already
+  rejected any other casing), while `subtypes`, which has no enum, is
+  matched case-insensitively and also accepts the compound `Augmented
+  <creature type>` form the MM prints for a template-changed creature
+  ("Augmented Humanoid", "Augmented Animal").
 - `pipeline/owlsperch/validate/` -- the `validate` subcommand: `loader.py`
   discovers record/segment files and compiles the envelope/type JSON Schema
   validators once per run; `checks.py` holds the id/slug/type-directory/
@@ -1022,36 +1032,50 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `_special_token_matches_feature`, `_normalize_table_text`).
   `check_monster_fields` (registered in `TYPE_FIELD_CHECKS` for BOTH
   `monster` and `npc`, whose schemas share every field it inspects):
-  `hd.count`/`hd.die` must agree with the dice expression printed in
-  `hd.text` and `hp` with the `(N hp)` that same line prints (a mistyped
-  number now fails instead of passing); `cr` must be a number matching
-  `cr_text`, with a printed fraction normalized ("1/2" -> 0.5, "1/3" ->
-  0.333, within `_CR_TOLERANCE`); `size`/`type`/every `subtypes` entry
-  must come from `schemas/sizes.json`/`schemas/creature_types.json`
-  (case-insensitively); all three `saves` and all six `abilities` keys
-  must be present (a score may be `null`, which the segment check below
-  is what actually justifies); every `special_attacks`/
-  `special_qualities` token must have a matching `special_abilities`
-  entry UNLESS it contains one of the MM's generic, never-described
-  quality phrases (`_GENERIC_QUALITY_PHRASES_RAW` -- darkvision,
-  low-light vision, scent, damage reduction, spell resistance, turn
-  resistance, immunity/resistance to, fast healing, regeneration, the
-  `<type> traits` tokens, ...), two `special_abilities` whose names
-  normalize alike are an error, and `group`/`variant_label` must be set
-  together with the record's own `name` exactly `"<group>,
-  <variant_label>"`. `check_template_fields`: a non-empty `applies_to`,
-  a non-empty `modifications` with a non-empty section label and
-  `text_md` per entry and no printed section label repeated.
-  `check_monster_segment_coverage` (`TYPE_SEGMENT_CHECKS` for `monster`/
-  `npc`) is what an INVENTED creature or ability has to get past: the
-  creature's own heading must be printed in the owning segment (or, for a
-  grouped entry whose sub-block heading is just the variant label, both
-  its `group` and `variant_label`); every `special_abilities[].name` must
-  be printed there as a run-in heading (`<Name> (Su):`); a token the
-  segment DOES describe as a run-in must have its entry (the generic
-  allowlist above only covers tokens the book genuinely never describes);
-  and a `null` ability score must have a printed dash for it on the
-  segment's own Abilities line.
+  `hd.groups` must mirror EVERY dice term printed in `hd.text` one for one
+  (`_parse_hd_terms` -- so a multi-part "1d8+1 plus 6d8+18 (50 hp)" line
+  can't be read as a 1-HD creature, the B12 review's finding), `hd.count`
+  must be their SUM, `hd.die` (optional) must match the first term, and
+  `hp` must match the `(N hp)` that same line prints (a mistyped number
+  now fails instead of passing); `cr` must be a number matching `cr_text`,
+  with a printed fraction normalized ("1/2" -> 0.5, "1/3" -> 0.333, within
+  `_CR_TOLERANCE`); `size`/`type`/every `subtypes` entry must come from
+  `schemas/sizes.json`/`schemas/creature_types.json` (see the casing and
+  `Augmented <type>` rules above); all three `saves` and all six
+  `abilities` keys must be present (a score may be `null`, which the
+  segment check below is what actually justifies); every
+  `special_attacks`/`special_qualities` token must have a matching
+  `special_abilities` entry UNLESS it contains one of the MM's generic,
+  never-described quality phrases (`_GENERIC_QUALITY_PHRASES_RAW` --
+  darkvision, low-light vision, scent, telepathy (27 occurrences in the
+  real MM alone), tongues, true seeing, see in darkness, light
+  sensitivity, damage reduction, spell resistance, turn resistance,
+  immunity/resistance to, MM III+'s bare `Immune`/`Resist`, fast healing,
+  regeneration, ...) or matches one of `_GENERIC_QUALITY_PATTERNS` (any
+  `<word> traits`/`<word> subtype` token, and MM III+'s abbreviated
+  `SR N`/`DR N/...`/`PR N` defences); a printed dash placeholder
+  ("Special Attacks: —", 65 occurrences) is not a token at all and is
+  skipped (`_is_dash_placeholder`/`_printed_special_tokens`); two
+  `special_abilities` whose names normalize alike are an error; and
+  `group`/`variant_label` must be set together with the record's own
+  `name` exactly `"<group>, <variant_label>"`. `check_template_fields`: a
+  non-empty `applies_to`, a non-empty `modifications` with a non-empty
+  section label and `text_md` per entry and no printed section label
+  repeated. `check_monster_segment_coverage` (`TYPE_SEGMENT_CHECKS` for
+  `monster`/`npc`) is what an INVENTED creature or ability has to get
+  past: the creature's own heading must be printed in the owning segment
+  (for a grouped record, only its `variant_label` -- the shared group
+  heading is often printed once on an earlier page belonging to a
+  different segment); every `special_abilities[].name` must be printed
+  there as a run-in heading (`<Name> (Su):`); a token the segment DOES
+  describe as a run-in must have its entry (the generic allowlist above
+  only covers tokens the book genuinely never describes); and a `null`
+  ability score must have a printed dash for it on the segment's own
+  Abilities line. `pipeline/tests/test_validate_checks.py`'s
+  `test_mm1_real_corpus_allip_round_trip` (a `@pytest.mark.corpus` test) is
+  the calibration: a hand-transcribed ALLIP record, checked against the
+  real `text/mm1/p0010.txt` page slice, must pass with ZERO errors, while
+  dropping the `Wisdom Drain` entry the page describes must fail.
 
 - `pipeline/owlsperch/queue/` -- the `queue` subcommand (`next`, `prompt`,
   `complete`, `summary`, `reset`, `audit`, `run`), the Python side of the
@@ -1339,23 +1363,41 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   list it states and the list it reasons about can't drift), with the
   "<Size> <Type> (<Subtypes>)" line before "Hit Dice:"; LAYOUT B, the MM
   III+ vertical list, whose own abbreviated labels (`_MM3_LABEL_MAP` --
-  Init/Senses, Languages, AC, hp, Immune/Resist/SR, Fort/Ref/Will, Melee/
-  Ranged, Base Atk/Grp, Abilities, SQ, Feats, Skills, Advancement) map
-  onto the SAME fields; GROUPED ENTRIES -- one record per creature, with
+  Init/Senses, Languages, AC, hp, Immune/Resist/SR, Fort/Ref/Will, Speed,
+  Melee/Ranged, Space/Reach, Base Atk/Grp, Atk Options, Abilities, SQ,
+  Feats, Skills, Advancement, CR, Alignment) map onto the SAME fields,
+  with the "omit the key" licence scoped to OPTIONAL fields only (a
+  REQUIRED field is reconstructed from what the block does give, or
+  `needs_context`); GROUPED ENTRIES -- one record per creature, with
   `group`/`variant_label` and `name` `"<Group>, <Variant>"`, shared group
-  prose repeated into each creature's own record, and the multi-column
-  stat table read DOWN each column and NEVER also written as a `table`
+  prose repeated into each creature's own record, a parenthetical that is
+  really an ALIAS ("Barbed devil (hamatula)") going to `aliases` rather
+  than `variant_label`, the reader-facing variant name also in `aliases`,
+  and the shared stat table -- which the real text layer gives as
+  TAB-SEPARATED ROWS whose first cell is the stat-block label ("Hit Dice
+  (hp)", "Initiative", ...) and one cell per creature -- read DOWN each
+  column, ONE record per column, and NEVER also written as a `table`
   record (it is the stat block itself); `special_attacks`/
   `special_qualities` exactly as printed (an enumerating token like
-  "immunity to acid, cold, and petrification" staying ONE token) with
+  "immunity to acid, cold, and petrification" staying ONE token, and a
+  dash-only line meaning an EMPTY array, never `["—"]`) with
   `special_abilities` sourced from the entry's own "Combat" run-in
-  headings and NEVER invented for a generic, never-described token; the
-  CR fraction normalization table; the `hd`/`hp` cross-check; the
+  headings and NEVER invented for a generic, never-described token
+  (MM III+'s `SR 25`/`DR 10/magic` short forms named alongside MM I's
+  spelled-out ones); the CR fraction normalization table; the `hd`
+  multi-part `plus` form (one `hd.groups` entry per printed term, `count`
+  their sum, never just the first term) and the `hd`/`hp` cross-check; the
   printed-dash-means-`null` rule; keeping each line's verbatim `text`
   beside its parsed structure (and leaving the parsed array empty rather
   than guessing); `text_md` as the flavor prose only, with every other
   printed titled section a `description_sections` entry; and the
-  neighbouring-entry attribution/bleed rule. The npc tail adds
+  neighbouring-entry attribution rule -- since 28 of the real MM's 338
+  spans fall back to WHOLE PAGES, a segment can hold a neighbour's entire
+  stat block, so every passage is attributed by the creature it NAMES and
+  records are written only for the creatures this segment's own heading
+  covers, while a heading whose stat block is missing from the text layer
+  entirely (the real aboleth) answers `needs_context` naming the next
+  segment instead of inventing stats. The npc tail adds
   `class_levels` (FULL class names, never the stat-block abbreviation) and
   `possessions`; the monster tail says what to do with an entry that turns
   out to have class levels. The template rules are their own list: a
@@ -1872,7 +1914,12 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   the URL. `src/components/Layout.tsx`'s header nav lists every registered
   type EXCEPT `rules_section` from `/schemas`, linking to `/browse/<type>`
   (batch B10c: `class`/`prestige_class` are now registered types, so they
-  get "Classes"/"Prestige classes" nav links this way for free);
+  get "Classes"/"Prestige classes" nav links this way for free -- and batch
+  B12's `monster`/`npc`/`template` add three more, "Monsters"/"NPCs"/
+  "Templates", with no `web/` change at all; their browse pages, facet
+  sidebars and detail field groups are all generated from the schemas'
+  `x-ui` hints, so registering a type is the whole UI change, and the nav
+  is now long enough that a future batch may need to group it);
   batch B10b adds a dedicated "Rules" link (`/browse/rules_section`) plus
   quick links -- fetched once from `/facets/rules_section`'s `category`
   facet -- for whichever of equipment/skills/races have count > 0

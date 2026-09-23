@@ -1744,7 +1744,12 @@ def _monster_fields(**overrides: Any) -> dict[str, Any]:
         "size": "Medium",
         "type": "Undead",
         "subtypes": ["Incorporeal"],
-        "hd": {"count": 4, "die": 12, "text": "4d12 (26 hp)"},
+        "hd": {
+            "count": 4,
+            "groups": [{"count": 4, "die": 12}],
+            "die": 12,
+            "text": "4d12 (26 hp)",
+        },
         "hp": 26,
         "initiative": 5,
         "speed": {"text": "Fly 30 ft. (perfect) (6 squares)", "modes": []},
@@ -1829,14 +1834,79 @@ def test_check_monster_fields_passes_a_well_formed_stat_block() -> None:
 
 
 def test_check_monster_fields_flags_an_hd_count_that_contradicts_its_own_text() -> None:
-    record = _monster_record(hd={"count": 5, "die": 12, "text": "4d12 (26 hp)"})
+    record = _monster_record(
+        hd={"count": 5, "groups": [{"count": 5, "die": 12}], "die": 12, "text": "4d12 (26 hp)"}
+    )
     errors = check_monster_fields(record)
     assert any("hd.count 5" in e and "4d12" in e for e in errors), errors
 
 
 def test_check_monster_fields_accepts_a_half_hit_die() -> None:
-    record = _monster_record(hd={"count": 0.5, "die": 10, "text": "1/2 d10 (2 hp)"}, hp=2)
+    record = _monster_record(
+        hd={
+            "count": 0.5,
+            "groups": [{"count": 0.5, "die": 10}],
+            "die": 10,
+            "text": "1/2 d10 (2 hp)",
+        },
+        hp=2,
+    )
     assert check_monster_fields(record) == []
+
+
+# --- multi-part Hit Dice (B12 review finding 4) ----------------------------
+
+
+def _multi_part_hd(**overrides: Any) -> dict[str, Any]:
+    """A lycanthrope/class-levelled creature's own printed Hit Dice line:
+    "1d8+1 plus 6d8+18 (50 hp)" -- two terms, 7 hit dice in total."""
+    hd: dict[str, Any] = {
+        "count": 7,
+        "groups": [
+            {"count": 1, "die": 8, "bonus": 1},
+            {"count": 6, "die": 8, "bonus": 18},
+        ],
+        "text": "1d8+1 plus 6d8+18 (50 hp)",
+    }
+    hd.update(overrides)
+    return hd
+
+
+def test_check_monster_fields_accepts_a_multi_part_hit_dice_line() -> None:
+    assert check_monster_fields(_monster_record(hd=_multi_part_hd(), hp=50)) == []
+
+
+def test_check_monster_fields_flags_a_multi_part_line_read_as_its_first_term_only() -> None:
+    """The defect this exists to catch: reading "1d8+1 plus 6d8+18" as a
+    1-HD creature."""
+    record = _monster_record(
+        hd=_multi_part_hd(count=1, groups=[{"count": 1, "die": 8, "bonus": 1}]), hp=50
+    )
+    errors = check_monster_fields(record)
+    assert any("hd.groups has 1 entry" in e and "2 dice term" in e for e in errors), errors
+
+
+def test_check_monster_fields_flags_a_count_that_is_not_the_sum_of_its_groups() -> None:
+    record = _monster_record(hd=_multi_part_hd(count=6), hp=50)
+    errors = check_monster_fields(record)
+    assert any("SUM of its terms" in e for e in errors), errors
+
+
+def test_check_monster_fields_flags_a_group_term_that_contradicts_the_printed_line() -> None:
+    record = _monster_record(
+        hd=_multi_part_hd(
+            groups=[{"count": 1, "die": 8, "bonus": 1}, {"count": 6, "die": 10, "bonus": 18}]
+        ),
+        hp=50,
+    )
+    errors = check_monster_fields(record)
+    assert any("hd.groups[1].die 10" in e for e in errors), errors
+
+
+def test_check_monster_fields_flags_a_missing_groups_array() -> None:
+    record = _monster_record(hd={"count": 4, "die": 12, "text": "4d12 (26 hp)"})
+    errors = check_monster_fields(record)
+    assert any("hd.groups is missing" in e for e in errors), errors
 
 
 def test_check_monster_fields_flags_hp_that_contradicts_its_own_line() -> None:
@@ -1881,9 +1951,31 @@ def test_check_monster_fields_flags_an_unknown_size() -> None:
     assert any("size 'Really Big'" in e for e in errors), errors
 
 
-def test_check_monster_fields_matches_the_reference_lists_case_insensitively() -> None:
-    record = _monster_record(size="medium", type="undead", subtypes=["incorporeal"])
-    assert check_monster_fields(record) == []
+def test_check_monster_fields_requires_the_canonical_casing_for_size_and_type() -> None:
+    """B12 review finding 7: `size`/`type` are compared EXACTLY, because the
+    schema enum has already rejected any other casing by the time the check
+    runs -- a lenient comparison there would be unreachable."""
+    errors = check_monster_fields(_monster_record(size="medium", type="undead"))
+    assert any("size 'medium'" in e for e in errors), errors
+    assert any("type 'undead'" in e for e in errors), errors
+
+
+def test_check_monster_fields_matches_subtypes_case_insensitively() -> None:
+    """`subtypes` has no schema enum, so this check is its only gate and is
+    deliberately lenient about casing."""
+    assert check_monster_fields(_monster_record(subtypes=["incorporeal"])) == []
+
+
+def test_check_monster_fields_accepts_an_augmented_compound_subtype() -> None:
+    """B12 review finding 1: the real MM prints "Augmented Humanoid" (7x) and
+    "Augmented Animal" (2x) for a creature whose type a template changed."""
+    assert check_monster_fields(_monster_record(subtypes=["Augmented Humanoid"])) == []
+    assert check_monster_fields(_monster_record(subtypes=["augmented animal"])) == []
+
+
+def test_check_monster_fields_rejects_an_augmented_non_type() -> None:
+    errors = check_monster_fields(_monster_record(subtypes=["Augmented Spooky"]))
+    assert any("'Augmented Spooky'" in e for e in errors), errors
 
 
 def test_check_monster_fields_flags_a_missing_save() -> None:
@@ -1905,6 +1997,22 @@ def test_check_monster_fields_flags_a_special_attack_with_no_ability_entry() -> 
     assert any("'Wisdom drain' has no matching special_abilities entry" in e for e in errors), (
         errors
     )
+
+
+def test_check_monster_fields_ignores_a_dash_only_special_attacks_line() -> None:
+    """B12 review finding 3: "Special Attacks: —" appears 65 times in the
+    real MM. A dash is a printed "none", never a token named "—"."""
+    assert check_monster_fields(_monster_record(special_attacks=["\u2014"])) == []
+    assert check_monster_fields(_monster_record(special_qualities=["-", "\u2013"])) == []
+
+
+def test_check_monster_fields_allows_the_mm3_short_form_defences() -> None:
+    """B12 review finding 2: MM III+ prints `SR 25`/`DR 10/magic` where MM I
+    spells out "spell resistance 25"/"damage reduction 10/magic"."""
+    record = _monster_record(
+        special_qualities=["SR 25", "DR 10/magic", "telepathy", "true seeing", "tongues"]
+    )
+    assert check_monster_fields(record) == []
 
 
 def test_check_monster_fields_allows_the_generic_quality_tokens() -> None:
@@ -1974,15 +2082,23 @@ def test_check_monster_segment_coverage_flags_a_creature_the_segment_never_print
     assert any("heading is not printed" in e for e in errors), errors
 
 
-def test_check_monster_segment_coverage_accepts_a_grouped_creature_by_group_and_variant() -> None:
-    """A grouped entry's sub-block heading is often just the variant label
-    ("Adult") under the group's own heading ("RED DRAGON"), so the full
-    `"<group>, <variant>"` name never appears verbatim."""
-    segment = _monster_segment("RED DRAGON\n\nAdult\n\nA red dragon is terrible.")
+def test_check_monster_segment_coverage_accepts_a_grouped_creature_by_variant_alone() -> None:
+    """B12 review finding 5: a grouped entry's sub-block heading is often
+    JUST the variant label ("Adult"), with the shared group heading printed
+    once on an earlier page that belongs to a different segment -- so only
+    the variant has to appear in this segment's own text."""
+    segment = _monster_segment("Adult\n\nThis dragon is terrible.")
     record = _monster_record("Red Dragon, Adult", group="Red Dragon", variant_label="Adult")
     assert not any(
         "heading is not printed" in e for e in check_monster_segment_coverage(record, segment)
     )
+
+
+def test_check_monster_segment_coverage_still_flags_a_grouped_creature_not_printed_at_all() -> None:
+    segment = _monster_segment("RED DRAGON\n\nWyrmling\n\nThis dragon is small.")
+    record = _monster_record("Red Dragon, Adult", group="Red Dragon", variant_label="Adult")
+    errors = check_monster_segment_coverage(record, segment)
+    assert any("heading is not printed" in e for e in errors), errors
 
 
 def test_check_monster_segment_coverage_flags_an_invented_ability() -> None:
@@ -1995,6 +2111,11 @@ def test_check_monster_segment_coverage_flags_an_invented_ability() -> None:
     )
     errors = check_monster_segment_coverage(record, _monster_segment())
     assert any("'Energy Drain' is not printed as a run-in heading" in e for e in errors), errors
+
+
+def test_check_monster_segment_coverage_ignores_a_dash_only_line() -> None:
+    record = _monster_record(special_attacks=["\u2014"], special_abilities=[])
+    assert check_monster_segment_coverage(record, _monster_segment()) == []
 
 
 def test_check_monster_segment_coverage_flags_a_described_token_with_no_entry() -> None:
@@ -2084,3 +2205,214 @@ def test_check_template_fields_flags_an_empty_section_text() -> None:
         _template_record(modifications=[{"section": "Hit Dice", "text_md": "  "}])
     )
     assert any("has empty text_md" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# Batch B12 review finding 8: a real-corpus round trip. The ALLIP entry from
+# the real Monster Manual (DATA/text/mm1/p0010.txt) is the reference case for
+# every monster rule at once -- the joined-paragraph stat block, two `null`
+# ability scores with printed dashes, three "Combat" run-in abilities that
+# back three Special Attacks tokens, and four generic Special Qualities
+# tokens that correctly have no entry. A hand-built record for it, checked
+# against the real page text, must pass with ZERO errors: if any rule is
+# miscalibrated against what the MM actually prints, this fails.
+# ---------------------------------------------------------------------------
+
+
+def _mm1_page_text(page: str) -> str | None:
+    data_dir = Path(os.environ.get("OWLSPERCH_DATA", str(Path.home() / "owlsperch-data")))
+    path = data_dir / "text" / "mm1" / f"{page}.txt"
+    if not path.is_file():
+        return None
+    return path.read_text()
+
+
+def _allip_segment_text() -> str | None:
+    """The ALLIP entry's own slice of the real mm1 p0010 page text: from its
+    ALL-CAPS heading up to the next entry's ("ANGEL")."""
+    text = _mm1_page_text("p0010")
+    if text is None or "\nALLIP\n" not in text:
+        return None
+    body = text.split("\nALLIP\n", 1)[1]
+    if "\nANGEL\n" in body:
+        body = body.split("\nANGEL\n", 1)[0]
+    return "ALLIP\n" + body
+
+
+#: The ALLIP record as the Monster Manual prints it (MM p. 8, pdf page 10) --
+#: transcribed by hand for this calibration, not extracted.
+_ALLIP_FIELDS: dict[str, Any] = {
+    "size": "Medium",
+    "type": "Undead",
+    "subtypes": ["Incorporeal"],
+    "hd": {"count": 4, "groups": [{"count": 4, "die": 12}], "die": 12, "text": "4d12 (26 hp)"},
+    "hp": 26,
+    "initiative": 5,
+    "speed": {
+        "text": "Fly 30 ft. (perfect) (6 squares)",
+        "modes": [{"mode": "fly", "feet": 30, "squares": 6, "maneuverability": "perfect"}],
+    },
+    "ac": {
+        "total": 15,
+        "touch": 15,
+        "flat_footed": 14,
+        "text": "15 (+1 Dex, +4 deflection), touch 15, flat-footed 14",
+    },
+    "bab": 2,
+    "grapple": None,
+    "attack": {
+        "text": "Incorporeal touch +3 melee (1d4 Wisdom drain)",
+        "attacks": [
+            {
+                "name": "Incorporeal touch",
+                "bonus": "+3",
+                "damage": "1d4 Wisdom drain",
+                "kind": "melee",
+            }
+        ],
+    },
+    "full_attack": {
+        "text": "Incorporeal touch +3 melee (1d4 Wisdom drain)",
+        "attacks": [
+            {
+                "name": "Incorporeal touch",
+                "bonus": "+3",
+                "damage": "1d4 Wisdom drain",
+                "kind": "melee",
+            }
+        ],
+    },
+    "space_reach": {"space_ft": 5, "reach_ft": 5, "text": "5 ft./5 ft."},
+    "special_attacks": ["Babble", "madness", "Wisdom drain"],
+    "special_qualities": [
+        "Darkvision 60 ft.",
+        "incorporeal traits",
+        "+2 turn resistance",
+        "undead traits",
+    ],
+    "special_abilities": [
+        {
+            "name": "Babble",
+            "kind": "Su",
+            "text_md": "An allip constantly mutters and whines to itself, creating a hypnotic "
+            "effect.",
+        },
+        {
+            "name": "Madness",
+            "kind": "Su",
+            "text_md": "Anyone targeting an allip with a thought detection, mind control, or "
+            "telepathic ability makes direct contact with its tortured mind and takes 1d4 "
+            "points of Wisdom damage.",
+        },
+        {
+            "name": "Wisdom Drain",
+            "kind": "Su",
+            "text_md": "An allip causes 1d4 points of Wisdom drain each time it hits with its "
+            "incorporeal touch attack.",
+        },
+    ],
+    "saves": {"fort": 1, "ref": 4, "will": 4},
+    "abilities": {"str": None, "dex": 12, "con": None, "int": 11, "wis": 11, "cha": 18},
+    "skills": {
+        "text": "Hide +8, Intimidate +7, Listen +7, Search +4, Spot +7, Survival +0 "
+        "(+2 following tracks)",
+        "entries": [
+            {"name": "Hide", "bonus": 8},
+            {"name": "Intimidate", "bonus": 7},
+            {"name": "Listen", "bonus": 7},
+            {"name": "Search", "bonus": 4},
+            {"name": "Spot", "bonus": 7},
+            {"name": "Survival", "bonus": 0, "note": "+2 following tracks"},
+        ],
+    },
+    "feats": ["Improved Initiative", "Lightning Reflexes"],
+    "environment": "Any",
+    "organization": "Solitary",
+    "cr": 3,
+    "cr_text": "3",
+    "treasure": "None",
+    "alignment": "Always neutral evil",
+    "advancement": "5–12 HD (Medium)",
+    "level_adjustment": {"value": None, "text": "—"},
+    "group": None,
+    "variant_label": None,
+    "description_sections": [
+        {
+            "heading": "Combat",
+            "text_md": "An allip is unable to cause physical harm, although it doesn't appear to "
+            "know that.",
+        }
+    ],
+    "source_pages": {"start": 10, "end": 10},
+}
+
+
+def _allip_record() -> dict[str, Any]:
+    return {
+        "id": "monster:mm1:allip",
+        "type": "monster",
+        "name": "Allip",
+        "slug": "allip",
+        "aliases": [],
+        "book_id": "mm1",
+        "pages": [10],
+        "citation": "MM p. 8",
+        "text_md": "An allip is the spectral remains of someone driven to suicide by a madness "
+        "that afflicted it in life.",
+        "fields": copy.deepcopy(_ALLIP_FIELDS),
+        "schema_version": 1,
+        "extraction": {
+            "tier": "sonnet",
+            "model": "m",
+            "segment_id": "mm1-monster-p0010",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+    }
+
+
+@pytest.mark.corpus
+def test_mm1_real_corpus_allip_round_trip() -> None:
+    text = _allip_segment_text()
+    if text is None:
+        pytest.skip("the real mm1 page text is not present")
+
+    record = _allip_record()
+    segment = {"seg_id": "mm1-monster-p0010", "pages": [10], "text": text}
+
+    assert check_monster_fields(record) == []
+    assert check_monster_segment_coverage(record, segment) == []
+
+
+@pytest.mark.corpus
+def test_mm1_real_corpus_allip_conforms_to_the_monster_schema() -> None:
+    """The same hand-built record against the real `monster.json`, so the
+    schema and the checks are calibrated on the same creature."""
+    from jsonschema import Draft202012Validator
+
+    from owlsperch.schemas import load_registry
+
+    if _allip_segment_text() is None:
+        pytest.skip("the real mm1 page text is not present")
+
+    registry = load_registry(Path(__file__).resolve().parent.parent.parent / "schemas")
+    validator = Draft202012Validator(registry.load_type_schema("monster"))
+    errors = sorted(validator.iter_errors(_allip_record()["fields"]), key=str)
+    assert not errors, [e.message for e in errors]
+
+
+@pytest.mark.corpus
+def test_mm1_real_corpus_allip_catches_a_dropped_ability() -> None:
+    """The negative half of the round trip: drop the `Wisdom Drain` entry the
+    page describes and the checks must notice, against the real page text."""
+    text = _allip_segment_text()
+    if text is None:
+        pytest.skip("the real mm1 page text is not present")
+
+    record = _allip_record()
+    record["fields"]["special_abilities"] = record["fields"]["special_abilities"][:2]
+    segment = {"seg_id": "mm1-monster-p0010", "pages": [10], "text": text}
+
+    assert any("Wisdom drain" in e for e in check_monster_fields(record))
+    assert any(
+        "IS described as a run-in" in e for e in check_monster_segment_coverage(record, segment)
+    )

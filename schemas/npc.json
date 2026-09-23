@@ -72,11 +72,12 @@
     },
     "hd": {
       "type": "object",
-      "description": "The \"Hit Dice:\" line, parsed. `count` is a number, not an integer, because a Tiny creature can have a half hit die (\"1/2 d10\").",
+      "description": "The \"Hit Dice:\" line, parsed. `groups` has one entry per printed dice TERM, so a multi-part line (\"1d8+1 plus 6d8+18 (50 hp)\" -- a lycanthrope, or any creature with class levels) is modeled in full; `count` is their SUM, and is a number rather than an integer because a Tiny creature can have a half hit die (\"1/2 d10\").",
       "properties": {
         "count": {
           "type": "number",
           "minimum": 0,
+          "description": "Total hit dice: the SUM of every `groups[].count`.",
           "x-ui": {
             "label": "Hit dice",
             "filterable": false,
@@ -86,6 +87,38 @@
             "rangeable": true
           }
         },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number",
+                "minimum": 0
+              },
+              "die": {
+                "type": "integer",
+                "enum": [
+                  4,
+                  6,
+                  8,
+                  10,
+                  12
+                ]
+              },
+              "bonus": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "die"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "description": "One entry per printed dice term, in printed order -- a single-term line has exactly one."
+        },
         "die": {
           "type": "integer",
           "enum": [
@@ -94,7 +127,8 @@
             8,
             10,
             12
-          ]
+          ],
+          "description": "Convenience copy of the FIRST term's die size; omit it for a multi-part line, whose dice sizes all live in `groups`."
         },
         "bonus": {
           "type": "integer"
@@ -107,7 +141,7 @@
       },
       "required": [
         "count",
-        "die",
+        "groups",
         "text"
       ],
       "additionalProperties": false,

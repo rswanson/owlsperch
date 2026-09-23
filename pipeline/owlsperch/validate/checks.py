@@ -283,10 +283,13 @@ def check_pages_within_segment(record: dict[str, Any], segment: dict[str, Any] |
 # from B10c, applied to the MM's own two stat-block lines).
 # ---------------------------------------------------------------------------
 
-#: The dice count and die size at the start of a printed "Hit Dice:" value:
-#: "4d12 (26 hp)", "12d8+48 (102 hp)", and -- a Tiny construct -- the
-#: half-die form "1/2 d10 (2 hp)".
-_HD_TEXT_RE = re.compile(r"^\s*(\d+)\s*(?:/\s*(\d+))?\s*d\s*(\d+)", re.IGNORECASE)
+#: ONE dice term of a printed "Hit Dice:" value: "4d12", "12d8+48", the
+#: half-die form "1/2 d10" (a Tiny construct), and each term of a MULTI-PART
+#: line -- "1d8+1 plus 6d8+18 (50 hp)" (a lycanthrope, or any creature with
+#: class levels, which is the norm for an npc record). `finditer` over the
+#: whole value yields one match per printed term, in printed order, which is
+#: what `hd.groups` must mirror.
+_HD_TERM_RE = re.compile(r"(\d+)\s*(?:/\s*(\d+))?\s*d\s*(\d+)\s*([+-]\s*\d+)?", re.IGNORECASE)
 
 #: The average hit points the same line prints in parentheses.
 _HD_HP_RE = re.compile(r"\(\s*(\d+)\s*hp\s*\)", re.IGNORECASE)
@@ -352,6 +355,34 @@ _GENERIC_QUALITY_PHRASES_RAW: tuple[str, ...] = (
     "yugoloth traits",
     "cold subtype",
     "fire subtype",
+    # (B12 review, real-corpus counts over DATA/text/mm1) Generic tokens the
+    # MM leans on constantly and never describes per creature: `telepathy`
+    # alone appears 27 times, and the rest are glossary/type-trait rules.
+    "telepathy",
+    "tongues",
+    "true seeing",
+    "see in darkness",
+    "light sensitivity",
+    "light blindness",
+    # The MM III+ layout prints its defences with the label words bare
+    # ("Immune fire, cold", "Resist acid 10"), not spelled out as MM I's
+    # "immunity to ..." / "resistance to ...".
+    "immune",
+    "resist",
+)
+
+#: Regex rules for the generic tokens a fixed phrase list can't express,
+#: matched against the whole `_normalize_special_token` form of a token
+#: (B12 review): any `<word> traits`/`<word> subtype` token (the plural fold
+#: leaves "trait"), and the MM III+ layout's abbreviated defences, which
+#: print as bare `SR 25` / `DR 10/magic` rather than the spelled-out
+#: "spell resistance 25" / "damage reduction 10/magic" of MM I.
+_GENERIC_QUALITY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^[^ ]+ trait$"),
+    re.compile(r"^[^ ]+ subtype$"),
+    re.compile(r"^sr \d+$"),
+    re.compile(r"^dr \d+(/.*)?$"),
+    re.compile(r"^pr \d+$"),
 )
 
 _GENERIC_QUALITY_CACHE: frozenset[str] | None = None
@@ -380,10 +411,31 @@ def _contains_word_run(normalized_token: str, normalized_phrase: str) -> bool:
 
 def _is_generic_quality_token(normalized_token: str) -> bool:
     """Whether a stat-block Special Attacks/Qualities token is one of the
-    MM's generic, never-described ones (`_GENERIC_QUALITY_PHRASES_RAW`)."""
-    return any(
-        _contains_word_run(normalized_token, phrase) for phrase in _generic_quality_phrases()
-    )
+    MM's generic, never-described ones -- either containing one of
+    `_GENERIC_QUALITY_PHRASES_RAW` as a whole-word run, or matching one of
+    `_GENERIC_QUALITY_PATTERNS` outright."""
+    if any(_contains_word_run(normalized_token, phrase) for phrase in _generic_quality_phrases()):
+        return True
+    return any(pattern.match(normalized_token) for pattern in _GENERIC_QUALITY_PATTERNS)
+
+
+def _is_dash_placeholder(token: str) -> bool:
+    """Whether `token` is a printed "nothing here" dash rather than a real
+    stat-block token -- the same rule `_split_special_cell` uses for a level
+    table's Special cell. "Special Attacks: —" appears 65 times in the real
+    Monster Manual, and `["—"]` is NOT a special attack named "—"."""
+    stripped = token.strip()
+    return not stripped or all(ch in _DASH_PLACEHOLDER_CHARS for ch in stripped)
+
+
+def _printed_special_tokens(fields: dict[str, Any], key: str) -> list[str]:
+    """The real, printed tokens of `fields[key]` (`special_attacks` or
+    `special_qualities`): every string entry that isn't a dash placeholder
+    (see `_is_dash_placeholder`)."""
+    tokens = fields.get(key)
+    if not isinstance(tokens, list):
+        return []
+    return [t for t in tokens if isinstance(t, str) and not _is_dash_placeholder(t)]
 
 
 _SIZES_CACHE: list[str] | None = None
@@ -391,28 +443,27 @@ _CREATURE_TYPES_CACHE: tuple[list[str], list[str]] | None = None
 
 
 def _size_names() -> set[str]:
-    """The committed `schemas/sizes.json` list, case-folded (same deferred
-    import rationale as `_skill_names`)."""
+    """The committed `schemas/sizes.json` list, VERBATIM -- the same strings
+    `monster.json`'s own `size` enum spells out (same deferred import
+    rationale as `_skill_names`)."""
     global _SIZES_CACHE
     if _SIZES_CACHE is None:
         from owlsperch.schemas import load_sizes
 
-        _SIZES_CACHE = [s.casefold() for s in load_sizes()]
+        _SIZES_CACHE = list(load_sizes())
     return set(_SIZES_CACHE)
 
 
 def _creature_type_names() -> tuple[set[str], set[str]]:
-    """The committed `schemas/creature_types.json` types and subtypes, both
-    case-folded."""
+    """The committed `schemas/creature_types.json` types and subtypes,
+    VERBATIM -- `_check_monster_classification` case-folds the subtype side
+    itself (see its docstring on why only that side is lenient)."""
     global _CREATURE_TYPES_CACHE
     if _CREATURE_TYPES_CACHE is None:
         from owlsperch.schemas import load_creature_types
 
         loaded = load_creature_types()
-        _CREATURE_TYPES_CACHE = (
-            [t.casefold() for t in loaded.types],
-            [s.casefold() for s in loaded.subtypes],
-        )
+        _CREATURE_TYPES_CACHE = (list(loaded.types), list(loaded.subtypes))
     types, subtypes = _CREATURE_TYPES_CACHE
     return set(types), set(subtypes)
 
@@ -437,11 +488,88 @@ def _as_int(value: Any) -> int | None:
     return value
 
 
+@dataclass(frozen=True)
+class _HdTerm:
+    """One printed dice term of a "Hit Dice:" line: `1d8+1` in "1d8+1 plus
+    6d8+18 (50 hp)". `count` is a float so a half hit die ("1/2 d10") can be
+    0.5; `bonus` is 0 when the term prints none."""
+
+    count: float
+    die: int
+    bonus: int
+
+
+def _parse_hd_terms(text: str) -> list[_HdTerm]:
+    """Every dice term printed in a "Hit Dice:" value, in printed order --
+    one for the ordinary single-term line, several for the multi-part `plus`
+    form a lycanthrope or any class-levelled creature prints."""
+    terms: list[_HdTerm] = []
+    for match in _HD_TERM_RE.finditer(text):
+        numerator = int(match.group(1))
+        denominator = int(match.group(2)) if match.group(2) else 1
+        count = numerator / denominator if denominator else float(numerator)
+        bonus_text = match.group(4)
+        bonus = int(bonus_text.replace(" ", "")) if bonus_text else 0
+        terms.append(_HdTerm(count=count, die=int(match.group(3)), bonus=bonus))
+    return terms
+
+
+def _check_monster_hd_groups(
+    hd: dict[str, Any], terms: list[_HdTerm], text: str, name: str
+) -> list[str]:
+    """`hd.groups` must mirror the printed terms one for one (B12 review):
+    a multi-part line like "1d8+1 plus 6d8+18 (50 hp)" -- a lycanthrope, or
+    any creature with class levels, which is the norm for an npc record --
+    otherwise has nowhere to live, and reading only its first term would put
+    a 1-HD creature's stats on a 7-HD one."""
+    errors: list[str] = []
+    groups = hd.get("groups")
+    if not isinstance(groups, list):
+        return [f"{name}: hd.groups is missing or not an array"]
+    if len(groups) != len(terms):
+        return [
+            f"{name}: hd.groups has {len(groups)} entr{'y' if len(groups) == 1 else 'ies'} but "
+            f"hd.text {text!r} prints {len(terms)} dice term(s)"
+        ]
+    for index, (group, term) in enumerate(zip(groups, terms, strict=True)):
+        if not isinstance(group, dict):
+            errors.append(f"{name}: hd.groups[{index}] is not an object")
+            continue
+        group_count = group.get("count")
+        if not isinstance(group_count, (int, float)) or isinstance(group_count, bool):
+            errors.append(f"{name}: hd.groups[{index}].count is missing or not a number")
+        elif abs(float(group_count) - term.count) > _CR_TOLERANCE:
+            errors.append(
+                f"{name}: hd.groups[{index}].count {group_count} does not match the "
+                f"{term.count:g} dice printed for that term in hd.text {text!r}"
+            )
+        group_die = _as_int(group.get("die"))
+        if group_die is None:
+            errors.append(f"{name}: hd.groups[{index}].die is missing or not an integer")
+        elif group_die != term.die:
+            errors.append(
+                f"{name}: hd.groups[{index}].die {group_die} does not match the d{term.die} "
+                f"printed for that term in hd.text {text!r}"
+            )
+        group_bonus = group.get("bonus", 0)
+        bonus_value = _as_int(group_bonus) if group_bonus is not None else 0
+        if bonus_value is None:
+            errors.append(f"{name}: hd.groups[{index}].bonus is not an integer")
+        elif bonus_value != term.bonus:
+            errors.append(
+                f"{name}: hd.groups[{index}].bonus {bonus_value} does not match the "
+                f"{term.bonus:+d} printed for that term in hd.text {text!r}"
+            )
+    return errors
+
+
 def _check_monster_hd(fields: dict[str, Any], name: str) -> list[str]:
-    """`hd.count`/`hd.die` must agree with the dice expression printed in
-    `hd.text`, and `hp` with the average hit points that same line prints in
-    parentheses (B12): the whole point of keeping the verbatim line is that
-    it can check the parsed numbers."""
+    """`hd.groups` must mirror every dice term printed in `hd.text`,
+    `hd.count` must be their SUM (so a multi-part line's total HD is right),
+    `hd.die` -- optional, the single-term convenience field -- must match the
+    first term, and `hp` must match the average hit points that same line
+    prints in parentheses (B12): the whole point of keeping the verbatim line
+    is that it can check the parsed numbers."""
     errors: list[str] = []
     hd = fields.get("hd")
     if not isinstance(hd, dict):
@@ -450,13 +578,11 @@ def _check_monster_hd(fields: dict[str, Any], name: str) -> list[str]:
     if not isinstance(text, str) or not text.strip():
         return [f"{name}: hd.text is missing or empty"]
 
-    match = _HD_TEXT_RE.match(text)
-    if match is None:
-        errors.append(f"{name}: hd.text {text!r} does not start with a dice expression (NdM)")
+    terms = _parse_hd_terms(text)
+    if not terms:
+        errors.append(f"{name}: hd.text {text!r} contains no dice expression (NdM)")
     else:
-        numerator = int(match.group(1))
-        denominator = int(match.group(2)) if match.group(2) else 1
-        printed_count = numerator / denominator if denominator else float(numerator)
+        printed_count = sum(term.count for term in terms)
         count = hd.get("count")
         if not isinstance(count, (int, float)) or isinstance(count, bool):
             errors.append(f"{name}: hd.count is missing or not a number")
@@ -464,14 +590,15 @@ def _check_monster_hd(fields: dict[str, Any], name: str) -> list[str]:
             errors.append(
                 f"{name}: hd.count {count} does not match the {printed_count:g} dice "
                 f"printed in hd.text {text!r}"
+                + (" (a multi-part line's count is the SUM of its terms)" if len(terms) > 1 else "")
             )
-        printed_die = int(match.group(3))
         die = _as_int(hd.get("die"))
-        if die is not None and die != printed_die:
+        if die is not None and die != terms[0].die:
             errors.append(
-                f"{name}: hd.die {die} does not match the d{printed_die} printed in "
+                f"{name}: hd.die {die} does not match the d{terms[0].die} printed in "
                 f"hd.text {text!r}"
             )
+        errors.extend(_check_monster_hd_groups(hd, terms, text, name))
 
     hp = _as_int(fields.get("hp"))
     if hp is None:
@@ -503,30 +630,63 @@ def _check_monster_cr(fields: dict[str, Any], name: str) -> list[str]:
     return []
 
 
+def _is_known_subtype(subtype: str, subtypes: set[str], types: set[str]) -> bool:
+    """Whether `subtype` is a recognized stat-block subtype.
+
+    Two forms are accepted (B12 review, real-corpus counts over
+    DATA/text/mm1): a plain entry from `schemas/creature_types.json`'s own
+    subtype list, and the COMPOUND `Augmented <creature type>` form the MM
+    prints for a creature whose type was changed by a template or by
+    lycanthropy -- "Augmented Humanoid" (7 occurrences), "Augmented Animal"
+    (2). Listing every `Augmented X` combination in the data file instead
+    would be 15 more entries that all mean the same rule, and would still
+    miss a book that augments a type the MM never does."""
+    folded = subtype.casefold()
+    if folded in subtypes:
+        return True
+    prefix = "augmented "
+    if folded.startswith(prefix):
+        return folded[len(prefix) :].strip() in types
+    return False
+
+
 def _check_monster_classification(fields: dict[str, Any], name: str) -> list[str]:
-    """`size`, `type` and every `subtypes` entry must come from the
-    committed reference lists (`schemas/sizes.json`,
-    `schemas/creature_types.json`), compared case-insensitively."""
+    """`size`, `type` and every `subtypes` entry must come from the committed
+    reference lists (`schemas/sizes.json`, `schemas/creature_types.json`).
+
+    CASING (B12 review): `size`/`type` are compared EXACTLY, because
+    `monster.json`/`npc.json` spell the same values out as JSON Schema enums
+    (a test keeps the two in sync) and the schema has already rejected any
+    other casing by the time this runs -- a case-insensitive comparison here
+    would be unreachable leniency that only made the rule look softer than
+    it is. `subtypes` has no enum (a book may print a racial subtype no list
+    anticipates, and the compound form below is open-ended), so this check is
+    its ONLY gate and is deliberately case-insensitive."""
     errors: list[str] = []
     sizes = _size_names()
     types, subtypes = _creature_type_names()
 
     size = fields.get("size")
-    if not isinstance(size, str) or size.casefold() not in sizes:
+    if not isinstance(size, str) or size not in sizes:
         errors.append(f"{name}: size {size!r} is not one of the 9 sizes in schemas/sizes.json")
 
     creature_type = fields.get("type")
-    if not isinstance(creature_type, str) or creature_type.casefold() not in types:
+    if not isinstance(creature_type, str) or creature_type not in types:
         errors.append(
             f"{name}: type {creature_type!r} is not a creature type in schemas/creature_types.json"
         )
 
     raw_subtypes = fields.get("subtypes")
     if isinstance(raw_subtypes, list):
+        folded_types = {t.casefold() for t in types}
+        folded_subtypes = {s.casefold() for s in subtypes}
         for subtype in raw_subtypes:
-            if not isinstance(subtype, str) or subtype.casefold() not in subtypes:
+            if not isinstance(subtype, str) or not _is_known_subtype(
+                subtype, folded_subtypes, folded_types
+            ):
                 errors.append(
-                    f"{name}: subtype {subtype!r} is not a subtype in schemas/creature_types.json"
+                    f"{name}: subtype {subtype!r} is not a subtype in "
+                    'schemas/creature_types.json (nor an "Augmented <creature type>")'
                 )
     return errors
 
@@ -578,9 +738,12 @@ def _check_monster_special_abilities(fields: dict[str, Any], name: str) -> list[
     described by a `special_abilities` entry -- the monster counterpart of
     B10c's class Special-column check, reusing the same normalization and
     containment helpers -- unless the token is one of the MM's generic,
-    never-described quality tokens (`_GENERIC_QUALITY_PHRASES_RAW`). Two
-    `special_abilities` entries whose names normalize to the same thing are
-    an error too, the same way two identically-named class features are."""
+    never-described quality tokens (`_GENERIC_QUALITY_PHRASES_RAW`,
+    `_GENERIC_QUALITY_PATTERNS`). A printed dash placeholder ("Special
+    Attacks: —", which the real MM prints 65 times) is not a token at all
+    and is skipped (`_printed_special_tokens`). Two `special_abilities`
+    entries whose names normalize to the same thing are an error too, the
+    same way two identically-named class features are."""
     errors: list[str] = []
     ability_names = _special_ability_names(fields)
     normalized_abilities = [_normalize_special_token(n) for n in ability_names]
@@ -598,12 +761,7 @@ def _check_monster_special_abilities(fields: dict[str, Any], name: str) -> list[
             seen[normalized] = raw
 
     for key in ("special_attacks", "special_qualities"):
-        tokens = fields.get(key)
-        if not isinstance(tokens, list):
-            continue
-        for token in tokens:
-            if not isinstance(token, str):
-                continue
+        for token in _printed_special_tokens(fields, key):
             normalized_token = _normalize_special_token(token)
             if not normalized_token:
                 continue
@@ -2156,9 +2314,10 @@ def check_monster_segment_coverage(
     """(B12) The monster/npc checks that need the owning segment's own text:
 
     1. The creature's own heading is printed in this segment -- its `name`,
-       or (for a grouped entry, whose sub-block heading can be just the
-       variant label, e.g. a true dragon's age category) both its `group`
-       and its `variant_label`.
+       or, for a grouped record, just its `variant_label` (a grouped entry's
+       sub-block heading is often only the variant, e.g. a true dragon's age
+       category, with the shared group heading printed once on an earlier
+       page that belongs to a different segment).
     2. Every `special_abilities[].name` is printed as a run-in heading in
        this segment ("Babble (Su): ..."), so an ability can never be
        invented out of the extractor's own knowledge of the game.
@@ -2189,12 +2348,17 @@ def check_monster_segment_coverage(
     errors: list[str] = []
 
     if _normalize_table_text(name) not in normalized_text:
-        group = fields.get("group")
+        # (B12 review) For a grouped record only the VARIANT label has to be
+        # printed in this segment: the shared group heading is often printed
+        # once, on an earlier page that belongs to a different segment (or
+        # only as the shared stat table's caption), while the variant label
+        # is what identifies this creature's own column/sub-block. Requiring
+        # the group word too failed every real grouped creature whose
+        # segment starts at its own sub-block.
         variant = fields.get("variant_label")
         grouped_ok = (
-            isinstance(group, str)
+            isinstance(fields.get("group"), str)
             and isinstance(variant, str)
-            and _normalize_table_text(group) in normalized_text
             and _normalize_table_text(variant) in normalized_text
         )
         if not grouped_ok:
@@ -2213,12 +2377,7 @@ def check_monster_segment_coverage(
 
     normalized_abilities = [_normalize_special_token(n) for n in ability_names]
     for key in ("special_attacks", "special_qualities"):
-        tokens = fields.get(key)
-        if not isinstance(tokens, list):
-            continue
-        for token in tokens:
-            if not isinstance(token, str):
-                continue
+        for token in _printed_special_tokens(fields, key):
             normalized_token = _normalize_special_token(token)
             if not normalized_token:
                 continue
