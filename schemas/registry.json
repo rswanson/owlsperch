@@ -36,6 +36,24 @@
       "plural_label": "Prestige classes",
       "version": 2
     },
+    "monster": {
+      "schema": "monster.json",
+      "label": "Monster",
+      "plural_label": "Monsters",
+      "version": 1
+    },
+    "npc": {
+      "schema": "npc.json",
+      "label": "NPC",
+      "plural_label": "NPCs",
+      "version": 1
+    },
+    "template": {
+      "schema": "template.json",
+      "label": "Template",
+      "plural_label": "Templates",
+      "version": 1
+    },
     "errata_entry": {
       "schema": "errata_entry.json",
       "label": "Errata entry",

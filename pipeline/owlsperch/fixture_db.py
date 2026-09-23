@@ -705,6 +705,157 @@ _ICE_STORM_ERRATA: dict[str, Any] = {
     },
 }
 
+#: (batch B12) A seventh segment, for the synthetic monster below. Its text
+#: carries the whole MM I-style joined stat block plus the "Combat" section's
+#: own run-in ability heading, because `validate.checks
+#: .check_monster_segment_coverage` checks the record's heading and every
+#: `special_abilities[].name` against exactly this text.
+_SEGMENT_MONSTER: dict[str, Any] = {
+    "seg_id": "fixture-book-monster-p0007",
+    "book_id": "fixture-book",
+    "pages": [7],
+    "printed_pages": [7],
+    "kind_hint": "monster",
+    "heading": "Fixture Beast",
+    "text": (
+        "FIXTURE BEAST\n\n"
+        "Large Magical Beast Hit Dice: 3d10+6 (22 hp) Initiative: +1 "
+        "Speed: 40 ft. (8 squares) Armor Class: 15 (-1 size, +1 Dex, +5 natural), "
+        "touch 10, flat-footed 14 Base Attack/Grapple: +3/+11 "
+        "Attack: Bite +6 melee (1d8+4) Full Attack: Bite +6 melee (1d8+4) "
+        "Space/Reach: 10 ft./5 ft. Special Attacks: Frenzy "
+        "Special Qualities: Darkvision 60 ft., scent Saves: Fort +5, Ref +3, Will +1 "
+        "Abilities: Str 17, Dex 13, Con 15, Int 2, Wis 12, Cha 6 "
+        "Skills: Listen +6, Spot +6 Feats: Alertness, Track "
+        "Environment: Temperate forests Organization: Solitary or pair "
+        "Challenge Rating: 2 Treasure: None Alignment: Always neutral "
+        "Advancement: 4-6 HD (Large) Level Adjustment: —\n\n"
+        "A shaggy, six-legged beast the size of a cart lopes out of the trees, "
+        "testing the air with a blunt grey muzzle.\n\n"
+        "COMBAT\n\n"
+        "A fixture beast charges the nearest moving thing and keeps biting until "
+        "nothing moves. Frenzy (Su): Once per day a fixture beast can work itself "
+        "into a frenzy, gaining a +4 bonus on damage rolls and a -2 penalty to "
+        "Armor Class for 3 rounds."
+    ),
+    "status": "pending",
+    "tier": "sonnet",
+    "attempts": [],
+    "created_at": "2026-01-01T00:00:00+00:00",
+}
+
+#: (batch B12) An invented monster -- never copied from any real book (see
+#: this module's docstring). Its `special_qualities` deliberately mix a
+#: described token (none here) with two of the MM's generic, never-described
+#: ones ("Darkvision 60 ft.", "scent"), while `special_attacks`' one token
+#: has its matching `special_abilities` entry -- the shape
+#: `validate.checks.check_monster_fields` is built around.
+_MONSTER: dict[str, Any] = {
+    "id": "monster:fixture-book:fixture-beast",
+    "type": "monster",
+    "name": "Fixture Beast",
+    "slug": "fixture-beast",
+    "aliases": [],
+    "book_id": "fixture-book",
+    "pages": [7],
+    "citation": "FB p. 7",
+    "text_md": (
+        "A shaggy, six-legged beast the size of a cart lopes out of the trees, "
+        "testing the air with a blunt grey muzzle."
+    ),
+    "fields": {
+        "size": "Large",
+        "type": "Magical Beast",
+        "subtypes": [],
+        "hd": {
+            "count": 3,
+            "groups": [{"count": 3, "die": 10, "bonus": 6}],
+            "die": 10,
+            "bonus": 6,
+            "text": "3d10+6 (22 hp)",
+        },
+        "hp": 22,
+        "initiative": 1,
+        "speed": {
+            "text": "40 ft. (8 squares)",
+            "modes": [{"mode": "land", "feet": 40, "squares": 8}],
+        },
+        "ac": {
+            "total": 15,
+            "touch": 10,
+            "flat_footed": 14,
+            "text": "15 (-1 size, +1 Dex, +5 natural), touch 10, flat-footed 14",
+        },
+        "bab": 3,
+        "grapple": 11,
+        "attack": {
+            "text": "Bite +6 melee (1d8+4)",
+            "attacks": [
+                {"name": "Bite", "bonus": "+6", "damage": "1d8+4", "kind": "melee"},
+            ],
+        },
+        "full_attack": {
+            "text": "Bite +6 melee (1d8+4)",
+            "attacks": [
+                {"name": "Bite", "bonus": "+6", "damage": "1d8+4", "kind": "melee"},
+            ],
+        },
+        "space_reach": {"space_ft": 10, "reach_ft": 5, "text": "10 ft./5 ft."},
+        "special_attacks": ["Frenzy"],
+        "special_qualities": ["Darkvision 60 ft.", "scent"],
+        "special_abilities": [
+            {
+                "name": "Frenzy",
+                "kind": "Su",
+                "text_md": (
+                    "Once per day a fixture beast can work itself into a frenzy, "
+                    "gaining a +4 bonus on damage rolls and a -2 penalty to Armor "
+                    "Class for 3 rounds."
+                ),
+            },
+        ],
+        "saves": {"fort": 5, "ref": 3, "will": 1},
+        "abilities": {"str": 17, "dex": 13, "con": 15, "int": 2, "wis": 12, "cha": 6},
+        "skills": {
+            "text": "Listen +6, Spot +6",
+            "entries": [{"name": "Listen", "bonus": 6}, {"name": "Spot", "bonus": 6}],
+        },
+        "feats": ["Alertness", "Track"],
+        "environment": "Temperate forests",
+        "organization": "Solitary or pair",
+        "cr": 2,
+        "cr_text": "2",
+        "treasure": "None",
+        "alignment": "Always neutral",
+        "advancement": "4-6 HD (Large)",
+        "level_adjustment": {"value": None, "text": "—"},
+        "group": None,
+        "variant_label": None,
+        "description_sections": [
+            {
+                "heading": "Combat",
+                "text_md": (
+                    "A fixture beast charges the nearest moving thing and keeps "
+                    "biting until nothing moves."
+                ),
+            },
+        ],
+        "source_pages": {"start": 7, "end": 7},
+    },
+    "tables": [],
+    "canonical": False,
+    "variant_of": None,
+    "applied_overrides": [],
+    "macro_eligible": False,
+    "schema_version": 1,
+    "extraction": {
+        "tier": "sonnet",
+        "model": "fixture",
+        "segment_id": "fixture-book-monster-p0007",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    },
+}
+
 #: (batch B10b) `toc/fixture-book.json` (design decision D16): three
 #: chapters -- Magic (pdf 1-2), Combat (pdf 3-3), Equipment (pdf 4-4) -- each
 #: with one level-2 section. "Grapple Ranks" (combat, p.3) and "Hauling
@@ -792,6 +943,27 @@ _TOC: dict[str, Any] = {
             "path": ["Chapter 4: Classes", "Fixture Mage"],
             "category": "classes",
         },
+        {
+            # Batch B12: gives the fixture monster record a real "monsters"
+            # toc category, so the web tree's Monsters branch has a fixture
+            # to open.
+            "title": "Chapter 5: Monsters",
+            "level": 1,
+            "printed_page": 7,
+            "pdf_page_start": 7,
+            "pdf_page_end": 7,
+            "path": ["Chapter 5: Monsters"],
+            "category": "monsters",
+        },
+        {
+            "title": "Fixture Beast",
+            "level": 2,
+            "printed_page": 7,
+            "pdf_page_start": 7,
+            "pdf_page_end": 7,
+            "path": ["Chapter 5: Monsters", "Fixture Beast"],
+            "category": "monsters",
+        },
     ],
 }
 
@@ -812,6 +984,8 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
         _SEGMENT_3,
         _SEGMENT_4,
         _SEGMENT_5,
+        # Batch B12.
+        _SEGMENT_MONSTER,
         # Batch B11, design decision D21.
         _SEGMENT_ICE_STORM_FB,
         _SEGMENT_ICE_STORM_FB2,
@@ -834,6 +1008,8 @@ def write_fixture_data(data_dir: Path) -> BuildResult:
         _HAULING_GEAR,
         _CLASS,
         _CLASS_TABLE,
+        # Batch B12.
+        _MONSTER,
         # Batch B11, design decision D21.
         _ICE_STORM_FB,
         _ICE_STORM_FB2,

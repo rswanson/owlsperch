@@ -1,0 +1,106 @@
+{
+  "id": "monster:example:sable-hound-lesser",
+  "type": "monster",
+  "name": "Sable Hound, Lesser",
+  "slug": "sable-hound-lesser",
+  "aliases": ["Lesser Sable Hound"],
+  "book_id": "example",
+  "pages": [1],
+  "citation": "Example p. 1",
+  "text_md": "A lean, coal-black hound pads out of the gloom on silent paws. Its eyes are two points of cold grey light, and the shadows behind it seem to lean toward it.\n\nSable hounds are bred on the shadowed planes as trackers and executioners. A lesser sable hound stands about two feet at the shoulder and weighs some forty pounds. Sable hounds do not speak, but they understand simple commands in Infernal.",
+  "fields": {
+    "size": "Small",
+    "type": "Magical Beast",
+    "subtypes": ["Extraplanar"],
+    "hd": {
+      "count": 1,
+      "groups": [{ "count": 1, "die": 10, "bonus": 1 }],
+      "die": 10,
+      "bonus": 1,
+      "text": "1d10+1 (6 hp)"
+    },
+    "hp": 6,
+    "initiative": 3,
+    "speed": {
+      "text": "40 ft. (8 squares)",
+      "modes": [{ "mode": "land", "feet": 40, "squares": 8 }]
+    },
+    "ac": {
+      "total": 14,
+      "touch": 13,
+      "flat_footed": 11,
+      "text": "14 (+1 size, +3 Dex), touch 13, flat-footed 11"
+    },
+    "bab": 1,
+    "grapple": -3,
+    "attack": {
+      "text": "Bite +4 melee (1d6+1 plus shadow chill)",
+      "attacks": [
+        { "name": "Bite", "bonus": "+4", "damage": "1d6+1 plus shadow chill", "kind": "melee" }
+      ]
+    },
+    "full_attack": {
+      "text": "Bite +4 melee (1d6+1 plus shadow chill)",
+      "attacks": [
+        { "name": "Bite", "bonus": "+4", "damage": "1d6+1 plus shadow chill", "kind": "melee" }
+      ]
+    },
+    "space_reach": { "space_ft": 5, "reach_ft": 5, "text": "5 ft./5 ft." },
+    "special_attacks": ["Shadow chill"],
+    "special_qualities": ["Darkvision 60 ft.", "scent", "shadow blend"],
+    "special_abilities": [
+      {
+        "name": "Shadow Chill",
+        "kind": "Su",
+        "text_md": "A creature bitten by a lesser sable hound must succeed on a DC 11 Fortitude save or take 1 point of Dexterity damage as the cold of the shadowed planes seeps into the wound. The save DC is Constitution-based."
+      },
+      {
+        "name": "Shadow Blend",
+        "kind": "Su",
+        "text_md": "In any illumination other than bright light, a lesser sable hound can disappear into the shadows, granting it total concealment. Artificial illumination -- even a light or continual flame spell -- does not negate this ability."
+      }
+    ],
+    "saves": { "fort": 3, "ref": 5, "will": 1 },
+    "abilities": { "str": 12, "dex": 17, "con": 13, "int": 4, "wis": 12, "cha": 6 },
+    "skills": {
+      "text": "Hide +7, Listen +5, Move Silently +7, Spot +5, Survival +1 (+3 following tracks)",
+      "entries": [
+        { "name": "Hide", "bonus": 7 },
+        { "name": "Listen", "bonus": 5 },
+        { "name": "Move Silently", "bonus": 7 },
+        { "name": "Spot", "bonus": 5 },
+        { "name": "Survival", "bonus": 1, "note": "+3 following tracks" }
+      ]
+    },
+    "feats": ["Alertness", "Weapon Finesse"],
+    "environment": "Any shadowed plane",
+    "organization": "Solitary, pair, or pack (3-8)",
+    "cr": 0.5,
+    "cr_text": "1/2",
+    "treasure": "None",
+    "alignment": "Always neutral evil",
+    "advancement": "2-3 HD (Small)",
+    "level_adjustment": { "value": null, "text": "—" },
+    "group": "Sable Hound",
+    "variant_label": "Lesser",
+    "description_sections": [
+      {
+        "heading": "Sable Hound Society",
+        "text_md": "A pack of sable hounds answers to whichever of its members last brought down prey unaided. Handlers exploit this by feeding the pack unevenly."
+      }
+    ],
+    "source_pages": { "start": 1, "end": 1 }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-monster-p0001",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

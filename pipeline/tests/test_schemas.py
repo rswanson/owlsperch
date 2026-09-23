@@ -13,7 +13,14 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from owlsperch.schemas import SchemaError, default_schemas_dir, load_registry, load_skills
+from owlsperch.schemas import (
+    SchemaError,
+    default_schemas_dir,
+    load_creature_types,
+    load_registry,
+    load_sizes,
+    load_skills,
+)
 
 _REQUIRED_X_UI_KEYS = {"label", "filterable", "sortable", "group", "order"}
 
@@ -88,9 +95,17 @@ def test_every_type_schema_field_has_complete_x_ui() -> None:
 
 #: Files under `schemas/` that aren't JSON Schema type/envelope files and so
 #: carry no top-level `version`: `registry.json` (the type index),
-#: `categories.json` (batch B10b's plain rules-taxonomy data file, D8), and
-#: `skills.json` (batch B10c's plain skill-name list, D9).
-_NON_SCHEMA_FILES = {"registry.json", "categories.json", "skills.json"}
+#: `categories.json` (batch B10b's plain rules-taxonomy data file, D8),
+#: `skills.json` (batch B10c's plain skill-name list, D9), and
+#: `sizes.json`/`creature_types.json` (batch B12's plain size and
+#: creature-type/subtype lists).
+_NON_SCHEMA_FILES = {
+    "registry.json",
+    "categories.json",
+    "skills.json",
+    "sizes.json",
+    "creature_types.json",
+}
 
 
 def test_every_schema_has_a_top_level_integer_version() -> None:
@@ -246,3 +261,85 @@ def test_non_base_class_type_does_not_require_the_new_fields() -> None:
 
     errors = sorted(validator.iter_errors(_minimal_class_fields(class_type="prestige")), key=str)
     assert not errors, errors
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: sizes.json / creature_types.json, and the schema enums they must
+# stay in sync with (a JSON Schema can't read an external list, so
+# monster.json/npc.json spell the same values out inline).
+# ---------------------------------------------------------------------------
+
+
+def test_load_sizes_returns_the_nine_size_categories_smallest_first() -> None:
+    sizes = load_sizes(_repo_schemas_dir())
+    assert sizes == [
+        "Fine",
+        "Diminutive",
+        "Tiny",
+        "Small",
+        "Medium",
+        "Large",
+        "Huge",
+        "Gargantuan",
+        "Colossal",
+    ]
+
+
+def test_load_creature_types_returns_the_15_types_and_the_subtypes() -> None:
+    creature_types = load_creature_types(_repo_schemas_dir())
+    assert len(creature_types.types) == 15
+    assert len(set(creature_types.types)) == len(creature_types.types)
+    assert "Magical Beast" in creature_types.types
+    assert "Undead" in creature_types.types
+    assert len(set(creature_types.subtypes)) == len(creature_types.subtypes)
+    for subtype in ("Incorporeal", "Extraplanar", "Angel", "Reptilian", "Swarm"):
+        assert subtype in creature_types.subtypes
+
+
+def test_load_sizes_rejects_a_malformed_file(tmp_path: Path) -> None:
+    (tmp_path / "sizes.json").write_text(json.dumps({"sizes": "Medium"}))
+    with pytest.raises(SchemaError):
+        load_sizes(tmp_path)
+
+
+def test_load_creature_types_rejects_a_malformed_file(tmp_path: Path) -> None:
+    (tmp_path / "creature_types.json").write_text(json.dumps({"types": [1, 2], "subtypes": []}))
+    with pytest.raises(SchemaError):
+        load_creature_types(tmp_path)
+
+
+@pytest.mark.parametrize("type_name", ["monster", "npc"])
+def test_monster_size_and_type_enums_match_the_committed_lists(type_name: str) -> None:
+    schemas_dir = _repo_schemas_dir()
+    registry = load_registry(schemas_dir)
+    schema = registry.load_type_schema(type_name)
+
+    assert schema["properties"]["size"]["enum"] == load_sizes(schemas_dir)
+    assert schema["properties"]["type"]["enum"] == load_creature_types(schemas_dir).types
+
+
+@pytest.mark.parametrize("field_name", ["cr", "hp"])
+def test_monster_numeric_fields_are_marked_rangeable(field_name: str) -> None:
+    """Acceptance criterion 1: the numeric fields the later range-filter PR
+    keys off (`cr`, `hp`, and `hd.count`) carry `x-ui.rangeable`."""
+    registry = load_registry(_repo_schemas_dir())
+    schema = registry.load_type_schema("monster")
+    assert schema["properties"][field_name]["x-ui"]["rangeable"] is True
+
+
+def test_monster_hd_count_is_marked_rangeable() -> None:
+    registry = load_registry(_repo_schemas_dir())
+    schema = registry.load_type_schema("monster")
+    hd_count = schema["properties"]["hd"]["properties"]["count"]
+    assert hd_count["x-ui"]["rangeable"] is True
+
+
+def test_npc_is_monster_plus_class_levels_and_possessions() -> None:
+    registry = load_registry(_repo_schemas_dir())
+    monster = registry.load_type_schema("monster")
+    npc = registry.load_type_schema("npc")
+
+    extra = set(npc["properties"]) - set(monster["properties"])
+    assert extra == {"class_levels", "possessions"}
+    assert set(monster["properties"]) - set(npc["properties"]) == set()
+    assert "class_levels" in npc["required"]

@@ -1,0 +1,605 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/monster.json",
+  "title": "Monster fields",
+  "description": "The `fields` object of a monster record, per spec 4.6 and batch B12. One record per CREATURE, never per printed entry: a grouped entry (\"ANGEL\" with Astral Deva/Planetar/Solar sub-blocks, a true dragon by colour and age category, an animated object by size) yields one record per creature, each carrying the shared heading in `group` and its own distinguishing label in `variant_label`. The `size`/`type` enums are kept in sync with `schemas/sizes.json`/`schemas/creature_types.json` by a test.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "size": {
+      "type": "string",
+      "enum": [
+        "Fine",
+        "Diminutive",
+        "Tiny",
+        "Small",
+        "Medium",
+        "Large",
+        "Huge",
+        "Gargantuan",
+        "Colossal"
+      ],
+      "description": "The size category from the stat block's opening \"<Size> <Type> (<Subtypes>)\" line.",
+      "x-ui": { "label": "Size", "filterable": true, "sortable": false, "group": "core", "order": 1 }
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "Aberration",
+        "Animal",
+        "Construct",
+        "Dragon",
+        "Elemental",
+        "Fey",
+        "Giant",
+        "Humanoid",
+        "Magical Beast",
+        "Monstrous Humanoid",
+        "Ooze",
+        "Outsider",
+        "Plant",
+        "Undead",
+        "Vermin"
+      ],
+      "x-ui": {
+        "label": "Type",
+        "filterable": true,
+        "sortable": false,
+        "group": "core",
+        "order": 2
+      }
+    },
+    "subtypes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "The parenthesized subtypes from the same line, each title-cased (e.g. [\"Angel\", \"Extraplanar\", \"Good\"]). Checked against `schemas/creature_types.json`'s own subtype list.",
+      "x-ui": {
+        "label": "Subtypes",
+        "filterable": true,
+        "sortable": false,
+        "group": "core",
+        "order": 3
+      }
+    },
+    "hd": {
+      "type": "object",
+      "description": "The \"Hit Dice:\" line, parsed. `groups` has one entry per printed dice TERM, so a multi-part line (\"1d8+1 plus 6d8+18 (50 hp)\" -- a lycanthrope, or any creature with class levels) is modeled in full; `count` is their SUM, and is a number rather than an integer because a Tiny creature can have a half hit die (\"1/2 d10\").",
+      "properties": {
+        "count": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total hit dice: the SUM of every `groups[].count`.",
+          "x-ui": {
+            "label": "Hit dice",
+            "filterable": false,
+            "sortable": true,
+            "group": "core",
+            "order": 1,
+            "rangeable": true
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "count": { "type": "number", "minimum": 0 },
+              "die": { "type": "integer", "enum": [4, 6, 8, 10, 12] },
+              "bonus": { "type": "integer" }
+            },
+            "required": ["count", "die"],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "description": "One entry per printed dice term, in printed order -- a single-term line has exactly one."
+        },
+        "die": {
+          "type": "integer",
+          "enum": [4, 6, 8, 10, 12],
+          "description": "Convenience copy of the FIRST term's die size; omit it for a multi-part line, whose dice sizes all live in `groups`."
+        },
+        "bonus": { "type": "integer" },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The whole printed line's value, verbatim (e.g. \"4d12 (26 hp)\")."
+        }
+      },
+      "required": ["count", "groups", "text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Hit dice",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 4
+      }
+    },
+    "hp": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The average hit points printed in parentheses on the Hit Dice line.",
+      "x-ui": {
+        "label": "Hit points",
+        "filterable": false,
+        "sortable": true,
+        "group": "core",
+        "order": 5,
+        "rangeable": true
+      }
+    },
+    "initiative": {
+      "type": "integer",
+      "x-ui": {
+        "label": "Initiative",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 6
+      }
+    },
+    "speed": {
+      "type": "object",
+      "description": "The \"Speed:\" line: its verbatim `text` plus one `modes` entry per printed movement mode.",
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "modes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "\"land\" for a bare speed with no named mode, else the printed mode (\"fly\", \"swim\", \"burrow\", \"climb\")."
+              },
+              "feet": { "type": "integer", "minimum": 0 },
+              "squares": { "type": "integer", "minimum": 0 },
+              "maneuverability": { "type": "string" }
+            },
+            "required": ["mode", "feet"],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": ["text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Speed",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 7
+      }
+    },
+    "ac": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "touch": { "type": "integer" },
+        "flat_footed": { "type": "integer" },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["total", "touch", "flat_footed", "text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Armor Class",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 8
+      }
+    },
+    "bab": {
+      "type": "integer",
+      "description": "The first half of the \"Base Attack/Grapple:\" line.",
+      "x-ui": {
+        "label": "Base attack bonus",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 9
+      }
+    },
+    "grapple": {
+      "type": ["integer", "null"],
+      "default": null,
+      "description": "The second half of the \"Base Attack/Grapple:\" line -- `null` when the book prints a dash for it (a creature that cannot grapple).",
+      "x-ui": {
+        "label": "Grapple",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 10
+      }
+    },
+    "attack": {
+      "type": "object",
+      "description": "The \"Attack:\" line: its verbatim `text` plus one `attacks` entry per printed attack option.",
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "attacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "bonus": { "type": "string" },
+              "damage": { "type": "string" },
+              "kind": { "type": "string" }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": ["text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Attack",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 11
+      }
+    },
+    "full_attack": {
+      "type": "object",
+      "description": "The \"Full Attack:\" line, same shape as `attack`.",
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "attacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "bonus": { "type": "string" },
+              "damage": { "type": "string" },
+              "kind": { "type": "string" }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": ["text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Full attack",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 12
+      }
+    },
+    "space_reach": {
+      "type": "object",
+      "properties": {
+        "space_ft": { "type": "number", "minimum": 0 },
+        "reach_ft": { "type": "number", "minimum": 0 },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["space_ft", "reach_ft", "text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Space/Reach",
+        "filterable": false,
+        "sortable": false,
+        "group": "combat",
+        "order": 13
+      }
+    },
+    "special_attacks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "The \"Special Attacks:\" line's own comma-separated tokens, EXACTLY as printed.",
+      "x-ui": {
+        "label": "Special attacks",
+        "filterable": false,
+        "sortable": false,
+        "group": "special",
+        "order": 14
+      }
+    },
+    "special_qualities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "The \"Special Qualities:\" line's own comma-separated tokens, EXACTLY as printed.",
+      "x-ui": {
+        "label": "Special qualities",
+        "filterable": false,
+        "sortable": false,
+        "group": "special",
+        "order": 15
+      }
+    },
+    "special_abilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": ["string", "null"],
+            "enum": ["Ex", "Su", "Sp", null],
+            "default": null,
+            "description": "The parenthetical tag on the printed run-in heading, or `null` when it prints none."
+          },
+          "text_md": { "type": "string", "minLength": 1 }
+        },
+        "required": ["name", "kind", "text_md"],
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "One entry per run-in heading the entry's own \"Combat\" section describes (\"Babble (Su): ...\"), never invented.",
+      "x-ui": {
+        "label": "Special abilities",
+        "filterable": false,
+        "sortable": false,
+        "group": "special",
+        "order": 16
+      }
+    },
+    "saves": {
+      "type": "object",
+      "properties": {
+        "fort": { "type": "integer" },
+        "ref": { "type": "integer" },
+        "will": { "type": "integer" }
+      },
+      "required": ["fort", "ref", "will"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Saves",
+        "filterable": false,
+        "sortable": false,
+        "group": "abilities",
+        "order": 17
+      }
+    },
+    "abilities": {
+      "type": "object",
+      "description": "The six ability scores. A score is `null` ONLY where the book prints a dash for it (an undead's Strength/Constitution, a construct's Intelligence).",
+      "properties": {
+        "str": { "type": ["integer", "null"] },
+        "dex": { "type": ["integer", "null"] },
+        "con": { "type": ["integer", "null"] },
+        "int": { "type": ["integer", "null"] },
+        "wis": { "type": ["integer", "null"] },
+        "cha": { "type": ["integer", "null"] }
+      },
+      "required": ["str", "dex", "con", "int", "wis", "cha"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Abilities",
+        "filterable": false,
+        "sortable": false,
+        "group": "abilities",
+        "order": 18
+      }
+    },
+    "skills": {
+      "type": "object",
+      "description": "The \"Skills:\" line: its verbatim `text` plus one `entries` item per printed skill.",
+      "properties": {
+        "text": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "bonus": { "type": "integer" },
+              "note": { "type": "string" }
+            },
+            "required": ["name", "bonus"],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": ["text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Skills",
+        "filterable": false,
+        "sortable": false,
+        "group": "skills",
+        "order": 19
+      }
+    },
+    "feats": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "x-ui": {
+        "label": "Feats",
+        "filterable": false,
+        "sortable": false,
+        "group": "skills",
+        "order": 20
+      }
+    },
+    "environment": {
+      "type": "string",
+      "x-ui": {
+        "label": "Environment",
+        "filterable": true,
+        "sortable": false,
+        "group": "ecology",
+        "order": 21
+      }
+    },
+    "organization": {
+      "type": "string",
+      "x-ui": {
+        "label": "Organization",
+        "filterable": false,
+        "sortable": false,
+        "group": "ecology",
+        "order": 22
+      }
+    },
+    "cr": {
+      "type": "number",
+      "minimum": 0,
+      "description": "The Challenge Rating as a number, with a printed fraction normalized: \"1/2\" -> 0.5, \"1/3\" -> 0.333, \"1/4\" -> 0.25, \"1/6\" -> 0.167, \"1/8\" -> 0.125, \"1/10\" -> 0.1.",
+      "x-ui": {
+        "label": "Challenge Rating",
+        "filterable": true,
+        "sortable": true,
+        "group": "core",
+        "order": 23,
+        "rangeable": true
+      }
+    },
+    "cr_text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Challenge Rating exactly as printed (\"1/2\", \"3\", \"14\").",
+      "x-ui": {
+        "label": "Challenge Rating (as printed)",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 24
+      }
+    },
+    "treasure": {
+      "type": "string",
+      "x-ui": {
+        "label": "Treasure",
+        "filterable": false,
+        "sortable": false,
+        "group": "ecology",
+        "order": 25
+      }
+    },
+    "alignment": {
+      "type": "string",
+      "x-ui": {
+        "label": "Alignment",
+        "filterable": true,
+        "sortable": false,
+        "group": "ecology",
+        "order": 26
+      }
+    },
+    "advancement": {
+      "type": "string",
+      "x-ui": {
+        "label": "Advancement",
+        "filterable": false,
+        "sortable": false,
+        "group": "ecology",
+        "order": 27
+      }
+    },
+    "level_adjustment": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": ["integer", "null"],
+          "description": "`null` when the book prints a dash (no level adjustment -- the creature is not a playable race)."
+        },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["value", "text"],
+      "additionalProperties": false,
+      "x-ui": {
+        "label": "Level adjustment",
+        "filterable": false,
+        "sortable": false,
+        "group": "ecology",
+        "order": 28
+      }
+    },
+    "group": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The shared heading of a grouped entry (\"Angel\", \"Animated Object\", \"Red Dragon\"), `null` for a creature printed under its own heading alone.",
+      "x-ui": {
+        "label": "Group",
+        "filterable": true,
+        "sortable": false,
+        "group": "core",
+        "order": 29
+      }
+    },
+    "variant_label": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "This creature's own distinguishing label within its `group` (\"Astral Deva\", \"Huge\", \"Adult\"), `null` when `group` is.",
+      "x-ui": {
+        "label": "Variant",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 30
+      }
+    },
+    "description_sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "heading": { "type": "string", "minLength": 1 },
+          "text_md": { "type": "string", "minLength": 1 }
+        },
+        "required": ["heading", "text_md"],
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "One entry per printed titled section after the stat block other than \"Combat\" (e.g. \"<Name> Society\", \"Ecology\", \"Training a <Name>\").",
+      "x-ui": {
+        "label": "Description sections",
+        "filterable": false,
+        "sortable": false,
+        "group": "description",
+        "order": 31
+      }
+    },
+    "source_pages": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "integer", "minimum": 1 },
+        "end": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "The pdf page span of this creature's whole printed entry.",
+      "x-ui": {
+        "label": "Source pages",
+        "filterable": false,
+        "sortable": false,
+        "group": "meta",
+        "order": 32
+      }
+    }
+  },
+  "required": [
+    "size",
+    "type",
+    "hd",
+    "hp",
+    "initiative",
+    "speed",
+    "ac",
+    "bab",
+    "grapple",
+    "space_reach",
+    "saves",
+    "abilities",
+    "cr",
+    "cr_text",
+    "alignment",
+    "source_pages"
+  ],
+  "additionalProperties": false
+}

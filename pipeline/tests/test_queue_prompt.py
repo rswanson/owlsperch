@@ -1600,3 +1600,151 @@ def test_prompt_applies_to_book_id_none_for_ordinary_book(tmp_path: Path) -> Non
     )
 
     assert "- Applies to book ID: (none)" in text
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: the monster/npc/template extraction rules. The per-kind
+# coverage guard above already proves every field and cross-type reference
+# is backed by a rendered schema/example; these check the rules a subagent
+# actually has to be told, and that they stay out of the other kinds'
+# prompts.
+# ---------------------------------------------------------------------------
+
+
+def _rules_section_for(kind: str, tmp_path: Path) -> str:
+    text = render_prompt(
+        _segment(kind_hint=kind),
+        data_dir=tmp_path / "data",
+        manifest_path=_write_manifest(tmp_path),
+        schemas_dir=_repo_schemas_dir(),
+    )
+    section = _section_text(text, f"## Extraction rules for `{kind}`")
+    assert section is not None, f"no extraction rules section rendered for {kind}"
+    return section
+
+
+def test_monster_rules_name_both_printed_stat_block_layouts(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    # Layout A: every MM I label, in printed order, as a split point.
+    for label in ("Hit Dice:", "Base Attack/Grapple:", "Space/Reach:", "Level Adjustment:"):
+        assert label in section
+    # Layout B: the MM III+ vertical list's own abbreviated labels.
+    for label in ("Init/Senses", "Base Atk/Grp", "Immune/Resist/SR", "Fort/Ref/Will", "SQ"):
+        assert label in section
+
+
+def test_monster_rules_state_the_grouped_entry_naming_convention(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    assert "`group`" in section and "`variant_label`" in section
+    assert "Angel, Astral Deva" in section
+    assert "Animated Object, Huge" in section
+    assert "one record per creature" in section.lower()
+
+
+def test_monster_rules_say_the_multi_column_stat_table_is_not_a_table_record(
+    tmp_path: Path,
+) -> None:
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "MULTI-COLUMN" in one_line
+    assert "NOT also written as a `table` record" in one_line
+    # (B12 review) The real text layer gives the shared stat table as
+    # tab-separated ROWS whose first cell is the stat-block label.
+    assert "TAB-SEPARATED ROWS" in one_line
+    assert '"Hit Dice (hp)"' in one_line
+    assert "Write ONE record per COLUMN" in one_line
+
+
+def test_monster_rules_cover_a_multi_part_hit_dice_line(tmp_path: Path) -> None:
+    """B12 review finding 4: the `plus` form a lycanthrope or any
+    class-levelled creature prints."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "`hd.groups` has ONE ENTRY PER PRINTED DICE TERM" in one_line
+    assert '"1d8+1 plus 6d8+18 (50 hp)"' in one_line
+    assert "`hd.count` 7" in one_line
+    assert "Never keep only the first term" in one_line
+
+
+def test_monster_rules_say_a_dash_only_line_is_an_empty_array(tmp_path: Path) -> None:
+    """B12 review finding 3: "Special Attacks: —" appears 65 times."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "means NONE: write an EMPTY array" in one_line
+    assert '`["\u2014"]` is wrong' in one_line
+
+
+def test_monster_rules_name_the_mm3_labels_for_every_required_field(tmp_path: Path) -> None:
+    """B12 review finding 6: Speed, Space/Reach, CR and Alignment are all
+    REQUIRED fields, so the MM III+ label map has to mention them."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    for label in ("Speed ->", "Space/Reach ->", "CR ->", "Alignment ->"):
+        assert label in one_line, label
+    assert "A field the schema above marks REQUIRED is different" in one_line
+
+
+def test_monster_rules_cover_a_neighbouring_stat_block_and_a_missing_one(tmp_path: Path) -> None:
+    """B12 review, real segmentation: 28 of 338 real spans fall back to whole
+    pages, so a segment can hold a neighbour's whole stat block; and the
+    aboleth's own block is missing from the PDF text layer entirely."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert "WHOLE PAGES" in one_line
+    assert "by the creature it actually NAMES, never by its position" in one_line
+    assert "A neighbouring creature's stat block here is NOT yours to extract" in one_line
+    assert "answer `needs_context` naming the NEXT segment id" in one_line
+
+
+def test_monster_rules_put_an_alias_parenthetical_in_aliases(tmp_path: Path) -> None:
+    """B12 review: "Barbed devil (hamatula)" is an alias, not a group."""
+    one_line = re.sub(r"\s+", " ", _rules_section_for("monster", tmp_path))
+    assert '"Barbed devil (hamatula)"' in one_line
+    assert "`aliases`" in one_line
+
+
+def test_monster_rules_give_the_cr_fraction_normalization(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    for fragment in ('"1/2" -> `cr` 0.5', '"1/3" -> `cr` 0.333', '"1/8" -> `cr` 0.125'):
+        assert fragment in section
+
+
+def test_monster_rules_source_special_abilities_from_the_combat_run_ins(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    assert "Babble (Su):" in section
+    assert "`special_abilities`" in section
+    assert "generic" in section
+    # The never-invent rule, and the never-`null` rule.
+    assert "Never invent a value the text does not state" in section
+
+
+def test_npc_rules_add_class_levels_and_possessions(tmp_path: Path) -> None:
+    section = _rules_section_for("npc", tmp_path)
+    assert "`class_levels` is REQUIRED" in section
+    assert "`possessions`" in section
+    # ...on top of the shared stat-block rules.
+    assert "Hit Dice:" in section
+    assert "Init/Senses" in section
+
+
+def test_template_rules_cover_the_printed_modification_paragraphs(tmp_path: Path) -> None:
+    section = _rules_section_for("template", tmp_path)
+    assert "`acquired_or_inherited`" in section
+    assert "`applies_to`" in section
+    assert "`modifications` is ONE entry per printed labelled paragraph" in section
+    # The printed-label list wraps across lines, so compare against the
+    # section as one line.
+    one_line = re.sub(r"\s+", " ", section)
+    for label in ('"Size and Type"', '"Special Qualities"', '"Level Adjustment"'):
+        assert label in one_line
+    # A template has no stat block of its own, and a sample creature printed
+    # under it is a separate record.
+    assert "has no stat block" in section
+    assert "SAMPLE CREATURE" in section
+
+
+def test_monster_rules_do_not_leak_into_another_kinds_prompt(tmp_path: Path) -> None:
+    for kind in ("spell", "feat", "table"):
+        text = render_prompt(
+            _segment(kind_hint=kind),
+            data_dir=tmp_path / "data",
+            manifest_path=_write_manifest(tmp_path),
+            schemas_dir=_repo_schemas_dir(),
+        )
+        assert "Base Attack/Grapple:" not in text
+        assert "Init/Senses" not in text

@@ -619,6 +619,39 @@ def test_flatten_fields_still_flattens_list_of_scalars() -> None:
     assert [(r.key, r.text_value) for r in rows] == [("columns", "Rank"), ("columns", "Title")]
 
 
+# ---------------------------------------------------------------------------
+# Batch B12: a numeric field is stored as `num_value` (so the later range
+# filters have something to compare), and an object field carrying the
+# book's own printed line in its `text` sub-key also gets a COMBINED row.
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_fields_writes_num_value_for_the_rangeable_monster_fields() -> None:
+    assert [(r.key, r.num_value) for r in flatten_fields("cr", 0.5)] == [("cr", 0.5)]
+    assert [(r.key, r.num_value) for r in flatten_fields("hp", 26)] == [("hp", 26.0)]
+    hd_rows = {(r.key, r.num_value) for r in flatten_fields("hd", {"count": 4, "die": 12})}
+    assert ("hd.count", 4.0) in hd_rows
+    assert ("hd.die", 12.0) in hd_rows
+
+
+def test_flatten_fields_writes_a_combined_row_for_an_object_with_its_own_text() -> None:
+    rows = [
+        (r.key, r.text_value, r.num_value)
+        for r in flatten_fields("hd", {"count": 4, "die": 12, "text": "4d12 (26 hp)"})
+    ]
+    assert ("hd", "4d12 (26 hp)", None) in rows
+    assert ("hd.text", "4d12 (26 hp)", None) in rows
+
+
+def test_flatten_fields_writes_no_combined_row_for_an_object_without_text() -> None:
+    """A plain object field with no `text` sub-key (spell `costs`, class
+    `skill_points`, `spellcasting`) is unaffected: the combined row is keyed
+    off a `text` sub-key, not off the field being an object, so the existing
+    object fields behave exactly as before."""
+    rows = flatten_fields("skill_points", {"base": 2, "ability": "Int"})
+    assert [r.key for r in rows] == ["skill_points.base", "skill_points.ability"]
+
+
 def _valid_table_record(
     *,
     book_id: str = "book",

@@ -1,0 +1,88 @@
+{
+  "id": "npc:example:ghask-the-flenser",
+  "type": "npc",
+  "name": "Ghask the Flenser",
+  "slug": "ghask-the-flenser",
+  "aliases": ["The Flenser"],
+  "book_id": "example",
+  "pages": [2],
+  "citation": "Example p. 2",
+  "text_md": "Ghask keeps the ash-gate for a wage nobody else would take. He is grey-muzzled, unhurried, and entirely unimpressed by adventurers.",
+  "fields": {
+    "size": "Medium",
+    "type": "Humanoid",
+    "subtypes": ["Gnoll"],
+    "hd": {
+      "count": 4,
+      "groups": [
+        { "count": 2, "die": 8, "bonus": 2 },
+        { "count": 2, "die": 10, "bonus": 2 }
+      ],
+      "text": "2d8+2 plus 2d10+2 (28 hp)"
+    },
+    "hp": 28,
+    "initiative": 1,
+    "speed": {
+      "text": "20 ft. in breastplate (4 squares); base speed 30 ft.",
+      "modes": [{ "mode": "land", "feet": 20, "squares": 4 }]
+    },
+    "ac": {
+      "total": 18,
+      "touch": 11,
+      "flat_footed": 17,
+      "text": "18 (+1 Dex, +1 natural, +6 masterwork chain shirt), touch 11, flat-footed 17"
+    },
+    "bab": 3,
+    "grapple": 6,
+    "attack": {
+      "text": "+1 longsword +8 melee (1d8+4)",
+      "attacks": [{ "name": "+1 longsword", "bonus": "+8", "damage": "1d8+4", "kind": "melee" }]
+    },
+    "full_attack": {
+      "text": "+1 longsword +8 melee (1d8+4)",
+      "attacks": [{ "name": "+1 longsword", "bonus": "+8", "damage": "1d8+4", "kind": "melee" }]
+    },
+    "space_reach": { "space_ft": 5, "reach_ft": 5, "text": "5 ft./5 ft." },
+    "special_attacks": [],
+    "special_qualities": ["Darkvision 60 ft."],
+    "special_abilities": [],
+    "saves": { "fort": 7, "ref": 3, "will": 1 },
+    "abilities": { "str": 16, "dex": 12, "con": 14, "int": 10, "wis": 10, "cha": 8 },
+    "skills": {
+      "text": "Climb +8, Intimidate +6, Listen +4, Ride +7",
+      "entries": [
+        { "name": "Climb", "bonus": 8 },
+        { "name": "Intimidate", "bonus": 6 },
+        { "name": "Listen", "bonus": 4 },
+        { "name": "Ride", "bonus": 7 }
+      ]
+    },
+    "feats": ["Cleave", "Power Attack", "Weapon Focus (longsword)"],
+    "environment": "Any land",
+    "organization": "Solitary",
+    "cr": 4,
+    "cr_text": "4",
+    "treasure": "Standard",
+    "alignment": "Lawful evil",
+    "advancement": "By character class",
+    "level_adjustment": { "value": 1, "text": "+1" },
+    "group": null,
+    "variant_label": null,
+    "description_sections": [],
+    "class_levels": [{ "class": "Fighter", "level": 2 }],
+    "possessions": "+1 longsword, masterwork breastplate, potion of cure moderate wounds, 40 gp.",
+    "source_pages": { "start": 2, "end": 2 }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-npc-p0002",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}
