@@ -1,5 +1,28 @@
 # owlsperch
 
+## Structured ingestion pilot
+
+The evidence-backed ingestion pilot is separate from the existing extraction
+queue and published database. It preserves source geometry and fingerprints,
+evaluates candidates against an independent occurrence inventory, and supports
+typed field filtering. See the [design](docs/specs/2026-09-23-evidence-backed-reference.md)
+and [source sample](docs/benchmarks/pilot-sources.json).
+
+Every pilot command requires an explicit database path. For example:
+
+```sh
+uv run owlsperch reference capture phb1 --pages 232-232 --db owlsperch-data/pilot/reference.sqlite
+uv run owlsperch reference source --snapshot-id SNAPSHOT_ID --db owlsperch-data/pilot/reference.sqlite
+uv run owlsperch reference evaluate inventory.json candidates.json --run-id smoke-v1 --db owlsperch-data/pilot/reference.sqlite
+uv run owlsperch reference browse --run-id smoke-v1 --type spell --field /fields/school --equals '"Evocation"' --db owlsperch-data/pilot/reference.sqlite
+```
+
+`evaluate` reports missing entries, incorrect expected fields and invalid source
+spans separately. Provisional references cannot certify a release, and passing
+field checks does not certify untested prose. The pilot does not publish candidates
+or apply errata to the existing site. Source snapshots and other real-book artifacts
+belong under ignored `owlsperch-data/`, never in Git.
+
 A D&D 3.5e reference-data pipeline: it curates a manifest of the source PDFs,
 extracts and segments their content, and eventually builds a queryable
 SQLite/API/web reference site. See

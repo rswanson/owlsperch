@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "description": "186 PDF pages across eight eligible sources. Layout/capture sample, not an independently annotated gold dataset. All page numbers are physical PDF indices.",
+  "sources": [
+    {"book_id": "phb1", "ranges": [[89, 110], [134, 153], [227, 246]], "reason": "Feats, combat rules, tables and spells"},
+    {"book_id": "spell-compendium", "ranges": [[9, 38]], "reason": "Spell entries, inherited spell fields, multi-column text"},
+    {"book_id": "mm1", "ranges": [[8, 37]], "reason": "Monsters, grouped stat blocks, shared descriptions"},
+    {"book_id": "tome-of-magic", "ranges": [[9, 38]], "reason": "Pact magic, vestiges and unfamiliar rules structures"},
+    {"book_id": "dragonlance-campaign-setting", "ranges": [[20, 34]], "reason": "Eligible scanned source; empty native-text pages must remain unresolved"},
+    {"book_id": "complete-warrior", "ranges": [[36, 50]], "reason": "Prestige classes, sample characters and progression tables"},
+    {"book_id": "phb1-errata", "ranges": [[1, 3]], "reason": "Correction targets and source precedence policy"},
+    {"book_id": "spell-compendium-errata", "ranges": [[1, 1]], "reason": "Corrections to spell fields; source is a single physical PDF page"}
+  ],
+  "structured_smoke": [
+    {"book_id": "phb1", "pages": [232], "entries": ["Fireball", "Flame Blade"]},
+    {"book_id": "phb1", "pages": [99], "entries": ["Power Attack", "Quick Draw"]},
+    {"book_id": "spell-compendium", "pages": [9], "entries": ["Align Fang", "Allegro"]},
+    {"book_id": "mm1", "pages": [8, 9], "entries": ["Aboleth", "Aboleth Mage"]}
+  ]
+}
