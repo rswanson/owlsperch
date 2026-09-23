@@ -18,6 +18,29 @@ whitespace) is exactly a run of digits is recorded as that PDF page's
 printed page number, regardless of whether it recurs. Such lines are always
 dropped from the body text (a bare page number is never body content).
 
+**Display page number in the outer margin (batch B12).** The band rule above
+finds nothing in a book that sets its page number as a large decorative
+glyph *above* the footer band, out in the outer margin -- which is exactly
+what the Monster Manual does: every body page carries its number as its own
+one-line block, ~30pt tall (vs. a ~9.5pt body line), at yMin ~= 0.911 of the
+page height, so `band_for_line` returns `None` for it and `owlsperch text
+mm1` reported "0 page numbers found" for all 334 pages. `display_page_number`
+is the narrow second rule for it: a block whose ONLY non-blank line is
+exactly a run of digits, sitting in the bottom `DISPLAY_BAND_FRACTION` (12%)
+of the page, whose line height is at least `DISPLAY_HEIGHT_RATIO` (1.8)
+times the page's own median line height (`median_line_height`). Both extra
+conditions are load-bearing: a numeric TABLE CELL low on a page is its own
+digits-only block too (MM p0300 prints an advancement table's "5"/"10"/"15"
+at 8.4pt), and only the height test rejects it. The band rule keeps
+priority -- `display_page_number` is consulted only for a page it found no
+number on -- so a book it already handles (the PHB, whose same decorative
+number usually *does* fall inside the footer band) keeps exactly the numbers
+it had. A block detected this way is dropped from the body text too, for the
+same reason the band rule drops one: a bare page number is never body
+content (in the MM it left a bare "100"/"200"/... paragraph on 236 pages,
+since a 3-digit number's block is wider than it is tall and so isn't even
+excluded as a rotated/vertical block).
+
 **Dehyphenation.** A line ending in a word broken by a trailing hyphen
 ("com-") is joined with the next line's first word ("posite"). The
 hyphen is dropped (`composite`) if the joined, lowercased word occurs
@@ -49,7 +72,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from owlsperch.text.bbox import Line
+from owlsperch.text.bbox import Block, Line, Page
 
 Band = Literal["header", "footer"]
 
@@ -68,6 +91,16 @@ SHORT_WINDOW_PAGE_COUNT = 20
 #: Minimum number of pages a line must recur on to count as a running
 #: header/footer when the run is shorter than `SHORT_WINDOW_PAGE_COUNT`.
 MIN_RUNNING_PAGE_COUNT = 3
+
+#: Batch B12: bottom fraction of the page a DISPLAY page number (see the
+#: module docstring) may sit in -- wider than `BAND_FRACTION` on purpose,
+#: since the whole point is that this number sits above the footer band.
+DISPLAY_BAND_FRACTION = 0.12
+
+#: Batch B12: how many times the page's own median line height a display
+#: page number's line must be. The Monster Manual's is ~3.2x; a numeric
+#: table cell in the same band is ~0.9x.
+DISPLAY_HEIGHT_RATIO = 1.8
 
 _DIGIT_RE = re.compile(r"\d")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -118,6 +151,42 @@ def standalone_page_number(text: str) -> int | None:
     if _STANDALONE_INTEGER_RE.match(candidate):
         return int(candidate)
     return None
+
+
+def median_line_height(page: Page) -> float:
+    """The median height of every non-blank line on `page` -- the "ordinary
+    body line" baseline `display_page_number` measures an oversize display
+    glyph against. 0.0 for a page with no text at all."""
+    heights = sorted(
+        line.height for block in page.blocks for line in block.lines if line.text.strip()
+    )
+    if not heights:
+        return 0.0
+    return heights[len(heights) // 2]
+
+
+def display_page_number(block: Block, *, page_height: float, body_line_height: float) -> int | None:
+    """The printed page number if `block` is a DISPLAY page number set in the
+    outer margin (batch B12, see the module docstring): its only non-blank
+    line is exactly a run of digits, it sits in the bottom
+    `DISPLAY_BAND_FRACTION` of the page, and that line is at least
+    `DISPLAY_HEIGHT_RATIO` times as tall as `body_line_height` (the page's
+    own median line height -- a `body_line_height` of 0, i.e. a page with no
+    other text at all, skips that last test). Else `None`."""
+    if page_height <= 0:
+        return None
+    lines = [line for line in block.lines if line.text.strip()]
+    if len(lines) != 1:
+        return None
+    line = lines[0]
+    number = standalone_page_number(line.text)
+    if number is None:
+        return None
+    if line.y_min < page_height * (1 - DISPLAY_BAND_FRACTION):
+        return None
+    if body_line_height > 0 and line.height < DISPLAY_HEIGHT_RATIO * body_line_height:
+        return None
+    return number
 
 
 @dataclass(frozen=True)

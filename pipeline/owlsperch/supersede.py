@@ -1,8 +1,9 @@
-"""Which fragments a class span actually owns (batch B10c-mand11), and
-releasing the record claims held by a superseded segment (batch
-B10c-mand2).
+"""Which fragments a class (batch B10c-mand11) or monster (batch B12) span
+actually owns, and releasing the record claims held by a superseded segment
+(batch B10c-mand2).
 
-`is_class_owned_fragment` is the shared, pure predicate that decides the
+`is_class_owned_fragment` (and, for the monster pass, its B12 sibling
+`is_monster_owned_fragment`) is the shared, pure predicate that decides the
 SCOPE of superseding, used by all three places that used to go by page
 span alone: the class-span stamp pass (`owlsperch.segment.runner.
 _supersede_segments_in_span`), `owlsperch build-db`'s record-level
@@ -193,6 +194,121 @@ def is_class_owned_fragment(heading: str, kind_hint: str, class_title: str) -> b
         prefix = normalized[: -len(_STARTING_PACKAGE)]
         if prefix and (prefix.endswith(title) or prefix.endswith(f"{title}s")):
             return True
+    return False
+
+
+#: Batch B12: the section headings a Monster Manual entry prints under its
+#: own monster heading, as suffixes of "<Title> ..." -- "ALLIP SOCIETY",
+#: "TROGLODYTE CHARACTERS", "DWARVES AS CHARACTERS", "DRAGON LORE". Each is
+#: matched as a whole-heading suffix after the title, never as a substring
+#: of an unrelated heading (the "THE PALADIN\'S MOUNT" lesson).
+MONSTER_SECTION_SUFFIXES: tuple[tuple[str, ...], ...] = (
+    ("society",),
+    ("characters",),
+    ("as", "characters"),
+    ("lore",),
+)
+
+#: Batch B12: the section headings a Monster Manual entry prints whatever
+#: the monster, so each is always owned by the entry whose span it falls in
+#: (the monster equivalent of `CLASS_STRUCTURAL_HEADINGS`). "Construction"
+#: is every golem/construct entry's own build rules and "Subraces" every
+#: humanoid entry's own variant list; both recur across the book, exactly
+#: like "Combat" (review finding 2 -- 12 real mm1 fragments between them).
+MONSTER_STRUCTURAL_HEADINGS: frozenset[str] = frozenset({"combat", "construction", "subraces"})
+
+
+def heading_tokens(text: str) -> tuple[str, ...]:
+    """`text` as a tuple of normalized WORDS (parentheticals dropped, each
+    word casefolded and stripped of non-alphanumerics, empties removed).
+    Batch B12 compares monster headings token-wise rather than on the
+    fully-joined `normalize_heading` string, so a title can only ever match
+    at a word boundary -- "BATTLE" must not read as the "BAT" entry's own
+    sub-block the way a bare `startswith` on "battle"/"bat" would."""
+    words = (_NON_ALNUM_RE.sub("", w.casefold()) for w in _PARENTHETICAL_RE.sub(" ", text).split())
+    return tuple(w for w in words if w)
+
+
+def _tokens_contain(haystack: tuple[str, ...], needle: tuple[str, ...]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    return any(
+        haystack[i : i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1)
+    )
+
+
+def is_monster_owned_fragment(heading: str, kind_hint: str, monster_title: str) -> bool:
+    """Batch B12: whether a fragment inside a monster span is part of THAT
+    printed monster entry (and so may be superseded by it) rather than a
+    sidebar or unrelated content that merely shares the pages -- the monster
+    counterpart of `is_class_owned_fragment`, and the same lesson: page span
+    alone swallows a printed sidebar into no canonical record at all.
+
+    `heading` is the fragment's own printed heading (or a record `name`,
+    parenthetical qualifier stripped), `kind_hint` its kind (or a record
+    `type`), and `monster_title` the monster entry's own printed heading
+    (a `MonsterSpan.heading`, or a monster record's `name`).
+
+    True for:
+
+    - a `table` fragment whose caption NAMES the monster (the MM prints a
+      grouped entry's shared stat table with the group's name in its own
+      cells, e.g. "Animated Object, Tiny"); unlike the class rule, a table
+      naming nothing of the sort is left live -- a monster page's other
+      tables belong to the chapter, not to the entry;
+    - a `rules_section`/`stat_block` whose whole heading is the monster
+      title (plural-tolerant), is `MONSTER_STRUCTURAL_HEADINGS` ("COMBAT",
+      "CONSTRUCTION", "SUBRACES"), is covered token-wise by a QUALIFIED toc
+      title ("WORKER"/"QUEEN" under the index's "Formian worker"/"Formian
+      queen"),
+      is "<Title> SOCIETY"/"<Title> CHARACTERS"/"<Title>S AS CHARACTERS"/
+      "<Title> LORE" (`MONSTER_SECTION_SUFFIXES`), or is a sub-block heading
+      of a GROUPED entry -- one whose own words START or END with the
+      title's ("ANGEL, SOLAR" and "LANTERN ARCHON" both belong to the group
+      entry they are printed under).
+
+    False for everything else, so an unrelated sidebar sharing the pages
+    stays canonical. Every comparison is token-wise (`heading_tokens`), so a
+    title never matches mid-word."""
+    fragment = heading_tokens(heading)
+    title = heading_tokens(monster_title)
+    if not fragment or not title:
+        return False
+
+    if kind_hint == "table":
+        return _tokens_contain(fragment, title)
+
+    if kind_hint not in ("rules_section", "stat_block"):
+        return False
+
+    joined = "".join(fragment)
+    if joined in MONSTER_STRUCTURAL_HEADINGS:
+        return True
+    if _plural_equal(joined, "".join(title)):
+        return True
+    for suffix in MONSTER_SECTION_SUFFIXES:
+        if fragment[-len(suffix) :] != suffix:
+            continue
+        prefix = fragment[: -len(suffix)]
+        if not prefix:
+            continue
+        # Review finding 2: the prefix may be the title itself, or the part
+        # of a qualified title the printed heading keeps ("DRAGON SOCIETY"
+        # under the toc's "Dragon, true").
+        if _plural_equal("".join(prefix), "".join(title)) or _tokens_contain(title, prefix):
+            return True
+    if len(fragment) > len(title) and (
+        fragment[: len(title)] == title or fragment[-len(title) :] == title
+    ):
+        return True
+    # Review finding 2: the other direction -- a QUALIFIED toc title covering
+    # an unqualified printed sub-heading. The MM's index disambiguates a
+    # sub-block by prefixing the group ("Formian worker", "Formian queen")
+    # while the page prints the bare word ("WORKER", "QUEEN"), and a group's
+    # own toc title can carry a qualifier the printed section heading drops
+    # ("Dragon, true" vs. "DRAGON SOCIETY", whose prefix is covered below).
+    if _tokens_contain(title, fragment):
+        return True
     return False
 
 

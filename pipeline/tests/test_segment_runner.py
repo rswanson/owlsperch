@@ -2560,3 +2560,370 @@ def test_phb1_real_corpus_pages_run_preserves_overlapping_segments(tmp_path: Pat
     familiars = [seg for seg in _segment_files(data_dir, "phb1") if seg["heading"] == "FAMILIARS"]
     assert len(familiars) == 1
     assert familiars[0]["pages"] == [53, 54]
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: the toc-driven monster pass
+# ---------------------------------------------------------------------------
+
+_MONSTER_STAT_BLOCK = (
+    "Medium Undead (Incorporeal) Hit Dice: 4d12 (26 hp) Initiative: +5 "
+    "Speed: Fly 30 ft. Armor Class: 15 Saves: Fort +1, Ref +4, Will +4 "
+    "Abilities: Str -, Dex 12, Con -, Int 11, Wis 11, Cha 18"
+)
+
+
+def _monster_book(data_dir: Path) -> None:
+    """Three printed monster entries: ALLIP and ANKHEG share page 1 with a
+    printed sidebar, and ANGEL (pages 2-3) is a GROUPED entry whose index
+    lists its two sub-blocks with a "(angel)" parenthetical."""
+    _write_book(
+        data_dir,
+        "mmtest",
+        {
+            1: [
+                _para("ALLIP", height=18.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+                _para("COMBAT", height=12.0),
+                _para("An allip is unable to cause physical harm at all.", line_count=4),
+                _para("FAMILIARS", height=12.0),
+                _para("A printed sidebar belonging to no monster entry.", line_count=4),
+                _para("ANKHEG", height=18.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+            ],
+            2: [
+                _para("ANGEL", height=18.0),
+                _para("Angels are a race of celestials, beings of good.", line_count=4),
+                _para("ANGEL, ASTRAL DEVA", height=12.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+            ],
+            3: [
+                _para("ANGEL, PLANETAR", height=12.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        "mmtest",
+        [
+            {
+                "title": "Chapter 1: Monsters A to Z",
+                "level": 1,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 3,
+                "path": ["Chapter 1: Monsters A to Z"],
+                "category": "monsters",
+            },
+            *(
+                {
+                    "title": title,
+                    "level": 2,
+                    "printed_page": page,
+                    "pdf_page_start": page,
+                    "pdf_page_end": page,
+                    "path": ["Chapter 1: Monsters A to Z", title],
+                    "category": "monsters",
+                }
+                for title, page in (
+                    ("Allip", 1),
+                    ("Ankheg", 1),
+                    ("Angel", 2),
+                    ("Astral deva (angel)", 2),
+                    ("Planetar (angel)", 3),
+                )
+            ),
+        ],
+    )
+
+
+def test_monster_pass_writes_one_segment_per_printed_entry(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+
+    summary = segment_book(_entry("mmtest"), data_dir=data_dir)
+
+    monsters = _by_kind(_segment_files(data_dir, "mmtest"), "monster")
+    assert [m["heading"] for m in monsters] == ["ALLIP", "ANKHEG", "ANGEL"]
+    assert [m["seg_id"] for m in monsters] == [
+        "mmtest-monster-p0001-01",
+        "mmtest-monster-p0001-02",
+        "mmtest-monster-p0002-01",
+    ]
+    assert summary.counts["monster"] == 3
+    allip = monsters[0]
+    assert allip["tier"] == "sonnet"
+    assert allip["kind_hint"] == "monster"
+    assert allip["text"].startswith("ALLIP")
+    assert "ANKHEG" not in allip["text"]
+    # The grouped entry is ONE segment covering every sub-block.
+    angel = monsters[2]
+    assert angel["pages"] == [2, 3]
+    assert "ANGEL, ASTRAL DEVA" in angel["text"]
+    assert "ANGEL, PLANETAR" in angel["text"]
+
+
+def test_monster_pass_supersedes_owned_fragments_and_leaves_a_sidebar_live(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+
+    segment_book(_entry("mmtest"), data_dir=data_dir)
+
+    by_heading = {
+        s["heading"]: s for s in _segment_files(data_dir, "mmtest") if s["kind_hint"] != "monster"
+    }
+    assert by_heading["COMBAT"]["superseded_by"] == "mmtest-monster-p0001-01"
+    assert by_heading["ANGEL, ASTRAL DEVA"]["superseded_by"] == "mmtest-monster-p0002-01"
+    # The printed sidebar shares the monster's pages and stays canonical.
+    assert by_heading["FAMILIARS"]["superseded_by"] is None
+
+
+def test_monster_pass_is_additive_and_idempotent(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+
+    segment_book(_entry("mmtest"), data_dir=data_dir)
+    first = {s["seg_id"]: s for s in _segment_files(data_dir, "mmtest")}
+    second_summary = segment_book(_entry("mmtest"), data_dir=data_dir)
+    second = {s["seg_id"]: s for s in _segment_files(data_dir, "mmtest")}
+
+    assert set(first) == set(second)
+    assert second_summary.written == 0
+    assert all(first[k]["text"] == second[k]["text"] for k in first)
+
+
+def test_kinds_monster_runs_only_the_monster_pass(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+
+    summary = segment_book(_entry("mmtest"), data_dir=data_dir, kinds=frozenset({"monster"}))
+
+    segments = _segment_files(data_dir, "mmtest")
+    assert {s["kind_hint"] for s in segments} == {"monster"}
+    assert summary.counts == {"monster": 3}
+    assert "monster pass" in summary.monster_note
+
+
+def test_kinds_rejects_an_unselectable_kind(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+    assert run_segment("mmtest", data_dir=data_dir, kinds=frozenset({"spell"})) == 1
+    assert not (data_dir / "segments").exists()
+
+
+def test_monster_pass_reports_no_toc(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+    (data_dir / "toc" / "mmtest.json").unlink()
+
+    summary = segment_book(_entry("mmtest"), data_dir=data_dir)
+
+    assert "no monster segments" in summary.monster_note
+    assert "monster" not in summary.counts
+
+
+@pytest.mark.corpus
+def test_mm1_real_corpus_monster_segments(tmp_path: Path) -> None:
+    """The real Monster Manual, end to end over the whole B12 chain: extract
+    its text (which is where its outer-margin page numbers come from --
+    without them no toc entry resolves to a pdf page and the monster pass
+    finds nothing at all), parse its spaced-leader contents pages and their
+    alphabetical monster index, then segment the monsters.
+
+    Everything is built here rather than copied from `$OWLSPERCH_DATA`: the
+    real data dir need never have had `owlsperch text`/`toc` re-run against
+    it for this test to be meaningful.
+    """
+    import shutil
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir, load_manifest
+    from owlsperch.text.runner import run_text
+    from owlsperch.toc.runner import run_toc
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+    if not any(e.book_id == "mm1" for e in load_manifest(default_manifest_path())):
+        pytest.skip("mm1 is not in the manifest")
+
+    data_dir = tmp_path / "data"
+    out = io.StringIO()
+    assert run_text("mm1", pdf_dir=pdf_dir, data_dir=data_dir, out=out) == 0
+    pages_json = json.loads((data_dir / "text" / "mm1" / "pages.json").read_text())
+    # The display-number rule (batch B12) is the only thing that finds these.
+    assert len(pages_json) >= 300
+    assert run_toc("mm1", data_dir=data_dir, force=True, out=out) == 0
+    assert run_segment("mm1", data_dir=data_dir, kinds=frozenset({"monster"}), out=out) == 0
+
+    monsters = _by_kind(_segment_files(data_dir, "mm1"), "monster")
+    assert len(monsters) >= 250
+    by_heading = {m["heading"]: m for m in monsters}
+    for name in ("ALLIP", "ANGEL", "KRAKEN"):
+        assert name in by_heading, sorted(by_heading)[:20]
+        assert "Hit Dice" in by_heading[name]["text"]
+    # Every monster segment carries a stat block (the page-range fallback).
+    assert all("Hit Dice" in m["text"] for m in monsters)
+    # A grouped entry is one segment, not one per sub-block.
+    assert len([m for m in monsters if m["heading"] == "ANGEL"]) == 1
+    # Review finding 1: a monster never supersedes a fragment on a page its
+    # own segment's text doesn't cover.
+    segments = {s["seg_id"]: s for s in _segment_files(data_dir, "mm1")}
+    for seg in segments.values():
+        owner = segments.get(seg["superseded_by"] or "")
+        if owner is None:
+            continue
+        assert set(seg["pages"]) <= set(owner["pages"]), (seg["seg_id"], owner["seg_id"])
+
+
+def test_monster_pass_pages_restricts_writes_and_force_deletes_by_first_page(
+    tmp_path: Path,
+) -> None:
+    """B10c-mand19 semantics, unchanged for monsters: `--pages` decides what
+    this run writes and deletes, by a segment's OWN first page (the one its
+    `seg_id` encodes), never what the stream is built from."""
+    data_dir = tmp_path / "data"
+    _monster_book(data_dir)
+
+    summary = segment_book(_entry("mmtest"), data_dir=data_dir, page_range=(2, 3))
+
+    monsters = _by_kind(_segment_files(data_dir, "mmtest"), "monster")
+    assert [m["seg_id"] for m in monsters] == ["mmtest-monster-p0002-01"]
+    assert summary.counts["monster"] == 1
+
+    # A --force run over page 1 only leaves the page-2 monster segment alone.
+    segment_book(_entry("mmtest"), data_dir=data_dir)
+    before = (data_dir / "segments" / "mmtest" / "mmtest-monster-p0002-01.json").read_bytes()
+    segment_book(_entry("mmtest"), data_dir=data_dir, force=True, page_range=(1, 1))
+    after = (data_dir / "segments" / "mmtest" / "mmtest-monster-p0002-01.json").read_bytes()
+    assert after == before
+    assert {m["seg_id"] for m in _by_kind(_segment_files(data_dir, "mmtest"), "monster")} == {
+        "mmtest-monster-p0001-01",
+        "mmtest-monster-p0001-02",
+        "mmtest-monster-p0002-01",
+    }
+
+
+def test_monster_pass_stamps_only_inside_its_own_written_pages(tmp_path: Path) -> None:
+    """Review finding 1: the supersede window is the WRITTEN segment's own
+    `pages`, not the span's `page_end` (the cap on the text cut, which
+    includes the one-page spill-over). Here ALLIP's text stops on page 1 at
+    ANKHEG's heading, so the NEXT monster's own "COMBAT" section on page 2
+    must be stamped by ANGEL -- the segment whose text actually contains it
+    -- and never by ALLIP."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "mmtest",
+        {
+            1: [
+                _para("ALLIP", height=18.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+                _para("ANKHEG", height=18.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+            ],
+            2: [
+                _para("ANGEL", height=18.0),
+                _para(_MONSTER_STAT_BLOCK, line_count=6),
+                _para("COMBAT", height=12.0),
+                _para("Though they are honorable, angels do not hesitate.", line_count=4),
+            ],
+        },
+    )
+    _write_toc(
+        data_dir,
+        "mmtest",
+        [
+            {
+                "title": "Chapter 1: Monsters A to Z",
+                "level": 1,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 2,
+                "path": ["Chapter 1: Monsters A to Z"],
+                "category": "monsters",
+            },
+            *(
+                {
+                    "title": title,
+                    "level": 2,
+                    "printed_page": page,
+                    "pdf_page_start": page,
+                    "pdf_page_end": page,
+                    "path": ["Chapter 1: Monsters A to Z", title],
+                    "category": "monsters",
+                }
+                for title, page in (("Allip", 1), ("Ankheg", 1), ("Angel", 2))
+            ),
+        ],
+    )
+
+    segment_book(_entry("mmtest"), data_dir=data_dir)
+
+    segments = {s["seg_id"]: s for s in _segment_files(data_dir, "mmtest")}
+    allip = segments["mmtest-monster-p0001-01"]
+    assert allip["pages"] == [1]
+    combat = next(
+        s for s in segments.values() if s["heading"] == "COMBAT" and s["kind_hint"] != "monster"
+    )
+    assert combat["superseded_by"] == "mmtest-monster-p0002-01"
+    # And the invariant in general: nothing is superseded by a segment whose
+    # own pages don't contain it.
+    for seg in segments.values():
+        owner = segments.get(seg["superseded_by"] or "")
+        if owner is not None:
+            assert set(seg["pages"]) <= set(owner["pages"])
+
+
+def test_monster_page_fallback_spans_are_named_in_the_summary(tmp_path: Path) -> None:
+    """Review finding 6: a span on the whole-page-range fallback overlaps its
+    neighbours' text, so the extraction step needs to know WHICH ones."""
+    data_dir = tmp_path / "data"
+    _write_book(
+        data_dir,
+        "mmtest",
+        {
+            1: [
+                _para("OOZE", height=18.0),
+                _para("BLACK PUDDING", height=18.0),
+                _para("An ooze is mindless. " + _MONSTER_STAT_BLOCK, line_count=6),
+                _para("A black pudding is a hazard. " + _MONSTER_STAT_BLOCK, line_count=6),
+            ]
+        },
+    )
+    _write_toc(
+        data_dir,
+        "mmtest",
+        [
+            {
+                "title": "Chapter 1: Monsters A to Z",
+                "level": 1,
+                "printed_page": 1,
+                "pdf_page_start": 1,
+                "pdf_page_end": 1,
+                "path": ["Chapter 1: Monsters A to Z"],
+                "category": "monsters",
+            },
+            *(
+                {
+                    "title": title,
+                    "level": 2,
+                    "printed_page": 1,
+                    "pdf_page_start": 1,
+                    "pdf_page_end": 1,
+                    "path": ["Chapter 1: Monsters A to Z", title],
+                    "category": "monsters",
+                }
+                for title in ("Ooze", "Black pudding")
+            ),
+        ],
+    )
+
+    summary = segment_book(_entry("mmtest"), data_dir=data_dir)
+
+    assert "OOZE" in summary.monster_page_fallbacks
+    assert "whole-page-range fallback" in summary.render()

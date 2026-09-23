@@ -96,3 +96,27 @@ def test_resolve_section_category_prestige_classes_not_shadowed_by_generic_class
 
 def test_resolve_section_category_prestige_class_section_inherits_chapter() -> None:
     assert resolve_section_category("book", "Iron Warden", "prestige-classes") == "prestige-classes"
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: the Monster Manual's own chapter titles
+# ---------------------------------------------------------------------------
+
+
+def test_monster_book_chapters_resolve_to_monsters() -> None:
+    for title in (
+        "Chapter 1: Monsters A to Z",
+        "Chapter 2: Animals",
+        "Chapter 3: Vermin",
+        "Chapter 4: Improving Monsters",
+        "Chapter 5: Making Monsters",
+    ):
+        assert resolve_chapter_category("mm1", title) == "monsters"
+
+
+def test_monster_skills_chapter_beats_the_generic_skills_pattern() -> None:
+    """Tried before "Skills?"/"Feats?" on purpose, so the MM's own chapter 6
+    groups with its other monster chapters rather than under skills."""
+    assert resolve_chapter_category("mm1", "Chapter 6: Monster Skills and Feats") == "monsters"
+    # ...without disturbing an ordinary skills chapter.
+    assert resolve_chapter_category("phb1", "Chapter 4: Skills") == "skills"

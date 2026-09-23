@@ -29,11 +29,24 @@ from pydantic import BaseModel, ConfigDict
 
 from owlsperch.toc.categories import resolve_chapter_category, resolve_section_category
 
-#: A dotted-leader contents entry: "Title ..... 122". Consecutive matches
-#: consume a line left to right, so "Armor ..... 122 Goods and Services /
-#: ..... 126" (two entries column-repair glued onto one line) yields two
-#: entries naturally (D3).
-ENTRY_RE = re.compile(r"(?P<title>[^\n]*?)\s*\.{3,}\s*(?P<page>\d{1,4})")
+#: A contents-entry LEADER: three or more leader glyphs, each optionally
+#: followed by spaces/tabs. Batch B12: the Monster Manual sets its leaders
+#: SPACED (". . . . . 10", and its alphabetical monster index the same way),
+#: so the pre-B12 `\.{3,}` -- three or more *consecutive* dots -- matched
+#: nothing at all on its contents page and `owlsperch toc mm1` failed with
+#: "found 0 dotted-leader match(es)". A middle dot is accepted beside the
+#: full stop for the same reason; the separator stays `[ \t]*` rather than
+#: `\s*` so a leader can never straddle a line break. A book with solid
+#: leaders is unaffected (each dot simply has zero spaces after it).
+_LEADER = r"(?:[.\u00b7\u2022\u2219][ \t]*){3,}"
+
+#: A leader contents entry: "Title ..... 122", or "Title . . . . . 122".
+#: Consecutive matches consume a line left to right, so "Armor ..... 122
+#: Goods and Services / ..... 126" (two entries column-repair glued onto one
+#: line) yields two entries naturally (D3) -- which is also what splits the
+#: Monster Manual's monster index, where column repair glues dozens of
+#: "Name . . . N" entries onto one long line (B12).
+ENTRY_RE = re.compile(rf"(?P<title>[^\n]*?)\s*{_LEADER}\s*(?P<page>\d{{1,4}})")
 
 #: The numbered-table index's own entries ("Table 1-1: Ability Modifiers
 #: and Bonus Spells") must never become sections -- matched ANYWHERE in the

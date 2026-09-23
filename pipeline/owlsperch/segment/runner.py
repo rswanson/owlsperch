@@ -171,6 +171,21 @@ Per book:
    is skipped rather than ending the run, and a different class's own
    structural heading ("Human Monk Starting Package") stays out entirely.
    As in point 10, the next class's own start index is unchanged.
+12. (Batch B12) A THIRD pass, the same shape as points 7-9 but for the
+   Monster Manual: every level >= 2 toc entry whose category is `monsters`
+   and whose own pages carry a `Hit Dice` marker becomes one `monster`
+   segment, id `<book_id>-monster-p<NNNN>-<NN>` (`NNNN` = the page its own
+   printed heading is on, `<NN>` a per-page ordinal -- unlike a class, three
+   monsters routinely share a page, so the class pass's page-only id form
+   would collide). `owlsperch.segment.monsters` holds all of the discovery
+   logic (which entries collapse into one grouped segment, where each span's
+   text starts and stops, and when a span falls back to its whole page
+   range); this module writes the files and stamps `superseded_by` on the
+   in-span fragments the monster entry owns
+   (`owlsperch.supersede.is_monster_owned_fragment`, the monster counterpart
+   of point 8's predicate, with the same left-live behavior for a sidebar).
+   `--kinds monster` re-runs only this pass, `--pages` restricts it, and the
+   coverage warning covers it, exactly as for `--kinds class`.
 """
 
 from __future__ import annotations
@@ -178,6 +193,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -194,6 +210,11 @@ from owlsperch.manifest import (
 )
 from owlsperch.segment.anchors import Kind
 from owlsperch.segment.headings import Paragraph, compute_body_median, is_heading
+from owlsperch.segment.monsters import (
+    MONSTER_KIND,
+    MonsterSpan,
+    discover_monster_spans,
+)
 from owlsperch.segment.splitter import KindHint, RawSegment, build_segments
 from owlsperch.text.runner import default_data_dir
 from owlsperch.toc.lookup import load_toc
@@ -394,6 +415,17 @@ class BookSegmentSummary:
     #: rather than replacing the main one, since ordinary segmentation still
     #: ran normally.
     class_note: str = ""
+    #: Batch B12: the monster pass's own note line (a toc-less book, the
+    #: counts of grouped/absorbed/fallback spans, or the toc entries it had
+    #: to skip) -- printed the same way as `class_note`.
+    monster_note: str = ""
+    #: Batch B12 (review finding 6): the printed heading of every monster
+    #: span whose heading-to-heading cut carried no stat block and so fell
+    #: back to its whole page range (`MonsterSpan.page_fallback`). Such a
+    #: segment's text overlaps its neighbours', so the extraction step must
+    #: treat it with care -- named here (and on their own summary line)
+    #: rather than only counted, so a caller can act on them.
+    monster_page_fallbacks: list[str] = field(default_factory=list)
     #: Batch B10c-mand19: every page in the PROCESSED range (`--pages A-B`,
     #: else the whole book) that has text but is in no segment's `pages` on
     #: disk once the run has finished -- live or superseded, this run's
@@ -416,10 +448,18 @@ class BookSegmentSummary:
         if self.left_live:
             lines.append(
                 f"{self.book_id}: {self.left_live} in-span segment(s) left live"
-                " (not class-structural)"
+                " (not entity-structural)"
             )
         if self.class_note:
             lines.append(f"{self.book_id}: {self.class_note}")
+        if self.monster_note:
+            lines.append(f"{self.book_id}: {self.monster_note}")
+        if self.monster_page_fallbacks:
+            names = ", ".join(self.monster_page_fallbacks)
+            lines.append(
+                f"{self.book_id}: monster span(s) on the whole-page-range fallback "
+                f"(text overlaps a neighbour's): {names}"
+            )
         if self.uncovered_pages:
             pages_str = ", ".join(str(p) for p in self.uncovered_pages)
             lines.append(
@@ -1208,8 +1248,9 @@ def _supersede_segments_in_span(
     start: int,
     end: int,
     *,
-    class_title: str,
+    entity_title: str,
     data_dir: Path,
+    owned: Callable[[str, str, str], bool] | None = None,
 ) -> tuple[set[str], int, set[str]]:
     """Stamp `superseded_by = class_seg_id` on every OTHER segment of
     `book_id` whose `pages` fall ENTIRELY inside `[start, end]` AND whose
@@ -1240,6 +1281,7 @@ def _supersede_segments_in_span(
     # `_write_class_segment`/`_write_one_segment`'s `starting_tier` import).
     from owlsperch.supersede import is_class_owned_fragment, release_segment_claims
 
+    is_owned = owned if owned is not None else is_class_owned_fragment
     stamped: set[str] = set()
     released = 0
     left_live: set[str] = set()
@@ -1251,7 +1293,7 @@ def _supersede_segments_in_span(
             continue
         if not segment.pages or not all(start <= p <= end for p in segment.pages):
             continue
-        if not is_class_owned_fragment(segment.heading, segment.kind_hint, class_title):
+        if not is_owned(segment.heading, segment.kind_hint, entity_title):
             left_live.add(segment.seg_id)
             continue
         segment.superseded_by = class_seg_id
@@ -1265,7 +1307,7 @@ def _supersede_segments_in_span(
 #: `segment --kinds` only accepts these two, since every other kind comes
 #: from the single whole-book `build_segments` pass and can't be produced
 #: selectively (B10c-mand6 criterion 6).
-_SELECTABLE_KINDS: frozenset[str] = frozenset({"class", "prestige_class"})
+_SELECTABLE_KINDS: frozenset[str] = frozenset({"class", "prestige_class", MONSTER_KIND})
 
 
 def _run_class_pass(
@@ -1496,16 +1538,175 @@ def _run_class_pass(
             span.seg_id,
             span.start,
             span.end,
-            class_title=span.heading,
+            entity_title=span.heading,
             data_dir=data_dir,
         )
         superseded_total += len(stamped)
         released_total += released
         left_live_ids |= left_live
         stamped_ids |= stamped
-    summary.superseded = superseded_total
-    summary.released = released_total
-    summary.left_live = len(left_live_ids - stamped_ids)
+    # `+=`, not `=`: batch B12 runs a second, monster pass over the same
+    # summary in a plain run, and either pass may stamp fragments.
+    summary.superseded += superseded_total
+    summary.released += released_total
+    summary.left_live += len(left_live_ids - stamped_ids)
+
+
+def _write_monster_segment(
+    span: MonsterSpan,
+    paragraphs: list[Paragraph],
+    entry: ManifestEntry,
+    out_dir: Path,
+    pages_json: dict[int, int],
+    summary: BookSegmentSummary,
+    force: bool,
+) -> None:
+    """Write one `monster` segment file (batch B12). Its text is the
+    paragraph range `owlsperch.segment.monsters` resolved -- unlike the class
+    writer there is no whole-page-range fallback branch here, because that
+    fallback is already folded into the span itself (`MonsterSpan.
+    page_fallback`)."""
+    # Lazy import: see `_write_class_segment`'s identical comment -- avoids a
+    # `segment.runner` <-> `queue.ladder` circular import.
+    from owlsperch.queue.ladder import starting_tier
+
+    indices = list(range(span.start_index, span.end_index))
+    pages = _pages_spanned_indices(paragraphs, indices)
+    text = "\n\n".join(paragraphs[i].text for i in indices)
+    if not pages or not text.strip():
+        return
+
+    summary.counts[MONSTER_KIND] = summary.counts.get(MONSTER_KIND, 0) + 1
+
+    seg_path = out_dir / f"{span.seg_id}.json"
+    if seg_path.exists() and not force:
+        summary.skipped += 1
+        return
+
+    printed_pages: list[int | None] = [pages_json.get(p) for p in pages]
+    segment = Segment(
+        seg_id=span.seg_id,
+        book_id=entry.book_id,
+        pages=pages,
+        printed_pages=printed_pages,
+        kind_hint=MONSTER_KIND,
+        heading=span.heading,
+        text=text,
+        tier=starting_tier(MONSTER_KIND),
+        created_at=_now_iso(),
+    )
+    atomic_write_text(seg_path, segment.model_dump_json(indent=2) + "\n")
+    summary.written += 1
+
+
+def _run_monster_pass(
+    entry: ManifestEntry,
+    *,
+    paragraphs: list[Paragraph],
+    text_dir: Path,
+    out_dir: Path,
+    pages_json: dict[int, int],
+    data_dir: Path,
+    force: bool,
+    summary: BookSegmentSummary,
+    page_range: tuple[int, int] | None,
+) -> None:
+    """Batch B12's toc-driven `monster` pass (see this module's docstring,
+    point 12). Structurally identical to `_run_class_pass`: discovery and
+    index resolution are always whole-book, `--pages` narrows only which
+    spans are written (`_in_write_range` on the span's own first page, the
+    one its `seg_id` encodes), and the supersede loop runs for every span
+    with a segment file on disk -- in range or not -- so a fragment can
+    never carry a `superseded_by` naming a segment file that isn't there.
+    Mutates `summary` in place."""
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    def owned_by(span: MonsterSpan) -> Callable[[str, str, str], bool]:
+        """`is_monster_owned_fragment` widened to every name this span
+        covers -- its printed heading AND every toc title folded into it, so
+        a grouped entry's sub-block whose printed heading shares no words
+        with the group ("TIEFLING" under "PLANETOUCHED") is still recognized
+        as the group's own fragment."""
+        names = (span.heading, *span.titles)
+
+        def owned(heading: str, kind_hint: str, entity_title: str) -> bool:
+            return any(is_monster_owned_fragment(heading, kind_hint, n) for n in names)
+
+        return owned
+
+    toc = load_toc(data_dir, entry.book_id)
+    if toc is None or not toc.entries:
+        summary.monster_note = "no toc -- no monster segments"
+        return
+
+    last_page = max(_discover_text_pages(text_dir, None), default=None)
+    if last_page is None:
+        return
+
+    discovery = discover_monster_spans(
+        toc,
+        paragraphs=paragraphs,
+        body_median=compute_body_median(paragraphs),
+        page_text=lambda page: _page_text(text_dir, page),
+        book_id=entry.book_id,
+        last_page=last_page,
+    )
+    if not discovery.spans and not discovery.candidates:
+        return
+
+    spans_to_write = [s for s in discovery.spans if _in_write_range(s.page_start, page_range)]
+    for span in spans_to_write:
+        _write_monster_segment(span, paragraphs, entry, out_dir, pages_json, summary, force)
+
+    left_live_ids: set[str] = set()
+    stamped_ids: set[str] = set()
+    for span in discovery.spans:
+        if span not in spans_to_write and not (out_dir / f"{span.seg_id}.json").is_file():
+            continue
+        if not span.text_pages:
+            continue
+        # Review finding 1: the window is the WRITTEN segment's own pages,
+        # never `span.page_end` (the cap on the text cut, which routinely
+        # reaches a page the resolved text stops short of -- stamping by it
+        # swallowed 122 real-mm1 fragments, e.g. the NEXT monster's own
+        # "COMBAT" section on a shared page, into a segment whose text
+        # doesn't contain them).
+        stamped, released, left_live = _supersede_segments_in_span(
+            out_dir,
+            entry.book_id,
+            span.seg_id,
+            min(span.text_pages),
+            max(span.text_pages),
+            entity_title=span.heading,
+            data_dir=data_dir,
+            owned=owned_by(span),
+        )
+        summary.released += released
+        left_live_ids |= left_live
+        stamped_ids |= stamped
+    summary.superseded += len(stamped_ids)
+    # A monster segment that falls inside ANOTHER monster's pages is a peer
+    # entity, not a fragment that pass could ever own -- don't report it as
+    # "left live" (on real mm1 that was 134 of 229 such reports).
+    monster_seg_ids = {s.seg_id for s in discovery.spans}
+    summary.left_live += len(left_live_ids - stamped_ids - monster_seg_ids)
+
+    summary.monster_page_fallbacks = [s.heading for s in discovery.spans if s.page_fallback]
+    note = (
+        f"monster pass: {len(discovery.spans)} span(s) from {discovery.candidates} "
+        f"toc entr(ies) ({discovery.grouped} grouped, {discovery.absorbed} absorbed, "
+        f"{len(summary.monster_page_fallbacks)} page-range fallback)"
+    )
+    skipped = len(discovery.without_stat_block)
+    if skipped:
+        note += f", {skipped} entr(ies) with no stat block in their own pages"
+    summary.monster_note = note
+    if discovery.unmatched:
+        print(
+            f"warning: {entry.book_id}: no heading match and no enclosing monster span for: "
+            + ", ".join(discovery.unmatched),
+            file=sys.stderr,
+        )
 
 
 def segment_book(
@@ -1551,20 +1752,37 @@ def segment_book(
         # previously claimed are left orphaned on disk unless deleted
         # first (`queue reset --hard`) before re-segmenting.
         summary = BookSegmentSummary(entry.book_id)
-        _run_class_pass(
-            entry,
-            paragraphs=paragraphs,
-            text_dir=text_dir,
-            out_dir=out_dir,
-            pages_json=pages_json,
-            data_dir=data_dir,
-            force=force,
-            summary=summary,
-            kinds=kinds,
-            page_range=page_range,
-        )
-        if not summary.class_note:
-            kinds_str = ",".join(sorted(kinds))
+        class_kinds = kinds - {MONSTER_KIND}
+        if class_kinds:
+            _run_class_pass(
+                entry,
+                paragraphs=paragraphs,
+                text_dir=text_dir,
+                out_dir=out_dir,
+                pages_json=pages_json,
+                data_dir=data_dir,
+                force=force,
+                summary=summary,
+                kinds=class_kinds,
+                page_range=page_range,
+            )
+        # Batch B12: `--kinds monster` re-runs only the monster pass, the
+        # same way `--kinds class` re-runs only the class one; `--kinds
+        # class,monster` runs both and nothing else.
+        if MONSTER_KIND in kinds:
+            _run_monster_pass(
+                entry,
+                paragraphs=paragraphs,
+                text_dir=text_dir,
+                out_dir=out_dir,
+                pages_json=pages_json,
+                data_dir=data_dir,
+                force=force,
+                summary=summary,
+                page_range=page_range,
+            )
+        if class_kinds and not summary.class_note:
+            kinds_str = ",".join(sorted(class_kinds))
             summary.class_note = f"--kinds {kinds_str}: only the toc-driven class pass ran"
         # B10c-mand19: the coverage safety net runs for a `--kinds` run
         # too -- it reads back the segment files on disk, so it no longer
@@ -1606,6 +1824,20 @@ def segment_book(
         force=force,
         summary=summary,
         kinds=None,
+        page_range=page_range,
+    )
+
+    # Batch B12: and a third, likewise additive toc-driven pass for monsters
+    # (see this module's docstring, point 12).
+    _run_monster_pass(
+        entry,
+        paragraphs=paragraphs,
+        text_dir=text_dir,
+        out_dir=out_dir,
+        pages_json=pages_json,
+        data_dir=data_dir,
+        force=force,
+        summary=summary,
         page_range=page_range,
     )
 

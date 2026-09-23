@@ -62,11 +62,18 @@ TIER_MODELS: dict[str, str] = {
 #: errata_entry/update_entry: a mis-read `target_name`/`target_page` does
 #: not fail schema validation -- it silently fails to match at build time
 #: and lands in `human/`, which costs more than the cheaper tier saves.
+#: Batch B12 adds monster/template/npc: a monster stat block is ~20 typed
+#: fields plus cross-checked special-attack/special-quality lists (and a
+#: grouped entry is several of them sharing one table), which is the same
+#: shape of work a class entry is -- and a template/npc the same again.
 STARTING_TIERS: dict[str, str] = {
     "class": "sonnet",
     "prestige_class": "sonnet",
     "errata_entry": "sonnet",
     "update_entry": "sonnet",
+    "monster": "sonnet",
+    "template": "sonnet",
+    "npc": "sonnet",
 }
 
 

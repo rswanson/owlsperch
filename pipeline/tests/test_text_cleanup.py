@@ -3,13 +3,15 @@ printed page-number detection, and dehyphenation."""
 
 from __future__ import annotations
 
-from owlsperch.text.bbox import Line
+from owlsperch.text.bbox import Block, Line, Page, Word
 from owlsperch.text.cleanup import (
     BandedLine,
     band_for_line,
     dehyphenate_lines,
+    display_page_number,
     find_running_keys,
     load_wordlist,
+    median_line_height,
     normalize_for_repetition,
     standalone_page_number,
 )
@@ -123,3 +125,80 @@ def test_find_running_keys_short_window_requires_minimum_three_pages() -> None:
         BandedLine(3, "footer", "Repeat"),
     ]
     assert ("footer", "repeat") in find_running_keys(three_pages, page_count=5)
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: the oversize outer-margin display page number
+# ---------------------------------------------------------------------------
+
+_PAGE_HEIGHT = 783.0
+
+
+def _line(text: str, *, y_min: float, height: float, x_min: float = 10.0) -> Line:
+    return Line(
+        x_min=x_min,
+        y_min=y_min,
+        x_max=x_min + 30.0,
+        y_max=y_min + height,
+        words=[Word(x_min, y_min, x_min + 30.0, y_min + height, text)],
+    )
+
+
+def _block(*lines: Line) -> Block:
+    return Block(
+        x_min=min(x.x_min for x in lines),
+        y_min=min(x.y_min for x in lines),
+        x_max=max(x.x_max for x in lines),
+        y_max=max(x.y_max for x in lines),
+        lines=list(lines),
+    )
+
+
+def _display(block: Block, body: float = 9.5) -> int | None:
+    return display_page_number(block, page_height=_PAGE_HEIGHT, body_line_height=body)
+
+
+def test_display_page_number_finds_the_mm_style_margin_number() -> None:
+    # The Monster Manual's own geometry: a one-line, digits-only block at
+    # yMin 713.3 (above the 8% footer band, which starts at 720.4) set ~3.2x
+    # the body line height.
+    assert _display(_block(_line("100", y_min=713.3, height=30.4))) == 100
+
+
+def test_display_page_number_rejects_a_body_size_digit_in_the_same_band() -> None:
+    # MM p0300's advancement table prints "15" at body size, low on the page
+    # -- only the height test tells it apart from a page number.
+    assert _display(_block(_line("15", y_min=693.0, height=8.4))) is None
+
+
+def test_display_page_number_rejects_a_number_too_high_on_the_page() -> None:
+    assert _display(_block(_line("100", y_min=400.0, height=30.4))) is None
+
+
+def test_display_page_number_rejects_a_block_with_other_content() -> None:
+    block = _block(
+        _line("100", y_min=713.3, height=30.4),
+        _line("ALLIP", y_min=745.0, height=30.4),
+    )
+    assert _display(block) is None
+    assert _display(_block(_line("Chapter 100", y_min=713.3, height=30.4))) is None
+
+
+def test_display_page_number_with_no_body_baseline_skips_the_height_test() -> None:
+    # A page with nothing but the number on it has no median to measure
+    # against; the band + digits-only tests still apply.
+    assert _display(_block(_line("7", y_min=713.3, height=30.4)), body=0.0) == 7
+
+
+def test_median_line_height_ignores_blank_lines() -> None:
+    page = Page(
+        width=594.0,
+        height=_PAGE_HEIGHT,
+        blocks=[
+            _block(_line("body", y_min=100.0, height=9.5)),
+            _block(_line("body", y_min=120.0, height=9.5)),
+            _block(_line("   ", y_min=140.0, height=40.0)),
+        ],
+    )
+    assert median_line_height(page) == 9.5
+    assert median_line_height(Page(width=594.0, height=_PAGE_HEIGHT, blocks=[])) == 0.0

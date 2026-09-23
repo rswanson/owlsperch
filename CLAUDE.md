@@ -96,6 +96,14 @@ couldn't match, and `web/` shows a record's "Other printings" and
 reference lists), monster/template validators, and per-kind extraction
 rules covering both printed stat-block layouts and the Monster Manual's
 grouped entries (one record per creature). CI. Everything else is a
+"Overrides applied" (with citations). Batch B12 onboards the Monster
+Manual (`mm1`) and adds the `monster` kind's SEGMENTATION half: printed
+page numbers set as an oversize glyph in the outer margin
+(`text/cleanup.py`), spaced contents leaders and the MM's own alphabetical
+monster index (`toc/parser.py`), and a third toc-driven segmentation pass
+(`segment/monsters.py`) producing one `monster` segment per printed entry
+-- a grouped entry (ANGEL, DEMON, ANIMATED OBJECT) being one segment the
+extractor writes several records from. CI. Everything else is a
 future-batch stub (`check-completeness`, `coverage`, `schema review`,
 `sample`, and `web/`'s own `/tools/*` routes from spec 4.10).
 
@@ -108,13 +116,15 @@ members -- see the comment in the root `pyproject.toml`):
 uv sync                              # install deps (both workspace members)
 uv run owlsperch manifest check
 uv run owlsperch text <book_id|all> [--force] [--pages A-B]
-uv run owlsperch segment <book_id|all> [--force] [--pages A-B] [--kinds class[,prestige_class]]
+uv run owlsperch segment <book_id|all> [--force] [--pages A-B] [--kinds K[,K]]
   # (batch B10c) also emits toc-driven `class`/`prestige_class` segments
   # (needs toc/<book_id>.json from `owlsperch toc` first) and stamps every
   # segment their page span swallows `superseded_by` -- additive, so a
-  # plain (non --force) run is always safe to re-run. (B10c-mand6) `--kinds`
-  # re-runs ONLY that toc-driven pass (only class/prestige_class accepted);
-  # everything else about a plain run is unaffected. (B10c-mand19) `--pages
+  # plain (non --force) run is always safe to re-run. (B12) it also emits
+  # toc-driven `monster` segments the same way. (B10c-mand6) `--kinds`
+  # re-runs ONLY those toc-driven passes (class/prestige_class, plus
+  # B12's monster); everything else about a plain run is unaffected.
+  # (B10c-mand19) `--pages
   # A-B` never restricts the paragraph stream -- segmentation always sees
   # the whole book -- it restricts only which segments are written and
   # (with --force) deleted: those whose own FIRST page is in [A, B].
@@ -192,6 +202,31 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `kind`/`median_word_height`/`max_word_height`/`line_count`, for
   `segment`'s heading detection) + `pages.json` under `$OWLSPERCH_DATA`.
   `wordlist.txt` is the bundled fallback word list used by dehyphenation.
+  Batch B12 adds a SECOND printed-page-number rule to `cleanup.py`
+  (`display_page_number`/`median_line_height`), for a book that sets its
+  number as a large decorative glyph in the OUTER MARGIN, above the 8%
+  footer band `band_for_line` looks in -- which is what the Monster Manual
+  does, so `owlsperch text mm1` used to report "0 page numbers found" for
+  all 334 pages and left a bare "100"/"200"/... paragraph in the body text
+  of 236 of them. The rule is narrow: a block whose ONLY non-blank line is
+  exactly a run of digits, in the bottom 12% of the page, at >= 1.8x the
+  page's own median line height (that last test is what rejects a numeric
+  TABLE CELL low on a page -- MM p0300 prints one at 0.9x). It is scanned
+  over each page's RAW blocks, since such a block is routinely narrower
+  than it is tall and `order_blocks` drops it as rotated marginalia before
+  the reading-order output is built; the band rule keeps priority, so a
+  book it already handles keeps exactly the numbers it had, and a block this
+  rule claims is dropped from the body text only when the page had NO band
+  number or the two AGREE -- a disagreement means one of the two read
+  something that isn't the page number (the real phb1 p0086 has a
+  digits-only table cell inside its footer band) and the band rule is the
+  more certain of the two, so the block stays in the body rather than
+  silently deleting real content. Real corpus:
+  mm1 goes from 0 to 325 numbers found (modal offset 0 -- pdf page N prints
+  page N -- plus 8 offset-320 entries from a web enhancement bound in at
+  the back with its own 1-8 numbering, which the toc's modal-offset
+  inversion ignores), and phb1 gains the 9 pages whose own number sits just
+  above its footer band, with every page it already had unchanged.
   Table detection excludes prose-like blocks from grouping, requires
   mutual (not merely transitive) vertical overlap among a candidate
   group's blocks -- overlap of at least 70% of the shorter block's height
@@ -589,6 +624,72 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   summary order) with `monster`/`npc`/`template`, the same way B10c
   widened it for the class kinds: `Segment.kind_hint` has to accept them
   before a prompt can be rendered for every registered record type.
+  than 3 entries exist or no n-gram qualifies.
+  Batch B12 adds a THIRD pass, the same shape as the class one, for the
+  Monster Manual, with its pure half in a new `segment/monsters.py`
+  (`discover_monster_spans`, unit tested against a synthetic paragraph
+  stream; `runner.py` keeps only the file writing and the supersede stamp):
+  every level >= 2 toc entry whose category is `monsters` and whose own
+  pages -- plus the one-page spill-over the span itself uses -- carry a
+  `Hit Dice` marker becomes one `monster` segment, id
+  `<book_id>-monster-p<NNNN>-<NN>` (`NNNN` the page its own printed heading
+  is on, `<NN>` a per-page ordinal, since three monsters routinely share a
+  page and the class pass's page-only id form would collide). The marker
+  deliberately does NOT require the colon a normal stat block prints
+  ("Hit Dice:"), because a grouped entry's shared stat table prints it as a
+  bare row label -- requiring it dropped all ten colour dragons; and
+  searching only the entry's own toc pages dropped 22 more (Elf, Gnome,
+  Hydra, Ogre, Salamander, Wraith, ...) whose stat block starts at the top
+  of the next page. Four things the MM's own layout forces on top of the
+  class pass's anchoring: (a) `title_matches` is plural-, parenthetical-
+  AND comma-permutation-tolerant in both directions, since the index and
+  the printed heading routinely disagree on word order ("Astral deva
+  (angel)" vs. "ANGEL, ASTRAL DEVA"; "Ape, dire" vs. "DIRE APE"); (b) a
+  sub-entry whose parenthetical names ANOTHER candidate entry is FOLDED
+  into it, so a grouped entry (ANGEL, DEMON, DEVIL, LYCANTHROPE, ANIMATED
+  OBJECT) is ONE segment the extractor writes several records from -- a
+  parenthetical naming no candidate is an alias, not a group ("Barbed devil
+  (hamatula)"), and is left alone; (c) an entry whose heading is never found
+  (a sub-block the book prints in body-size title case -- "Mountain dwarf",
+  "Orca", "Criosphinx") is ABSORBED into the nearest preceding anchor's
+  span, which already covers its pages, rather than becoming a second,
+  overlapping segment; and (d) the heading-to-heading cut has a stat-block
+  FALLBACK: poppler regularly emits a monster's heading far from its body
+  (mm1 p0201 emits "OOZE", "BLACK PUDDING" and "ELDER BLACK PUDDING" as
+  three adjacent paragraphs), which would otherwise leave a span with no
+  stat block at all, so a span whose cut text has no `Hit Dice` marker
+  falls back to its whole page range -- complete but overlapping, the trade
+  the class pass already makes on a shared page. Start back-extension to
+  the top of the heading's own page is unchanged from B10c-mand6.
+  Superseding uses `is_monster_owned_fragment` (see `supersede.py` below)
+  widened to every toc title the span covers, so a grouped entry's sub-block
+  whose printed heading shares no words with the group ("TIEFLING" under
+  "PLANETOUCHED") is still recognized as its fragment; its WINDOW is the
+  written segment's own `pages` (`MonsterSpan.text_pages`), never
+  `span.page_end` -- that is only the cap on the text cut and routinely
+  reaches a page the resolved text stops short of, which stamped 122 real
+  mm1 fragments (e.g. the NEXT monster's own "COMBAT" on a shared page)
+  into a segment whose text doesn't contain them. A monster segment that
+  falls inside another monster's pages is a peer entity, not a fragment, and
+  is excluded from the "left live" tally. `--pages`,
+  `--kinds monster` (now a `_SELECTABLE_KINDS` value beside class/
+  prestige_class) and the coverage warning behave exactly as B10c-mand19
+  defines for the class pass; `BookSegmentSummary.monster_page_fallbacks`
+  NAMES every span on the whole-page-range fallback (on its own summary
+  line), since that segment's text overlaps its neighbours' and the
+  extraction step has to treat it with care. Real mm1: 415 toc candidates
+  -> 338 monster segments (52 grouped, 22 absorbed, 28 on the page-range
+  fallback), every one of them containing a stat block, 635 in-span
+  fragments superseded and 52 left live, no page-coverage warning. What
+  stays live is judged: column-repair junk headings ("pqqqqrs", "UNGEONS",
+  "CR 13"), genuine sidebars ("DRAGONHIDE", "HEARTSTONE", "AMULET",
+  "ABILITY SCORE ARRAYS", "DEVILS BY CHALLENGE RATING"), an irregular plural
+  ("SLAADI CHARACTERS" under "SLAAD"), and a section printed past its own
+  entry's last text page ("HAG COVEY", "XILL CHARACTERS"). Known real-corpus gap: the MM's
+  own aboleth stat block (p0008) is simply ABSENT from the PDF's text layer
+  -- `pdftotext` emits its title line and nothing else -- so that entry's
+  segment carries no stat block of its own and will escalate to `human/`
+  rather than being silently dropped.
 
 - `pipeline/owlsperch/supersede.py` (batch B10c-mand2, plus B10c-mand11) --
   `is_class_owned_fragment(heading, kind_hint, class_title)` is the shared,
@@ -609,7 +710,26 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   COMPANIONS -- note that "THE PALADIN'S MOUNT" NAMES the class and still
   fails, since every match is on the WHOLE heading, never a substring) and
   for every other kind (a spell/feat fragment stranded in a class's span is
-  never class-owned). `release_segment_
+  never class-owned). Batch B12 adds its monster counterpart,
+  `is_monster_owned_fragment(heading, kind_hint, monster_title)`, used the
+  same way by the monster-span stamp pass: True for a `table` whose caption
+  NAMES the monster (unlike the class rule, a table naming nothing of the
+  sort is left live -- a monster page's other tables belong to the chapter),
+  and for a `rules_section`/`stat_block` whose whole heading is the monster
+  title (plural-tolerant), one of `MONSTER_STRUCTURAL_HEADINGS` ("COMBAT",
+  plus "CONSTRUCTION" -- every golem entry's build rules -- and "SUBRACES"),
+  "<Title> SOCIETY"/"<Title> CHARACTERS"/"<Title>S AS CHARACTERS"/
+  "<Title> LORE", a GROUPED entry's sub-block heading -- one whose own words
+  start or end with the title's ("ANGEL, SOLAR", "LANTERN ARCHON") -- or a
+  heading a QUALIFIED toc title covers token-wise, the other direction:
+  the index disambiguates a sub-block by prefixing its group ("Formian
+  worker") while the page prints the bare word ("WORKER"), and the same
+  coverage test applied to a section prefix owns "DRAGON SOCIETY" under the
+  toc's "Dragon, true". Every comparison is token-wise
+  (`heading_tokens`), never on the joined string, so a title can only match
+  at a word boundary ("BATTLE" is not the "BAT" entry's sub-block); an
+  irregular plural ("DWARVES AS CHARACTERS" under "DWARF") is simply left
+  live. `release_segment_
   claims(segment, *, data_dir)` is the shared helper behind both the
   class-span stamp pass above and `queue audit --fix` below: for ONE
   superseded segment, every path in its `records` + `pending_records`
@@ -1334,7 +1454,11 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `"update_entry": "sonnet"` to `STARTING_TIERS` -- a mis-read
   `target_name`/`target_page` doesn't fail schema validation, it silently
   fails to match at build time and lands in `human/`, which costs more
-  than the cheaper tier saves. A segment with `superseded_by` set is
+  than the cheaper tier saves. Batch B12 adds `"monster"`, `"template"`
+  and `"npc"` at `"sonnet"` for the same reason class entries are there --
+  a stat block is ~20 typed fields plus cross-checked special-attack/
+  special-quality lists, and a grouped entry is several of those sharing one
+  table. A segment with `superseded_by` set is
   frozen: `select.py`'s stale-reset/lazy-escalation heal pass and its
   selection filter both skip it outright (never reset, never escalated,
   never selected), and `summary.py` excludes it from `pending`/
@@ -1452,7 +1576,24 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   `--force` never deletes a stale empty toc file left behind by a FAILED
   re-parse -- the non-zero exit plus the parse error is the intended
   signal, not automatic cleanup. Verified against the real PHB: 16
-  chapters, 77 sections, zero fall-through to `uncategorized`.
+  chapters, 77 sections, zero fall-through to `uncategorized`. Batch B12
+  widens `ENTRY_RE`'s leader to `_LEADER` -- three or more dots (or middle
+  dots), each optionally followed by spaces/tabs -- because the Monster
+  Manual sets its leaders SPACED (`"Introduction . . . . . 5"`), so the
+  pre-B12 `\.{3,}` matched nothing at all there and `owlsperch toc mm1`
+  failed with "found 0 dotted-leader match(es)"; the separator stays
+  `[ \t]*`, never `\s*`, so a leader can't straddle a line break, and a
+  solid-leader book (phb1) parses byte-identically. That alone also parses
+  the MM's alphabetical MONSTER INDEX, which shares those contents pages:
+  column repair glues dozens of `"Name . . . N"` entries onto one long
+  line, and consecutive `ENTRY_RE` matches split it left to right (D3), the
+  same mechanism that already split the PHB's two-column contents page.
+  `categories.py` gains a `Monsters?|Creatures?|Animals|Vermin` pattern,
+  placed BEFORE the generic `Skills?`/`Feats?` ones so the MM's own
+  "Chapter 6: Monster Skills and Feats" groups with its other monster
+  chapters (no phb1 entry title matches any of it, so phb1's toc is
+  unchanged). Verified against the real MM: 8 chapters, 415 sections (one
+  per indexed monster), zero fall-through to `uncategorized`.
 - `pipeline/owlsperch/build_db/` -- the `build-db` subcommand (spec 4.8,
   batch B6): `runner.py` re-validates every `records/<book_id>/<type>/
   *.json` file with `owlsperch.validate.runner.validate_record` (a pure,
