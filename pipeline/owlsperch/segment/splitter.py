@@ -31,7 +31,11 @@ from owlsperch.segment.headings import Paragraph, is_heading
 #: `owlsperch.segment.runner`'s class-span post-pass); the literal is
 #: widened here only so `Segment.kind_hint` accepts them too. Batch B11 adds
 #: "errata_entry"/"update_entry" (design decision D1) -- these ARE produced
-#: by `build_segments` itself, gated by the `entry_kind` argument.
+#: by `build_segments` itself, gated by the `entry_kind` argument. Batch B12
+#: adds "monster"/"npc"/"template" -- like the class kinds, the literal is
+#: widened here so `Segment.kind_hint` accepts them (and so a prompt can be
+#: rendered for every registered record type); what actually produces them
+#: is the toc-driven monster pass.
 KindHint = Literal[
     "spell",
     "stat_block",
@@ -40,6 +44,9 @@ KindHint = Literal[
     "rules_section",
     "class",
     "prestige_class",
+    "monster",
+    "npc",
+    "template",
     "errata_entry",
     "update_entry",
 ]

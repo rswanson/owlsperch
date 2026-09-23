@@ -359,6 +359,19 @@ def flatten_fields(key: str, value: Any) -> list[_FieldRow]:
         rows = []
         for subkey, subvalue in value.items():
             rows.extend(flatten_fields(f"{key}.{subkey}", subvalue))
+        # Batch B12: an object field that keeps the book's own printed line in
+        # its own `text` sub-key (monster `hd`, `speed`, `ac`, `attack`,
+        # `full_attack`, `space_reach`, `skills`) also gets a COMBINED row
+        # under the parent key, holding that verbatim line -- so the stat
+        # block's own wording is searchable/renderable off `record_fields`
+        # without loading the record JSON, the same way an array-of-object
+        # field's combined row makes its pairs queryable. An object field
+        # with no `text` sub-key (spell `costs`, class `skill_points`,
+        # `spellcasting`) is unaffected and still has no combined row -- see
+        # `owlsperch_server.browse.FilterableField.combined`.
+        text_value = value.get("text")
+        if isinstance(text_value, str) and text_value.strip():
+            rows.append(_FieldRow(key, text_value, None))
         return rows
 
     return []

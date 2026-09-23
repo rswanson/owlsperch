@@ -1,0 +1,78 @@
+{
+  "id": "template:example:sable-touched",
+  "type": "template",
+  "name": "Sable-Touched",
+  "slug": "sable-touched",
+  "aliases": [],
+  "book_id": "example",
+  "pages": [3],
+  "citation": "Example p. 3",
+  "text_md": "A sable-touched creature has spent too long in the shadowed planes and come back with some of them still clinging to it. Its colours are wrong, and its shadow arrives a heartbeat late.\n\n\"Sable-touched\" is an acquired template that can be added to any living creature (referred to hereafter as the base creature). A sable-touched creature uses all the base creature's statistics and special abilities except as noted here.",
+  "fields": {
+    "acquired_or_inherited": "acquired",
+    "applies_to": "Any living corporeal creature",
+    "cr_change": "Same as the base creature +1",
+    "la_change": "Same as the base creature +2",
+    "modifications": [
+      {
+        "section": "Size and Type",
+        "text_md": "The creature's type does not change. Size is unchanged. It gains the extraplanar subtype."
+      },
+      {
+        "section": "Hit Dice",
+        "text_md": "Unchanged."
+      },
+      {
+        "section": "Speed",
+        "text_md": "Unchanged."
+      },
+      {
+        "section": "Armor Class",
+        "text_md": "A sable-touched creature gains a +1 deflection bonus to AC."
+      },
+      {
+        "section": "Special Attacks",
+        "text_md": "A sable-touched creature retains all the special attacks of the base creature and gains shadow chill (see below)."
+      },
+      {
+        "section": "Special Qualities",
+        "text_md": "A sable-touched creature retains all the special qualities of the base creature and gains shadow blend and darkvision out to 60 feet."
+      },
+      {
+        "section": "Abilities",
+        "text_md": "Change from the base creature as follows: Dex +2, Cha -2."
+      },
+      {
+        "section": "Challenge Rating",
+        "text_md": "Same as the base creature +1."
+      },
+      {
+        "section": "Alignment",
+        "text_md": "Usually one step toward evil from the base creature."
+      },
+      {
+        "section": "Level Adjustment",
+        "text_md": "Same as the base creature +2."
+      }
+    ],
+    "description_sections": [
+      {
+        "heading": "Creating a Sable-Touched Creature",
+        "text_md": "A living creature that spends a full month on a shadowed plane without magical protection becomes sable-touched. The change is permanent and cannot be reversed by anything short of a miracle."
+      }
+    ],
+    "source_pages": { "start": 3, "end": 3 }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-template-p0003",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

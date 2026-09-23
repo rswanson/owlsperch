@@ -133,6 +133,45 @@ def load_skills(schemas_dir: Path | None = None) -> list[str]:
     return skills
 
 
+def load_sizes(schemas_dir: Path | None = None) -> list[str]:
+    """Load `schemas/sizes.json`'s `sizes` list (batch B12): the nine 3.5e
+    size categories, smallest first. Used by `owlsperch.validate.checks`'s
+    monster/npc `size` check, and kept in sync with `monster.json`/
+    `npc.json`'s own `size` enum by a test."""
+    schemas_dir = schemas_dir if schemas_dir is not None else default_schemas_dir()
+    raw = _load_json(schemas_dir / "sizes.json", what="sizes file")
+    sizes = raw.get("sizes", [])
+    if not isinstance(sizes, list) or not all(isinstance(s, str) for s in sizes):
+        raise SchemaError("sizes.json 'sizes' must be an array of strings")
+    return sizes
+
+
+@dataclass(frozen=True)
+class CreatureTypes:
+    """`schemas/creature_types.json` (batch B12): the 3.5e creature `types`
+    and the `subtypes` the Monster Manual prints in a stat block's opening
+    "<Size> <Type> (<Subtypes>)" line."""
+
+    types: list[str]
+    subtypes: list[str]
+
+
+def load_creature_types(schemas_dir: Path | None = None) -> CreatureTypes:
+    """Load `schemas/creature_types.json` (batch B12). Used by
+    `owlsperch.validate.checks`'s monster/npc `type`/`subtypes` checks; the
+    `types` list is kept in sync with `monster.json`/`npc.json`'s own `type`
+    enum by a test."""
+    schemas_dir = schemas_dir if schemas_dir is not None else default_schemas_dir()
+    raw = _load_json(schemas_dir / "creature_types.json", what="creature types file")
+    parsed: dict[str, list[str]] = {}
+    for key in ("types", "subtypes"):
+        values = raw.get(key, [])
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise SchemaError(f"creature_types.json '{key}' must be an array of strings")
+        parsed[key] = values
+    return CreatureTypes(types=parsed["types"], subtypes=parsed["subtypes"])
+
+
 def load_registry(schemas_dir: Path | None = None) -> Registry:
     """Load `registry.json` and `envelope.json` from `schemas_dir` (default:
     `default_schemas_dir()`)."""

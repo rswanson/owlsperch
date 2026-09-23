@@ -517,7 +517,9 @@ def test_unknown_query_param_400(browse_data_dir: Path) -> None:
 
 
 def test_unknown_type_404(browse_data_dir: Path) -> None:
-    response = _client(browse_data_dir).get("/records/monster")
+    # A deliberately un-registerable sentinel: this used to be "monster",
+    # which batch B12 registered as a real type.
+    response = _client(browse_data_dir).get("/records/not_a_registered_type")
     assert response.status_code == 404
 
 
@@ -589,7 +591,8 @@ def test_facets_level_values_are_not_float_formatted(browse_data_dir: Path) -> N
 
 
 def test_facets_unknown_type_404(browse_data_dir: Path) -> None:
-    response = _client(browse_data_dir).get("/facets/monster")
+    # See `test_unknown_type_404` on why this is not "monster" any more.
+    response = _client(browse_data_dir).get("/facets/not_a_registered_type")
     assert response.status_code == 404
 
 

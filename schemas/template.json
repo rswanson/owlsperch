@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlsperch.dev/schemas/template.json",
+  "title": "Template fields",
+  "description": "The `fields` object of a template record, per spec 4.6 and batch B12. A template is not a creature: it is the set of changes applied to a base creature, printed as a run of labelled paragraphs (\"Size and Type:\", \"Hit Dice:\", \"Speed:\", ...). Each of those paragraphs is one `modifications` entry, in printed order -- there is no stat block to parse.",
+  "version": 1,
+  "type": "object",
+  "properties": {
+    "acquired_or_inherited": {
+      "type": "string",
+      "enum": ["acquired", "inherited"],
+      "description": "The template's own printed classification (\"Acquired Template\" / \"Inherited Template\"), lowercased.",
+      "x-ui": {
+        "label": "Acquired or inherited",
+        "filterable": true,
+        "sortable": false,
+        "group": "core",
+        "order": 1
+      }
+    },
+    "applies_to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The \"Creature Type\"/\"Base Creature\" restriction, verbatim (e.g. \"Any corporeal aberration, animal, dragon, humanoid, giant, monstrous humanoid, or plant of Medium or larger size\").",
+      "x-ui": {
+        "label": "Applies to",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 2
+      }
+    },
+    "cr_change": {
+      "type": "string",
+      "description": "The printed \"Challenge Rating:\" change, verbatim (e.g. \"Same as the base creature +2\").",
+      "x-ui": {
+        "label": "CR change",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 3
+      }
+    },
+    "la_change": {
+      "type": "string",
+      "description": "The printed \"Level Adjustment:\" change, verbatim (e.g. \"Same as the base creature +4\").",
+      "x-ui": {
+        "label": "Level adjustment change",
+        "filterable": false,
+        "sortable": false,
+        "group": "core",
+        "order": 4
+      }
+    },
+    "modifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The paragraph's own printed label, verbatim and without its colon -- one of \"Size and Type\", \"Hit Dice\", \"Speed\", \"Armor Class\", \"Attack\", \"Full Attack\", \"Damage\", \"Special Attacks\", \"Special Qualities\", \"Saves\", \"Abilities\", \"Skills\", \"Feats\", \"Environment\", \"Organization\", \"Challenge Rating\", \"Treasure\", \"Alignment\", \"Advancement\", \"Level Adjustment\" for a standard template, or whatever else this template prints."
+          },
+          "text_md": { "type": "string", "minLength": 1 }
+        },
+        "required": ["section", "text_md"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "description": "One entry per printed labelled paragraph, in printed order. Never merged, never reordered, never invented for a label this template does not print.",
+      "x-ui": {
+        "label": "Modifications",
+        "filterable": false,
+        "sortable": false,
+        "group": "modifications",
+        "order": 5
+      }
+    },
+    "description_sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "heading": { "type": "string", "minLength": 1 },
+          "text_md": { "type": "string", "minLength": 1 }
+        },
+        "required": ["heading", "text_md"],
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "One entry per printed titled section other than the modification paragraphs (e.g. \"Creating a <Template> <Creature>\" prose, \"Sample <Template>\" lead-in).",
+      "x-ui": {
+        "label": "Description sections",
+        "filterable": false,
+        "sortable": false,
+        "group": "description",
+        "order": 6
+      }
+    },
+    "source_pages": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "integer", "minimum": 1 },
+        "end": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "The pdf page span of this template's whole printed entry.",
+      "x-ui": {
+        "label": "Source pages",
+        "filterable": false,
+        "sortable": false,
+        "group": "meta",
+        "order": 7
+      }
+    }
+  },
+  "required": ["acquired_or_inherited", "applies_to", "modifications", "source_pages"],
+  "additionalProperties": false
+}

@@ -1600,3 +1600,102 @@ def test_prompt_applies_to_book_id_none_for_ordinary_book(tmp_path: Path) -> Non
     )
 
     assert "- Applies to book ID: (none)" in text
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: the monster/npc/template extraction rules. The per-kind
+# coverage guard above already proves every field and cross-type reference
+# is backed by a rendered schema/example; these check the rules a subagent
+# actually has to be told, and that they stay out of the other kinds'
+# prompts.
+# ---------------------------------------------------------------------------
+
+
+def _rules_section_for(kind: str, tmp_path: Path) -> str:
+    text = render_prompt(
+        _segment(kind_hint=kind),
+        data_dir=tmp_path / "data",
+        manifest_path=_write_manifest(tmp_path),
+        schemas_dir=_repo_schemas_dir(),
+    )
+    section = _section_text(text, f"## Extraction rules for `{kind}`")
+    assert section is not None, f"no extraction rules section rendered for {kind}"
+    return section
+
+
+def test_monster_rules_name_both_printed_stat_block_layouts(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    # Layout A: every MM I label, in printed order, as a split point.
+    for label in ("Hit Dice:", "Base Attack/Grapple:", "Space/Reach:", "Level Adjustment:"):
+        assert label in section
+    # Layout B: the MM III+ vertical list's own abbreviated labels.
+    for label in ("Init/Senses", "Base Atk/Grp", "Immune/Resist/SR", "Fort/Ref/Will", "SQ"):
+        assert label in section
+
+
+def test_monster_rules_state_the_grouped_entry_naming_convention(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    assert "`group`" in section and "`variant_label`" in section
+    assert "Angel, Astral Deva" in section
+    assert "Animated Object, Huge" in section
+    assert "one record per creature" in section.lower()
+
+
+def test_monster_rules_say_the_multi_column_stat_table_is_not_a_table_record(
+    tmp_path: Path,
+) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    assert "MULTI-COLUMN" in section
+    assert "NOT" in section and "also written as a `table` record" in section
+
+
+def test_monster_rules_give_the_cr_fraction_normalization(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    for fragment in ('"1/2" -> `cr` 0.5', '"1/3" -> `cr` 0.333', '"1/8" -> `cr` 0.125'):
+        assert fragment in section
+
+
+def test_monster_rules_source_special_abilities_from_the_combat_run_ins(tmp_path: Path) -> None:
+    section = _rules_section_for("monster", tmp_path)
+    assert "Babble (Su):" in section
+    assert "`special_abilities`" in section
+    assert "generic" in section
+    # The never-invent rule, and the never-`null` rule.
+    assert "Never invent a value the text does not state" in section
+
+
+def test_npc_rules_add_class_levels_and_possessions(tmp_path: Path) -> None:
+    section = _rules_section_for("npc", tmp_path)
+    assert "`class_levels` is REQUIRED" in section
+    assert "`possessions`" in section
+    # ...on top of the shared stat-block rules.
+    assert "Hit Dice:" in section
+    assert "Init/Senses" in section
+
+
+def test_template_rules_cover_the_printed_modification_paragraphs(tmp_path: Path) -> None:
+    section = _rules_section_for("template", tmp_path)
+    assert "`acquired_or_inherited`" in section
+    assert "`applies_to`" in section
+    assert "`modifications` is ONE entry per printed labelled paragraph" in section
+    # The printed-label list wraps across lines, so compare against the
+    # section as one line.
+    one_line = re.sub(r"\s+", " ", section)
+    for label in ('"Size and Type"', '"Special Qualities"', '"Level Adjustment"'):
+        assert label in one_line
+    # A template has no stat block of its own, and a sample creature printed
+    # under it is a separate record.
+    assert "has no stat block" in section
+    assert "SAMPLE CREATURE" in section
+
+
+def test_monster_rules_do_not_leak_into_another_kinds_prompt(tmp_path: Path) -> None:
+    for kind in ("spell", "feat", "table"):
+        text = render_prompt(
+            _segment(kind_hint=kind),
+            data_dir=tmp_path / "data",
+            manifest_path=_write_manifest(tmp_path),
+            schemas_dir=_repo_schemas_dir(),
+        )
+        assert "Base Attack/Grapple:" not in text
+        assert "Init/Senses" not in text

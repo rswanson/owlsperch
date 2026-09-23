@@ -1,0 +1,84 @@
+{
+  "id": "npc:example:brannic-vaile",
+  "type": "npc",
+  "name": "Brannic Vaile",
+  "slug": "brannic-vaile",
+  "aliases": ["The Warden of Ash"],
+  "book_id": "example",
+  "pages": [2],
+  "citation": "Example p. 2",
+  "text_md": "Brannic Vaile keeps the ash-gate for a wage nobody else would take. He is grey-bearded, unhurried, and entirely unimpressed by adventurers.",
+  "fields": {
+    "size": "Medium",
+    "type": "Humanoid",
+    "subtypes": ["Human"],
+    "hd": { "count": 6, "die": 10, "bonus": 12, "text": "6d10+12 (45 hp)" },
+    "hp": 45,
+    "initiative": 1,
+    "speed": {
+      "text": "20 ft. in breastplate (4 squares); base speed 30 ft.",
+      "modes": [{ "mode": "land", "feet": 20, "squares": 4 }]
+    },
+    "ac": {
+      "total": 18,
+      "touch": 11,
+      "flat_footed": 17,
+      "text": "18 (+1 Dex, +7 masterwork breastplate), touch 11, flat-footed 17"
+    },
+    "bab": 6,
+    "grapple": 9,
+    "attack": {
+      "text": "+1 longsword +11 melee (1d8+5)",
+      "attacks": [
+        { "name": "+1 longsword", "bonus": "+11", "damage": "1d8+5", "kind": "melee" }
+      ]
+    },
+    "full_attack": {
+      "text": "+1 longsword +11/+6 melee (1d8+5)",
+      "attacks": [
+        { "name": "+1 longsword", "bonus": "+11/+6", "damage": "1d8+5", "kind": "melee" }
+      ]
+    },
+    "space_reach": { "space_ft": 5, "reach_ft": 5, "text": "5 ft./5 ft." },
+    "special_attacks": [],
+    "special_qualities": [],
+    "special_abilities": [],
+    "saves": { "fort": 7, "ref": 3, "will": 3 },
+    "abilities": { "str": 16, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 8 },
+    "skills": {
+      "text": "Climb +8, Intimidate +6, Ride +7",
+      "entries": [
+        { "name": "Climb", "bonus": 8 },
+        { "name": "Intimidate", "bonus": 6 },
+        { "name": "Ride", "bonus": 7 }
+      ]
+    },
+    "feats": ["Cleave", "Power Attack", "Weapon Focus (longsword)"],
+    "environment": "Any land",
+    "organization": "Solitary",
+    "cr": 6,
+    "cr_text": "6",
+    "treasure": "Standard",
+    "alignment": "Lawful neutral",
+    "advancement": "By character class",
+    "level_adjustment": { "value": 0, "text": "+0" },
+    "group": null,
+    "variant_label": null,
+    "description_sections": [],
+    "class_levels": [{ "class": "Fighter", "level": 6 }],
+    "possessions": "+1 longsword, masterwork breastplate, potion of cure moderate wounds, 40 gp.",
+    "source_pages": { "start": 2, "end": 2 }
+  },
+  "tables": [],
+  "canonical": false,
+  "variant_of": null,
+  "applied_overrides": [],
+  "macro_eligible": false,
+  "schema_version": 1,
+  "extraction": {
+    "tier": "sonnet",
+    "model": "claude-sonnet-4-5",
+    "segment_id": "example-npc-p0002",
+    "timestamp": "2026-01-01T00:00:00+00:00"
+  }
+}

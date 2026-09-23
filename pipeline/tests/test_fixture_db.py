@@ -19,7 +19,8 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
 
     assert result.skipped_invalid == 0
     # Batch B11 adds a duplicate "Ice Storm" printing across fixture-book/
-    # fixture-book-2, plus one errata_entry in fixture-errata.
+    # fixture-book-2, plus one errata_entry in fixture-errata; batch B12 adds
+    # one monster.
     assert result.counts_by_type == {
         "spell": 5,
         "feat": 1,
@@ -27,6 +28,7 @@ def test_write_fixture_data_builds_a_real_sqlite_db(tmp_path: Path) -> None:
         "table": 2,
         "class": 1,
         "errata_entry": 1,
+        "monster": 1,
     }
     assert default_db_path(data_dir).is_file()
 
@@ -110,9 +112,17 @@ def test_write_fixture_data_writes_toc_file(tmp_path: Path) -> None:
     # B10c-mand3 Part 6: a fourth chapter/section pair ("Chapter 4:
     # Classes" / "Fixture Mage", category "classes") gives the fixture
     # class record a real toc category instead of "uncategorized".
-    assert len(chapters) == 4
-    assert len(sections) == 4
-    assert {e["category"] for e in toc["entries"]} == {"magic", "combat", "equipment", "classes"}
+    # Batch B12: a fifth pair ("Chapter 5: Monsters" / "Fixture Beast",
+    # category "monsters") does the same for the fixture monster record.
+    assert len(chapters) == 5
+    assert len(sections) == 5
+    assert {e["category"] for e in toc["entries"]} == {
+        "magic",
+        "combat",
+        "equipment",
+        "classes",
+        "monsters",
+    }
 
 
 def test_write_fixture_data_writes_hauling_gear_rules_section(tmp_path: Path) -> None:

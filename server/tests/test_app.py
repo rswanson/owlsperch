@@ -145,7 +145,9 @@ def test_record_detail_returns_full_record(built_data_dir: Path) -> None:
 
 
 def test_record_detail_unknown_type_404(built_data_dir: Path) -> None:
-    response = _client(built_data_dir).get("/records/monster/fireball")
+    # A deliberately un-registerable sentinel: this used to be "monster",
+    # which batch B12 registered as a real type.
+    response = _client(built_data_dir).get("/records/not_a_registered_type/fireball")
     assert response.status_code == 404
     assert response.json() == {"detail": "unknown type"}
 

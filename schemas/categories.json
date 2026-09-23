@@ -75,7 +75,7 @@
       "label": "Monsters",
       "order": 11,
       "description": "Monsters and other creatures.",
-      "record_types": []
+      "record_types": ["monster", "npc", "template"]
     },
     {
       "key": "running-the-game",

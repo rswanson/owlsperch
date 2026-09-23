@@ -1,0 +1,14 @@
+{
+  "description": "The nine 3.5e size categories, smallest first (batch B12). A plain data file, not a JSON Schema: loaded by owlsperch.schemas.load_sizes and used both by validate/checks.py's monster/npc size check and (kept in sync by a test) as monster.json's own `size` enum.",
+  "sizes": [
+    "Fine",
+    "Diminutive",
+    "Tiny",
+    "Small",
+    "Medium",
+    "Large",
+    "Huge",
+    "Gargantuan",
+    "Colossal"
+  ]
+}

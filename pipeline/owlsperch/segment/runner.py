@@ -209,6 +209,9 @@ _KIND_ORDER: tuple[KindHint, ...] = (
     "rules_section",
     "class",
     "prestige_class",
+    "monster",
+    "npc",
+    "template",
     "errata_entry",
     "update_entry",
 )
