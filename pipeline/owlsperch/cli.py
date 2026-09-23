@@ -9,6 +9,7 @@ review, sample) are future-batch stubs.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -27,6 +28,12 @@ from owlsperch.queue.runner import (
     run_queue_summary,
 )
 from owlsperch.queue.select import DEFAULT_LOCK_TIMEOUT
+from owlsperch.reference.evaluate import DocumentError
+from owlsperch.reference.runner import browse as browse_reference
+from owlsperch.reference.runner import capture as capture_reference
+from owlsperch.reference.runner import evaluate_run as evaluate_reference
+from owlsperch.reference.runner import source as source_reference
+from owlsperch.reference.runner import strict_json_loads
 from owlsperch.schemas import SchemaError, load_registry, render_schema_show
 from owlsperch.segment.runner import run_segment
 from owlsperch.serve import DEFAULT_HOST, DEFAULT_PORT, run_serve
@@ -337,6 +344,30 @@ def build_parser() -> argparse.ArgumentParser:
         "dir", type=Path, help="Directory to write the fixture $OWLSPERCH_DATA-shaped tree into."
     )
 
+    reference_parser = subparsers.add_parser("reference", help="Evidence-backed reference pilot.")
+    reference_parser.set_defaults(reference_parser=reference_parser)
+    reference_subparsers = reference_parser.add_subparsers(dest="reference_command")
+    reference_capture = reference_subparsers.add_parser(
+        "capture", help="Capture a bounded PDF range."
+    )
+    reference_capture.add_argument("book_id")
+    reference_capture.add_argument("--pages", type=_parse_pages, required=True, metavar="A-B")
+    reference_capture.add_argument("--db", type=Path, required=True)
+    reference_evaluate = reference_subparsers.add_parser("evaluate", help="Score a benchmark run.")
+    reference_evaluate.add_argument("inventory", type=Path)
+    reference_evaluate.add_argument("candidates", type=Path)
+    reference_evaluate.add_argument("--db", type=Path, required=True)
+    reference_evaluate.add_argument("--run-id", required=True)
+    reference_source = reference_subparsers.add_parser("source", help="Export a source snapshot.")
+    reference_source.add_argument("--db", type=Path, required=True)
+    reference_source.add_argument("--snapshot-id", required=True)
+    reference_browse = reference_subparsers.add_parser("browse", help="Browse passing candidates.")
+    reference_browse.add_argument("--db", type=Path, required=True)
+    reference_browse.add_argument("--run-id", required=True)
+    reference_browse.add_argument("--type", dest="reference_type")
+    reference_browse.add_argument("--field")
+    reference_browse.add_argument("--equals")
+
     return parser
 
 
@@ -460,6 +491,39 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "fixture-db":
         return run_fixture_db(args.dir)
+
+    if args.command == "reference":
+        if args.reference_command is None:
+            args.reference_parser.print_help()
+            return 0
+        try:
+            if args.reference_command == "capture":
+                result = capture_reference(args.book_id, args.pages, args.db)
+            elif args.reference_command == "source":
+                result = source_reference(args.db, args.snapshot_id)
+            elif args.reference_command == "evaluate":
+                result = evaluate_reference(args.inventory, args.candidates, args.db, args.run_id)
+            else:
+                has_filter = args.equals is not None
+                try:
+                    equals = strict_json_loads(args.equals) if has_filter else None
+                except json.JSONDecodeError as exc:
+                    raise DocumentError(f"--equals must be JSON: {exc}") from exc
+                result = browse_reference(
+                    args.db,
+                    args.run_id,
+                    kind=args.reference_type,
+                    field=args.field,
+                    equals=equals,
+                    has_filter=has_filter,
+                )
+            print(json.dumps(result, ensure_ascii=False))
+            if args.reference_command == "evaluate" and not result["release_ready"]:
+                return 1
+            return 0
+        except (DocumentError, ManifestError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     parser.print_help()
     return 0 if args.command is None else 1
