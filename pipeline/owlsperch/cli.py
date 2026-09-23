@@ -50,7 +50,8 @@ def _parse_pages(value: str) -> tuple[int, int]:
 
 def _parse_kinds(value: str) -> frozenset[str]:
     """Comma-separated `--kinds` values, as a `frozenset[str]`. Whether the
-    named kinds are actually selectable (only class/prestige_class are) is
+    named kinds are actually selectable (only class/prestige_class/monster
+    are) is
     validated by `owlsperch.segment.runner.run_segment` itself, not here --
     that's where a bad value can be reported with the command's own exit
     code (1) rather than argparse's."""
@@ -116,9 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="KIND[,KIND]",
         help=(
             "Re-run only the toc-driven pass for these kind_hints (only "
-            "class/prestige_class are accepted) instead of full "
-            "segmentation -- e.g. --kinds class or --kinds class,"
-            "prestige_class."
+            "class/prestige_class/monster are accepted) instead of full "
+            "segmentation -- e.g. --kinds class, --kinds class,"
+            "prestige_class, or --kinds monster."
         ),
     )
 

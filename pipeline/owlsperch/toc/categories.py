@@ -53,6 +53,13 @@ GENERIC_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # design decision D10).
     (re.compile(r"Prestige Class(?:es)?", re.IGNORECASE), "prestige-classes"),
     (re.compile(r"Classes|Class Descriptions", re.IGNORECASE), "classes"),
+    # Batch B12: the monster-book chapter titles, tried BEFORE "Skills?"/
+    # "Feats?" so the Monster Manual's own "Monster Skills and Feats"
+    # chapter groups with its other monster chapters rather than landing
+    # under skills; "Animals"/"Vermin" are its chapters 2 and 3, which no
+    # other pattern matches at all. No phb1 entry title matches any of
+    # these, so its toc is unaffected.
+    (re.compile(r"Monsters?|Creatures?|Animals|Vermin", re.IGNORECASE), "monsters"),
     (re.compile(r"Skills?", re.IGNORECASE), "skills"),
     (re.compile(r"Feats?", re.IGNORECASE), "feats"),
     (
@@ -68,7 +75,6 @@ GENERIC_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "adventuring",
     ),
     (re.compile(r"Magic|Spells|Spellcasting|Psionics", re.IGNORECASE), "magic"),
-    (re.compile(r"Monsters|Creatures", re.IGNORECASE), "monsters"),
     (
         re.compile(r"Running the Game|Dungeon Master|Campaigns|Rewards|Traps", re.IGNORECASE),
         "running-the-game",

@@ -1000,3 +1000,37 @@ def test_phb_detached_column_and_sidebar_band_corpus() -> None:
         # its two bands' column partitions agree anyway.
         p44 = _text(44).split("\n\n")
         assert p44[1].startswith("Table 3–12: The Paladin"), p44[:3]
+
+
+@pytest.mark.corpus
+def test_mm1_display_page_numbers_corpus() -> None:
+    """Batch B12: the Monster Manual sets its page number as a large
+    decorative glyph in the OUTER MARGIN, above the footer band -- so the
+    band rule alone found nothing at all (`0 page numbers found` for all 334
+    pages) and, on a 3-digit page, left a bare "100" paragraph in the body
+    text. `cleanup.display_page_number` must find it, with the book's own
+    zero offset (pdf page N prints page N)."""
+    import shutil
+    import tempfile
+
+    from owlsperch.manifest import default_manifest_path, default_pdf_dir
+
+    pdf_dir = default_pdf_dir()
+    if not pdf_dir.is_dir():
+        pytest.skip(f"real PDF corpus not present at {pdf_dir}")
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext (poppler) not installed")
+    if not any(e.book_id == "mm1" for e in load_manifest(default_manifest_path())):
+        pytest.skip("mm1 is not in the manifest")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        assert run_text("mm1", pdf_dir=pdf_dir, data_dir=data_dir, page_range=(98, 102)) == 0
+        text_dir = data_dir / "text" / "mm1"
+        pages = json.loads((text_dir / "pages.json").read_text())
+        assert pages == {str(p): p for p in range(98, 103)}
+        # ...and the number is gone from the body text, not left as a
+        # paragraph of its own (a 3-digit number's block is wider than it is
+        # tall, so it isn't excluded as rotated marginalia either).
+        body = (text_dir / "p0100.txt").read_text()
+        assert not any(line.strip() == "100" for line in body.splitlines())

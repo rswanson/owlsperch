@@ -357,3 +357,50 @@ def test_is_class_owned_fragment_needs_both_a_heading_and_a_title() -> None:
     # A bare "Starting Package" with no class name in front of it isn't
     # attributable to this class either.
     assert not is_class_owned_fragment("Starting Package", "rules_section", "Barbarian")
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: is_monster_owned_fragment
+# ---------------------------------------------------------------------------
+
+
+def test_monster_owns_its_own_heading_and_structural_sections() -> None:
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    for heading in (
+        "ALLIP",
+        "ALLIPS",
+        "COMBAT",
+        "ALLIP SOCIETY",
+        "ALLIP CHARACTERS",
+        "ALLIPS AS CHARACTERS",
+        "ALLIP LORE",
+    ):
+        assert is_monster_owned_fragment(heading, "rules_section", "Allip"), heading
+
+
+def test_monster_owns_a_grouped_entrys_sub_block_headings() -> None:
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    assert is_monster_owned_fragment("ANGEL, SOLAR", "rules_section", "ANGEL")
+    assert is_monster_owned_fragment("LANTERN ARCHON", "rules_section", "ARCHON")
+
+
+def test_monster_leaves_an_unrelated_sidebar_live() -> None:
+    """The class-pass lesson: page span alone swallows a printed sidebar
+    into no canonical record at all."""
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    assert not is_monster_owned_fragment("FAMILIARS", "rules_section", "Allip")
+    assert not is_monster_owned_fragment("DRAGONHIDE", "rules_section", "Black dragon")
+    # Never a mid-word match: "BATTLE" is not the "BAT" entry's sub-block.
+    assert not is_monster_owned_fragment("BATTLE", "rules_section", "BAT")
+    # And never another kind entirely.
+    assert not is_monster_owned_fragment("ALLIP", "spell", "Allip")
+
+
+def test_monster_owns_only_a_table_that_names_it() -> None:
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    assert is_monster_owned_fragment("Animated Object, Tiny", "table", "Animated object")
+    assert not is_monster_owned_fragment("Table 1-1: Random Encounters", "table", "Allip")

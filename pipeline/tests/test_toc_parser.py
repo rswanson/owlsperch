@@ -309,3 +309,97 @@ def test_parse_book_toc_resolves_categories_generic_and_inherited(tmp_path: Path
     orphan = by_title["A Section With No Chapter Before It"]
     assert orphan.category == "uncategorized"
     assert parsed.uncategorized_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Batch B12: spaced leaders and the Monster Manual's monster index
+# ---------------------------------------------------------------------------
+
+
+def test_entry_re_accepts_spaced_leaders() -> None:
+    matches = ENTRY_RE.findall("Introduction . . . . . . . . 5")
+    assert matches == [("Introduction", "5")]
+    assert ENTRY_RE.findall("Chapter 2: Animals · · · · · 268") == [("Chapter 2: Animals", "268")]
+    # A solid-leader book is unaffected, and so is a mixture.
+    assert ENTRY_RE.findall("Armor .......... 122") == [("Armor", "122")]
+    assert ENTRY_RE.findall("Wealth .. . .. . 99") == [("Wealth", "99")]
+
+
+def test_entry_re_needs_three_leader_glyphs() -> None:
+    assert ENTRY_RE.findall("E. Gary Gygax 3") == []
+    assert ENTRY_RE.findall("Mark A. Jindra 7") == []
+
+
+def test_entry_re_splits_a_column_repaired_index_line() -> None:
+    """The MM's alphabetical index is glued onto one long line by column
+    repair, so the split has to come from the leader pattern, not newlines.
+    A title's own trailing period runs into the leader and is normalized
+    away by `parse_book_toc`; `ENTRY_RE` itself keeps it out of the page."""
+    line = (
+        "Aasimar (planetouched) . . . 209 Aboleth . . . . . . . . 8 "
+        "Aboleth mage. . . . . . . . . 8 Achaierai . . . . . . . 9"
+    )
+    assert [(t.strip(), page) for t, page in ENTRY_RE.findall(line)] == [
+        ("Aasimar (planetouched)", "209"),
+        ("Aboleth", "8"),
+        ("Aboleth mage", "8"),
+        ("Achaierai", "9"),
+    ]
+
+
+def test_spaced_leader_index_parses_into_chapter_and_monster_entries(tmp_path: Path) -> None:
+    text_dir = tmp_path / "text" / "mmtest"
+    _write_page(
+        text_dir,
+        1,
+        "TABLE OF CONTENTS\n\n"
+        "Introduction . . . . . 5 Chapter 1: Monsters A to Z . . . 8 "
+        "Chapter 2: Animals . . . . . 20\n\n"
+        "ALPHABETICAL LISTING OF MONSTERS\n\n"
+        "Allip . . . . . . . 10 Angel . . . . . . 12 Ape . . . . . . 20\n",
+    )
+    _write_pages_json(text_dir, {5: 5, 8: 8, 10: 10, 12: 12, 20: 20})
+
+    parsed = parse_book_toc(text_dir, book_id="mmtest")
+
+    chapters = [e for e in parsed.entries if e.level == 1]
+    sections = [e for e in parsed.entries if e.level == 2]
+    assert [c.title for c in chapters] == [
+        "Introduction",
+        "Chapter 1: Monsters A to Z",
+        "Chapter 2: Animals",
+    ]
+    assert [s.title for s in sections] == ["Allip", "Angel", "Ape"]
+    # Nesting is by printed page, so "Ape" lands under the Animals chapter.
+    assert [s.path[0] for s in sections] == [
+        "Chapter 1: Monsters A to Z",
+        "Chapter 1: Monsters A to Z",
+        "Chapter 2: Animals",
+    ]
+    assert {e.category for e in parsed.entries if e.level == 1 and "Chapter" in e.title} == {
+        "monsters"
+    }
+    assert parsed.uncategorized_count == 0
+
+
+@pytest.mark.corpus
+def test_mm1_real_corpus_toc_parses_the_monster_index() -> None:
+    """Batch B12: the real Monster Manual's contents pages use SPACED
+    leaders, and its alphabetical monster index is on the same pages -- so a
+    successful parse yields its handful of chapters plus one level-2 entry
+    per indexed monster, all resolving to the `monsters` category."""
+    from owlsperch.text.runner import default_data_dir
+
+    text_dir = default_data_dir() / "text" / "mm1"
+    if not text_dir.is_dir():
+        pytest.skip(f"real mm1 text not present under {text_dir}")
+
+    parsed = parse_book_toc(text_dir, book_id="mm1")
+
+    assert len(parsed.entries) >= 250
+    chapters = [e for e in parsed.entries if e.level == 1]
+    assert len(chapters) >= 6
+    assert parsed.uncategorized_count == 0
+    titles = {e.title for e in parsed.entries}
+    assert {"Allip", "Angel", "Kraken"} <= titles
+    assert {e.category for e in parsed.entries if e.title in {"Allip", "Kraken"}} == {"monsters"}

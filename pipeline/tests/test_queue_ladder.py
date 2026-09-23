@@ -352,6 +352,14 @@ def test_starting_tier_defaults_to_lowest_tier_for_other_kinds() -> None:
     assert starting_tier("stat_block") == TIERS[0]
 
 
+def test_starting_tier_is_sonnet_for_monster_kinds() -> None:
+    """Batch B12: a monster stat block is ~20 typed fields with
+    cross-checked lists -- the same shape of work a class entry is."""
+    assert starting_tier("monster") == "sonnet"
+    assert starting_tier("template") == "sonnet"
+    assert starting_tier("npc") == "sonnet"
+
+
 def test_starting_tier_is_sonnet_for_errata_and_update_kinds() -> None:
     assert starting_tier("errata_entry") == "sonnet"
     assert starting_tier("update_entry") == "sonnet"

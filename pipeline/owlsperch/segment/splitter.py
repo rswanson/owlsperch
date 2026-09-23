@@ -44,6 +44,9 @@ KindHint = Literal[
     "rules_section",
     "class",
     "prestige_class",
+    # Batch B12: `monster`, like class/prestige_class, is never produced by
+    # `build_segments` itself -- it comes from the separate, toc-driven
+    # monster pass in `owlsperch.segment.runner`.
     "monster",
     "npc",
     "template",
