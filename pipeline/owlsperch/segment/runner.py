@@ -419,6 +419,13 @@ class BookSegmentSummary:
     #: counts of grouped/absorbed/fallback spans, or the toc entries it had
     #: to skip) -- printed the same way as `class_note`.
     monster_note: str = ""
+    #: Batch B12 (review finding 6): the printed heading of every monster
+    #: span whose heading-to-heading cut carried no stat block and so fell
+    #: back to its whole page range (`MonsterSpan.page_fallback`). Such a
+    #: segment's text overlaps its neighbours', so the extraction step must
+    #: treat it with care -- named here (and on their own summary line)
+    #: rather than only counted, so a caller can act on them.
+    monster_page_fallbacks: list[str] = field(default_factory=list)
     #: Batch B10c-mand19: every page in the PROCESSED range (`--pages A-B`,
     #: else the whole book) that has text but is in no segment's `pages` on
     #: disk once the run has finished -- live or superseded, this run's
@@ -447,6 +454,12 @@ class BookSegmentSummary:
             lines.append(f"{self.book_id}: {self.class_note}")
         if self.monster_note:
             lines.append(f"{self.book_id}: {self.monster_note}")
+        if self.monster_page_fallbacks:
+            names = ", ".join(self.monster_page_fallbacks)
+            lines.append(
+                f"{self.book_id}: monster span(s) on the whole-page-range fallback "
+                f"(text overlaps a neighbour's): {names}"
+            )
         if self.uncovered_pages:
             pages_str = ", ".join(str(p) for p in self.uncovered_pages)
             lines.append(
@@ -1650,12 +1663,20 @@ def _run_monster_pass(
     for span in discovery.spans:
         if span not in spans_to_write and not (out_dir / f"{span.seg_id}.json").is_file():
             continue
+        if not span.text_pages:
+            continue
+        # Review finding 1: the window is the WRITTEN segment's own pages,
+        # never `span.page_end` (the cap on the text cut, which routinely
+        # reaches a page the resolved text stops short of -- stamping by it
+        # swallowed 122 real-mm1 fragments, e.g. the NEXT monster's own
+        # "COMBAT" section on a shared page, into a segment whose text
+        # doesn't contain them).
         stamped, released, left_live = _supersede_segments_in_span(
             out_dir,
             entry.book_id,
             span.seg_id,
-            span.page_start,
-            span.page_end,
+            min(span.text_pages),
+            max(span.text_pages),
             entity_title=span.heading,
             data_dir=data_dir,
             owned=owned_by(span),
@@ -1664,12 +1685,17 @@ def _run_monster_pass(
         left_live_ids |= left_live
         stamped_ids |= stamped
     summary.superseded += len(stamped_ids)
-    summary.left_live += len(left_live_ids - stamped_ids)
+    # A monster segment that falls inside ANOTHER monster's pages is a peer
+    # entity, not a fragment that pass could ever own -- don't report it as
+    # "left live" (on real mm1 that was 134 of 229 such reports).
+    monster_seg_ids = {s.seg_id for s in discovery.spans}
+    summary.left_live += len(left_live_ids - stamped_ids - monster_seg_ids)
 
+    summary.monster_page_fallbacks = [s.heading for s in discovery.spans if s.page_fallback]
     note = (
         f"monster pass: {len(discovery.spans)} span(s) from {discovery.candidates} "
         f"toc entr(ies) ({discovery.grouped} grouped, {discovery.absorbed} absorbed, "
-        f"{sum(1 for s in discovery.spans if s.page_fallback)} page-range fallback)"
+        f"{len(summary.monster_page_fallbacks)} page-range fallback)"
     )
     skipped = len(discovery.without_stat_block)
     if skipped:

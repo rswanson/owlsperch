@@ -168,8 +168,16 @@ class MonsterSpan:
     end_index: int
     page_start: int
     #: Last page this span's own toc entries claim, plus the one-page
-    #: spill-over -- the supersede window, and the cap on `end_index`.
+    #: spill-over -- the cap on `end_index`. NOT the supersede window: that
+    #: is `text_pages` below, since this can reach a page the resolved text
+    #: never covers.
     page_end: int
+    #: Every page the span's own resolved TEXT actually covers (batch B12
+    #: review finding 1) -- the window the supersede pass stamps in, so a
+    #: monster can never supersede a fragment on a page its own segment
+    #: doesn't contain (on the real mm1 that was 122 fragments, e.g. the
+    #: NEXT monster's own "COMBAT" section on a shared page).
+    text_pages: tuple[int, ...]
     #: Every toc entry title this segment covers: its own, plus the group
     #: sub-entries folded into it and the unmatched entries absorbed by it.
     titles: tuple[str, ...]
@@ -357,6 +365,7 @@ def discover_monster_spans(
                 start_index, end_index = indices[0], indices[-1] + 1
                 page_fallback = True
 
+        text_pages = tuple(sorted({paragraphs[i].page for i in range(start_index, end_index)}))
         ordinal = seg_ordinals.get(anchor_page, 0) + 1
         seg_ordinals[anchor_page] = ordinal
         result.spans.append(
@@ -368,6 +377,7 @@ def discover_monster_spans(
                 end_index=end_index,
                 page_start=anchor_page,
                 page_end=page_end,
+                text_pages=text_pages,
                 titles=tuple(e.title for e in (*owners, *subs)),
                 page_fallback=page_fallback,
             )

@@ -215,8 +215,13 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   over each page's RAW blocks, since such a block is routinely narrower
   than it is tall and `order_blocks` drops it as rotated marginalia before
   the reading-order output is built; the band rule keeps priority, so a
-  book it already handles keeps exactly the numbers it had, and a block
-  this rule claims is dropped from the body text either way. Real corpus:
+  book it already handles keeps exactly the numbers it had, and a block this
+  rule claims is dropped from the body text only when the page had NO band
+  number or the two AGREE -- a disagreement means one of the two read
+  something that isn't the page number (the real phb1 p0086 has a
+  digits-only table cell inside its footer band) and the band rule is the
+  more certain of the two, so the block stays in the body rather than
+  silently deleting real content. Real corpus:
   mm1 goes from 0 to 325 numbers found (modal offset 0 -- pdf page N prints
   page N -- plus 8 offset-320 entries from a web enhancement bound in at
   the back with its own 1-8 numbering, which the toc's modal-offset
@@ -659,13 +664,28 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   Superseding uses `is_monster_owned_fragment` (see `supersede.py` below)
   widened to every toc title the span covers, so a grouped entry's sub-block
   whose printed heading shares no words with the group ("TIEFLING" under
-  "PLANETOUCHED") is still recognized as its fragment. `--pages`,
+  "PLANETOUCHED") is still recognized as its fragment; its WINDOW is the
+  written segment's own `pages` (`MonsterSpan.text_pages`), never
+  `span.page_end` -- that is only the cap on the text cut and routinely
+  reaches a page the resolved text stops short of, which stamped 122 real
+  mm1 fragments (e.g. the NEXT monster's own "COMBAT" on a shared page)
+  into a segment whose text doesn't contain them. A monster segment that
+  falls inside another monster's pages is a peer entity, not a fragment, and
+  is excluded from the "left live" tally. `--pages`,
   `--kinds monster` (now a `_SELECTABLE_KINDS` value beside class/
   prestige_class) and the coverage warning behave exactly as B10c-mand19
-  defines for the class pass. Real mm1: 415 toc candidates -> 338 monster
-  segments (52 grouped, 22 absorbed, 28 on the page-range fallback), every
-  one of them containing a stat block, 628 in-span fragments superseded and
-  352 left live, no page-coverage warning. Known real-corpus gap: the MM's
+  defines for the class pass; `BookSegmentSummary.monster_page_fallbacks`
+  NAMES every span on the whole-page-range fallback (on its own summary
+  line), since that segment's text overlaps its neighbours' and the
+  extraction step has to treat it with care. Real mm1: 415 toc candidates
+  -> 338 monster segments (52 grouped, 22 absorbed, 28 on the page-range
+  fallback), every one of them containing a stat block, 635 in-span
+  fragments superseded and 52 left live, no page-coverage warning. What
+  stays live is judged: column-repair junk headings ("pqqqqrs", "UNGEONS",
+  "CR 13"), genuine sidebars ("DRAGONHIDE", "HEARTSTONE", "AMULET",
+  "ABILITY SCORE ARRAYS", "DEVILS BY CHALLENGE RATING"), an irregular plural
+  ("SLAADI CHARACTERS" under "SLAAD"), and a section printed past its own
+  entry's last text page ("HAG COVEY", "XILL CHARACTERS"). Known real-corpus gap: the MM's
   own aboleth stat block (p0008) is simply ABSENT from the PDF's text layer
   -- `pdftotext` emits its title line and nothing else -- so that entry's
   segment carries no stat block of its own and will escalate to `human/`
@@ -696,10 +716,16 @@ from whatever `phb1` spell records exist under `$OWLSPERCH_DATA` and checks
   NAMES the monster (unlike the class rule, a table naming nothing of the
   sort is left live -- a monster page's other tables belong to the chapter),
   and for a `rules_section`/`stat_block` whose whole heading is the monster
-  title (plural-tolerant), "COMBAT", "<Title> SOCIETY"/"<Title> CHARACTERS"/
-  "<Title>S AS CHARACTERS"/"<Title> LORE", or a GROUPED entry's sub-block
-  heading -- one whose own words start or end with the title's ("ANGEL,
-  SOLAR", "LANTERN ARCHON"). Every comparison is token-wise
+  title (plural-tolerant), one of `MONSTER_STRUCTURAL_HEADINGS` ("COMBAT",
+  plus "CONSTRUCTION" -- every golem entry's build rules -- and "SUBRACES"),
+  "<Title> SOCIETY"/"<Title> CHARACTERS"/"<Title>S AS CHARACTERS"/
+  "<Title> LORE", a GROUPED entry's sub-block heading -- one whose own words
+  start or end with the title's ("ANGEL, SOLAR", "LANTERN ARCHON") -- or a
+  heading a QUALIFIED toc title covers token-wise, the other direction:
+  the index disambiguates a sub-block by prefixing its group ("Formian
+  worker") while the page prints the bare word ("WORKER"), and the same
+  coverage test applied to a section prefix owns "DRAGON SOCIETY" under the
+  toc's "Dragon, true". Every comparison is token-wise
   (`heading_tokens`), never on the joined string, so a title can only match
   at a word boundary ("BATTLE" is not the "BAT" entry's sub-block); an
   irregular plural ("DWARVES AS CHARACTERS" under "DWARF") is simply left

@@ -404,3 +404,26 @@ def test_monster_owns_only_a_table_that_names_it() -> None:
 
     assert is_monster_owned_fragment("Animated Object, Tiny", "table", "Animated object")
     assert not is_monster_owned_fragment("Table 1-1: Random Encounters", "table", "Allip")
+
+
+def test_monster_owns_recurring_construct_and_humanoid_sections() -> None:
+    """Review finding 2: "Construction" (every golem entry) and "Subraces"
+    (every humanoid entry) recur across the book exactly like "Combat"."""
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    assert is_monster_owned_fragment("CONSTRUCTION", "rules_section", "Stone golem")
+    assert is_monster_owned_fragment("SUBRACES", "stat_block", "Gnome")
+
+
+def test_monster_owns_a_sub_heading_its_qualified_toc_title_covers() -> None:
+    """Review finding 2: the MM's index qualifies a sub-block with its group
+    ("Formian worker") while the page prints the bare word ("WORKER"); and a
+    group's own qualified title still owns its printed sections ("DRAGON
+    SOCIETY" under "Dragon, true")."""
+    from owlsperch.supersede import is_monster_owned_fragment
+
+    assert is_monster_owned_fragment("WORKER", "rules_section", "Formian worker")
+    assert is_monster_owned_fragment("QUEEN", "rules_section", "Formian queen")
+    assert is_monster_owned_fragment("DRAGON SOCIETY", "rules_section", "Dragon, true")
+    # Still never an unrelated heading that shares no word with the title.
+    assert not is_monster_owned_fragment("HEARTSTONE", "rules_section", "Formian queen")

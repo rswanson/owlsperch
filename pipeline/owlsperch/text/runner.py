@@ -25,8 +25,10 @@ Per book:
    (`owlsperch.text.cleanup`) using a word set built from the book's own
    (header/footer-stripped) text plus the bundled word list. A block the
    display rule claims is dropped from the body text too (it is a page
-   number, never body content), whether or not the band rule already
-   recorded a number for that page. Table-group
+   number, never body content) -- but only when the page had no band number
+   or the two agree, since a disagreement means one of the two read
+   something that is not the page number and the band rule is the more
+   certain of the two. Table-group
    rows are never dehyphenated (their cells are single lines already) but
    do contribute their words to that word set.
 5. Write one `text/<book_id>/p{NNNN}.txt` per page: each block becomes one
@@ -248,19 +250,27 @@ def _process_pages(
     # routinely narrower than it is tall (a 1- or 2-digit number) and so is
     # dropped by `order_blocks` as rotated marginalia before the loop below
     # ever sees it. Recorded only for a page the band rule above found no
-    # number on, so a book it already handles keeps exactly its own numbers;
-    # the block is dropped from the body text either way.
+    # number on, so a book it already handles keeps exactly its own numbers.
+    #
+    # A block is dropped from the BODY TEXT only when this rule is the page's
+    # own authority on its number -- the page had no band number, or the two
+    # AGREE. A disagreement means one of the two read something that isn't
+    # the page number, and the band rule (a bare digits-only line inside the
+    # header/footer band) is the more certain of the two, so the block stays
+    # in the body text rather than silently deleting real content.
     display_number_blocks: set[int] = set()
     for offset, page in enumerate(pages):
         pdf_index = start_index + offset
         body_line_height = median_line_height(page)
+        band_number = page_numbers.get(pdf_index)
         for block in page.blocks:
             number = display_page_number(
                 block, page_height=page.height, body_line_height=body_line_height
             )
             if number is None:
                 continue
-            display_number_blocks.add(id(block))
+            if band_number is None or band_number == number:
+                display_number_blocks.add(id(block))
             page_numbers.setdefault(pdf_index, number)
 
     wordlist_words = load_wordlist()

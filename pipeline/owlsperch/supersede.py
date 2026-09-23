@@ -209,10 +209,13 @@ MONSTER_SECTION_SUFFIXES: tuple[tuple[str, ...], ...] = (
     ("lore",),
 )
 
-#: Batch B12: the one section heading every Monster Manual entry prints
-#: whatever the monster, so it is always owned by the entry whose span it
-#: falls in (the monster equivalent of `CLASS_STRUCTURAL_HEADINGS`).
-MONSTER_STRUCTURAL_HEADINGS: frozenset[str] = frozenset({"combat"})
+#: Batch B12: the section headings a Monster Manual entry prints whatever
+#: the monster, so each is always owned by the entry whose span it falls in
+#: (the monster equivalent of `CLASS_STRUCTURAL_HEADINGS`). "Construction"
+#: is every golem/construct entry's own build rules and "Subraces" every
+#: humanoid entry's own variant list; both recur across the book, exactly
+#: like "Combat" (review finding 2 -- 12 real mm1 fragments between them).
+MONSTER_STRUCTURAL_HEADINGS: frozenset[str] = frozenset({"combat", "construction", "subraces"})
 
 
 def heading_tokens(text: str) -> tuple[str, ...]:
@@ -254,7 +257,10 @@ def is_monster_owned_fragment(heading: str, kind_hint: str, monster_title: str) 
       naming nothing of the sort is left live -- a monster page's other
       tables belong to the chapter, not to the entry;
     - a `rules_section`/`stat_block` whose whole heading is the monster
-      title (plural-tolerant), is `MONSTER_STRUCTURAL_HEADINGS` ("COMBAT"),
+      title (plural-tolerant), is `MONSTER_STRUCTURAL_HEADINGS` ("COMBAT",
+      "CONSTRUCTION", "SUBRACES"), is covered token-wise by a QUALIFIED toc
+      title ("WORKER"/"QUEEN" under the index's "Formian worker"/"Formian
+      queen"),
       is "<Title> SOCIETY"/"<Title> CHARACTERS"/"<Title>S AS CHARACTERS"/
       "<Title> LORE" (`MONSTER_SECTION_SUFFIXES`), or is a sub-block heading
       of a GROUPED entry -- one whose own words START or END with the
@@ -284,11 +290,24 @@ def is_monster_owned_fragment(heading: str, kind_hint: str, monster_title: str) 
         if fragment[-len(suffix) :] != suffix:
             continue
         prefix = fragment[: -len(suffix)]
-        if prefix and _plural_equal("".join(prefix), "".join(title)):
+        if not prefix:
+            continue
+        # Review finding 2: the prefix may be the title itself, or the part
+        # of a qualified title the printed heading keeps ("DRAGON SOCIETY"
+        # under the toc's "Dragon, true").
+        if _plural_equal("".join(prefix), "".join(title)) or _tokens_contain(title, prefix):
             return True
     if len(fragment) > len(title) and (
         fragment[: len(title)] == title or fragment[-len(title) :] == title
     ):
+        return True
+    # Review finding 2: the other direction -- a QUALIFIED toc title covering
+    # an unqualified printed sub-heading. The MM's index disambiguates a
+    # sub-block by prefixing the group ("Formian worker", "Formian queen")
+    # while the page prints the bare word ("WORKER", "QUEEN"), and a group's
+    # own toc title can carry a qualifier the printed section heading drops
+    # ("Dragon, true" vs. "DRAGON SOCIETY", whose prefix is covered below).
+    if _tokens_contain(title, fragment):
         return True
     return False
 
